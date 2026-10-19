@@ -2081,7 +2081,7 @@ const rhCierreMontoBuscado = (texto) => {
   if (coma && punto) s = s.replace(/\./g, '').replace(',', '.'); else if (coma) s = s.replace(',', '.');
   return Number(s);
 };
-const rhCierreFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits:2, maximumFractionDigits:2 }).format(Number(n) || 0);
+const rhCierreFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits:2, maximumFractionDigits:2, useGrouping:'always' }).format(Number(n) || 0);
 const rhCierreFechaTxt = (s) => { if (!s) return '—'; const p = String(s).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(s); };
 const rhCierreEsc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 // Filtra los comprobantes por tema (id de RH_CIERRE_CATEGORIAS o 'TODAS') y por el buscador: si algo del comprobante o de sus líneas coincide (número, concepto, fecha, código, cuenta o monto), sale el comprobante completo
@@ -8145,7 +8145,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   };
 
   const sustraendo=(ut)=>(83.3334*ut).toFixed(2);
-  const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
+  const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:'always'}).format(n||0);
   const pD=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
 
   const tabsAllImp=[
@@ -11034,7 +11034,7 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
 
 // ══ PROCURA MODULE (incrustado) ══
 // Utilidades Procura (scope de módulo)
-const pFmt=(n)=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0);
+const pFmt=(n)=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:'always'}).format(Number(n)||0);
 const pNum=(v)=>parseFloat(String(v||0).replace(/[^0-9.-]/g,''))||0;
 // Quincena de una retención: la que se eligió a mano al registrarla (no necesariamente la
 // que marca la fecha) — a nivel de módulo para que Libro de Ventas y Determinación de IVA
@@ -11683,6 +11683,13 @@ const construirLineasConsumoInternoCompartido = (m, ctx) => {
   ]};
 };
 
+// ── Activos vendidos / dados de baja ──────────────────────────────────────────────────────────
+// «Registrar venta / baja» deja status = 'VENDIDO' | 'DE_BAJA' y fechaBaja (AAAA-MM-DD) en la ficha del activo.
+// Desde esa fecha el activo sale de la Relación de Activos y de sus totales, y deja de depreciarse DESPUÉS del mes
+// de la venta (ese mes sí se deprecia). En los cierres anteriores a la venta sigue apareciendo como siempre.
+const afEstaDeBaja = (a) => !!a && (a.status === 'VENDIDO' || a.status === 'DE_BAJA');
+const afFueraAlCorte = (a, fechaCorte) => afEstaDeBaja(a) && (!a.fechaBaja || String(a.fechaBaja).substring(0, 10) <= String(fechaCorte || '9999-12-31').substring(0, 10));
+
 // Determina las líneas contables de Depreciación para UN mes — agrupadas por Centro de Costo +
 // Rubro (sumando todos los activos que compartan esa combinación). Es la MISMA función que usan
 // tanto Comprobantes Contables como el motor central: antes Comprobantes Contables agrupaba así,
@@ -11696,6 +11703,7 @@ const construirLineasDepreciacionCompartida = (ym, ctx) => {
   const porCCRubro = new Map();
   (activosFijos||[]).forEach(a=>{
     const adq=(a.fechaAdquisicion||'').substring(0,7); if(!adq) return;
+    if(afEstaDeBaja(a) && a.fechaBaja && ym>String(a.fechaBaja).substring(0,7)) return; // vendido / dado de baja: no se deprecia después del mes de la venta
     const vidaMeses=Number(a.vidaUtilAnios||0)*12; if(vidaMeses<=0) return;
     const transcurridos=ymDiff(adq,ym);
     if(transcurridos<0||transcurridos>=vidaMeses) return; // la depreciación empieza el mes SIGUIENTE a la adquisición
@@ -13919,7 +13927,7 @@ const OrdenesCompraView = ({ordenesCompra,proveedores,facturasCompra,retIVACompr
     const ocItems=oc.items||[];
     const t=oc.totales||calcTotales(ocItems,oc.tasa,oc.moneda);
     const ta=pNum(oc.tasa||0);
-    const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n||0);
+    const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:'always'}).format(n||0);
     const pD2=s=>{if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;};
     const numLetras=n=>{
       const u=['','UNO','DOS','TRES','CUATRO','CINCO','SEIS','SIETE','OCHO','NUEVE','DIEZ','ONCE','DOCE','TRECE','CATORCE','QUINCE','DIECISÉIS','DIECISIETE','DIECIOCHO','DIECINUEVE'];
@@ -14602,7 +14610,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   },[facturaPreload]);
 
   const valorUT=pNum(settings?.valorUT||43);
-  const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0);
+  const fmtN=n=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:'always'}).format(Number(n)||0);
   const pD=s=>{if(!s)return'—';try{const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}catch{return s;}};
 
   // Calcular totales multimoneda desde ítems OC (lógica compartida a nivel de módulo — ver
@@ -16509,8 +16517,8 @@ const CxPView = ({
       m[k].total+=s; m[k].facts.push(f);
     });
     (proveedores||[]).forEach(p=>{if(m[p.id]){m[p.id].rif=p.rif||'';m[p.id].nombre=p.nombre||m[p.id].nombre;}});
-    // Include providers with NC/ND directo only — las que SÍ tienen facturaId ya se restaron
-    // dentro de getSaldoFact (por factura), sumarlas aquí también las duplicaría.
+    // NC/ND directas (sin factura): van en la tarjeta del proveedor — la de sus facturas o, si no tiene, una propia (una sola tarjeta por
+    // proveedor). Las que SÍ tienen facturaId ya se restaron dentro de getSaldoFact (por factura), sumarlas aquí también las duplicaría.
     _ncPorProv.forEach((ncs,rif)=>{
       const ncsDirectas = ncs.filter(n=>!n.facturaId);
       const netNC = ncsDirectas.reduce((s,n)=>{
@@ -16518,11 +16526,13 @@ const CxPView = ({
         const u=t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
         return s+(n.tipo==='ND'?u:-u);
       },0);
-      if(!m[rif] && netNC !== 0){
-        const prov = (proveedores||[]).find(p=>p.rif===rif);
-        m[rif]={provId:rif,nombre:prov?.nombre||rif,rif,facts:[],total:0,vMas60:0,v31_60:0,v1_30:0,corriente:0};
+      const prov = (proveedores||[]).find(p=>p.rif===rif);
+      let dueno = Object.values(m).find(x=>x.rif===rif) || (prov?m[prov.id]:null) || m[rif];
+      if(!dueno && netNC !== 0){
+        const key = prov?.id||rif;
+        dueno = m[key] = {provId:key,nombre:prov?.nombre||rif,rif,facts:[],total:0,vMas60:0,v31_60:0,v1_30:0,corriente:0};
       }
-      if(m[rif]) m[rif].total += netNC;
+      if(dueno){ dueno.total += netNC; dueno.ncDir = ncsDirectas; }
     });
     // Proveedores que SOLO tienen un anticipo pendiente por aplicar (sin factura activa ni NC/ND) —
     // igual deben salir reflejados, aunque no tengan ninguna factura abierta todavía.
@@ -16608,7 +16618,7 @@ const CxPView = ({
     const body = filtrados.map(g=>{
       const est = getEstado(g);
       const tasa = tasaBCV||1;
-      const ncNDs = _ncPorProv.get(g.rif)||[];
+      const ncNDs = g.ncDir||[]; // solo las notas directas de este proveedor (las de factura van en su factura)
       const anticiposG = _anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
       const factRows = g.facts.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
         const pagos=(_pagosPorFact.get(f.id)||[]).filter(p=>(!cxpFechaRef||(p.fecha||'')<=fechaRef));
@@ -16634,7 +16644,8 @@ const CxPView = ({
 </tr>
 ${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#16a34a">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''} · ${p.banco||''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fN(pN(p.monto||0))}</td><td></td><td style="padding:2px 6px;color:#16a34a;font-style:italic">${p.concepto||'—'}</td></tr>`).join('')}
 ${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#dc2626">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasaF)}</td><td></td><td></td></tr>`).join('')}
-${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}`;
+${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}
+${(_ncPorFact.get(f.id)||[]).map(n=>{const tN=pN(n.tasaFactura||0)||tasaF||1;const uN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(uN)}</td><td></td><td></td></tr>`;}).join('')}`;
       }).join('');
       const ncRows = ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasa;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Proveedor directo'}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(u)}</td><td></td><td></td></tr>`;}).join('');
       const anticipoRows = anticiposG.length===0?'':(`<tr style="background:#f0fdfa"><td colspan="11" style="padding:3px 6px;font-weight:900;color:#0f766e;font-size:8px;text-transform:uppercase">💰 Anticipos pendientes por aplicar</td></tr>`+
@@ -16693,8 +16704,13 @@ ${body}
           <td style="padding:3px 6px">${est}</td>
           <td style="padding:3px 6px">${(f.observaciones||'—').toString().replace(/</g,'&lt;')}</td>
         </tr>`;
+        // Notas de crédito/débito LIGADAS a esta factura: se ven bajo su factura (ya están restadas en su saldo) y una sola vez.
+        (_ncPorFact.get(f.id)||[]).forEach(n=>{
+          const tN=pN(n.tasaFactura||0)||tasaF||1; const uN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);
+          filas+=`<tr style="background:#faf5ff"><td colspan="4" style="padding:3px 6px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#7c3aed;font-family:monospace;mso-number-format:'#,##0.00'">${n.tipo==='NC'?'-':''}${uN.toFixed(2)}</td><td colspan="2"></td></tr>`;
+        });
       });
-      const ncNDsX=_ncPorProv.get(g.rif)||[];
+      const ncNDsX=g.ncDir||[]; // solo las notas directas de este proveedor (las de factura van bajo su factura)
       ncNDsX.forEach(n=>{
         const t=pN(n.tasaFactura||0)||tasaBCV||1; const u=t>1?pN(n.monto||0)/t:0;
         filas+=`<tr style="background:#faf5ff"><td colspan="4" style="padding:3px 6px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#7c3aed;font-family:monospace;mso-number-format:'#,##0.00'">${n.tipo==='NC'?'-':''}${u.toFixed(2)}</td><td colspan="2"></td></tr>`;
@@ -16981,7 +16997,7 @@ ${body}
                 {filtrados.map(g=>{
                   const est=getEstado(g);
                   const isExp = cxpExpandAll || !!cxpExpanded[g.provId];
-                  const ncNDs = _ncPorProv.get(g.rif)||[];
+                  const ncNDs = g.ncDir||[]; // solo las notas directas de este proveedor (las de factura van en su factura)
                   const anticiposG = _anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
                   return(
                   <React.Fragment key={g.provId}>
@@ -18768,6 +18784,7 @@ const EstadoCuentaProvView = ({
   const [ecHasta, setEcHasta] = useState('');
   const [ecExpanded, setEcExpanded] = useState({});
   const [ecExpandAll, setEcExpandAll] = useState(false);
+  const [ecMoneda, setEcMoneda] = useState('USD'); // 'USD' (vista de siempre) o 'BS' (datos en Bs. propios de cada documento)
   const [_ajustesBanco, setAjustesBanco] = useState([]);
   const [_ajustesCaja, setAjustesCaja] = useState([]);
   useEffect(()=>{
@@ -18852,9 +18869,15 @@ const EstadoCuentaProvView = ({
       m[k].facts.push(f);
     });
     (proveedores||[]).forEach(p=>{if(m[p.id]){m[p.id].rif=p.rif||'';m[p.id].nombre=p.nombre||m[p.id].nombre;}});
+    // Un proveedor = UNA tarjeta. Las notas directas (sin factura) van en la tarjeta de sus facturas o, si no tiene, en una propia; las ligadas
+    // a una factura van dentro de esa factura (antes salía una tarjeta aparte por RIF y las notas de factura se descontaban dos veces).
     _ncPorProv.forEach((ncs,rif)=>{
+      const directas=ncs.filter(n=>!n.facturaId);
+      if(!directas.length) return;
       const prov=(proveedores||[]).find(p=>p.rif===rif);
-      if(!m[rif]) m[rif]={provId:rif,nombre:prov?.nombre||rif,rif,facts:[]};
+      let dueno=Object.values(m).find(x=>x.rif===rif)||(prov?m[prov.id]:null)||m[rif];
+      if(!dueno){ const key=prov?.id||rif; dueno=m[key]={provId:key,nombre:prov?.nombre||rif,rif,facts:[]}; }
+      dueno.ncDir=directas;
     });
     _anticiposPorProv.forEach((ants,rif)=>{
       const prov=(proveedores||[]).find(p=>p.rif===rif||p.id===rif);
@@ -18876,20 +18899,135 @@ const EstadoCuentaProvView = ({
 
   const getSaldoProv = (g) => {
     const s = g.facts.reduce((acc,f)=>acc+getSaldoFact(f),0);
-    const ncNet = (_ncPorProv.get(g.rif)||[]).reduce((acc,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return acc+(n.tipo==='ND'?u:-u);},0);
+    const ncNet = (g.ncDir||[]).reduce((acc,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return acc+(n.tipo==='ND'?u:-u);},0); // solo notas directas: las de factura ya van en getSaldoFact
     return s + ncNet - getAnticipoProv(g) + getAjustesCxpProvTotal(g);
   };
 
   const totalSaldo = filtrados.reduce((s,g)=>s+getSaldoProv(g),0);
 
+  // ── Modelo del reporte (pantalla en Bs., PDF en Bs. y Excel profesional USD / Bs.) ──
+  // mon='BS': cada documento con SUS PROPIOS datos en Bs. (factura = Libro de Compras; retenciones = su monto en Bs.;
+  // NC/ND = monto de la nota; pagos = Bs. de cada pago). Nada se re-valora a una tasa de corte.
+  // mon='USD': los mismos montos en USD que muestra la pantalla.
+  const construirModeloProv = (mon) => {
+    const bs = mon==='BS';
+    const R = bs ? ecbR2 : ecbNum; // en USD se conservan los montos tal como los calcula la pantalla (sin redondear por fila)
+    const porFecha = (a,b)=>(a.fecha||'').localeCompare(b.fecha||'');
+    const gruposModelo = filtrados; // un proveedor = una tarjeta (sus notas directas van en su propia tarjeta)
+    const terceros = gruposModelo.map(g=>{
+      const rows=[];
+      let sinBsN=0, sinBsUsd=0;
+      [...g.facts].sort(porFecha).forEach(f=>{
+        const fc=ecbFacturaCompra(f);
+        const tasaUsd=Math.max(pN(f.tasa||0)||tasaBCV||1,1); // la que usa la pantalla en USD para las retenciones de IVA
+        const sF=getSaldoFact(f);
+        const dc=f.diasCredito||(f.fechaVencimiento&&f.fecha?Math.round((new Date(f.fechaVencimiento)-new Date(f.fecha))/864e5):null);
+        const docBase={nivel:0,esDoc:true,doc:f.nroFactura||f.id,fecha:f.fecha||'',vence:f.fechaVencimiento||ecbSumaDias(f.fecha,f.diasCredito)||'',saldoUsd:ecbNum(sF),estado:ecbEstadoDe(sF)};
+        const detF=[f.nroControl?'Control '+f.nroControl:'',dc?'Cond. '+dc+'d':'',f.observaciones||'Factura de compra'].filter(Boolean).join(' · ');
+        if(bs&&fc.sinTasa){
+          // Factura sin datos en Bs. (p. ej. saldo inicial cargado sin tasa): solo USD; no suma al saldo en Bs.
+          sinBsN++; sinBsUsd+=sF;
+          rows.push({...docBase,tono:'info',cat:'',tipoTxt:'Factura sin Bs.',detalle:detF+' · Total '+ecbMoney('USD',pN(f.total||0))+' · sin datos en Bs.',tasa:null,cargo:null,ncret:null,abono:null,saldo:null});
+          return;
+        }
+        const sub=[];
+        // Pagos (hasta la fecha de corte)
+        const pagos=(_pagosPorFact.get(f.id)||[]).filter(p=>(!ecHasta||(p.fecha||'')<=ecHasta)).sort(porFecha);
+        pagos.forEach((p,pi)=>{
+          const mv=bs?ecbMovBs(p,fc.tasa):null;
+          sub.push({nivel:1,tono:'pago',cat:'COBRO',doc:'Pago'+(pagos.length>1?' '+(pi+1):''),fecha:p.fecha||'',tipoTxt:'Pago',
+            detalle:[p.metodo||'—',p.banco,p.referencia?'#'+p.referencia:'',p.concepto,bs?ecbMoney('USD',pN(p.monto||0)):'',(bs&&mv.via==='tasa de la factura')?'Bs. a la tasa de la factura':''].filter(Boolean).join(' · '),
+            tasa:bs&&mv.tasa>1?mv.tasa:null,cargo:null,ncret:null,abono:bs?mv.bs:R(pN(p.monto||0)),aviso:(bs&&mv.sinTasa)?'⚠ Sin tasa':''});
+        });
+        // Retención de IVA (comprobante) — su monto ya está en Bs.
+        (_retsPorFact.get(f.id)||[]).forEach(r=>{
+          const rBs=pN(r.montoBs||r.montoRetenido||0);
+          sub.push({nivel:1,tono:'ret',cat:'RET',doc:'Ret. IVA',fecha:r.fecha||'',tipoTxt:'Ret. IVA',detalle:'IVA '+(r.pctRetencion||75)+'% · Comp. '+(r.nroComprobante||'—'),
+            tasa:bs?(pN(r.tasa||0)>1?pN(r.tasa):(fc.tasa>1?fc.tasa:null)):null,cargo:null,ncret:bs?R(rBs):R(rBs/tasaUsd),abono:null});
+        });
+        // Retención de ISLR de la factura
+        (f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).forEach(r=>{
+          sub.push({nivel:1,tono:'retx',cat:'RET',doc:'Ret. ISLR',fecha:f.fecha||'',tipoTxt:'Ret. ISLR',detalle:'ISLR '+(r.pct||0)+'% · '+[r.codigo,r.concepto].filter(Boolean).join(' '),
+            tasa:null,cargo:null,ncret:bs?ecbIslrBs(r,f.tasa):R(pN(r.monto||0)),abono:null});
+        });
+        // NC / ND ligadas a esta factura: NC resta, ND suma
+        (_ncPorFact.get(f.id)||[]).forEach(n=>{
+          const esNC=n.tipo==='NC';
+          const t=pN(n.tasaFactura||0)||pN(f.tasa||0)||tasaBCV||1;
+          const v=bs?R(pN(n.monto||0)):R(t>1?pN(n.monto||0)/t:pN(n.montoUSD||0));
+          sub.push({nivel:1,tono:'nc',cat:'NOTA',doc:(n.tipo||'NC')+' · '+(n.nroDocumento||'—'),fecha:n.fecha||'',tipoTxt:(esNC?'Nota de Crédito':'Nota de Débito')+(n.naturaleza==='FISCAL'?'':' (no fiscal)'),
+            detalle:n.descripcion||(esNC?'Nota de Crédito':'Nota de Débito'),tasa:null,cargo:esNC?null:v,ncret:esNC?v:null,abono:null});
+        });
+        const suma=(k)=>sub.reduce((s,r)=>s+(r[k]||0),0);
+        const cargoDoc=bs?fc.totalBs:R(pN(f.total||0));
+        rows.push({...docBase,tono:'doc',cat:'FACT',tipoTxt:'Factura',detalle:detF,tasa:(bs&&fc.tasa>1)?fc.tasa:null,cargo:cargoDoc,ncret:null,abono:null,
+          saldo:bs?R(cargoDoc+suma('cargo')-suma('ncret')-suma('abono')):R(sF)});
+        sub.forEach(r=>rows.push(r));
+      });
+      // NC / ND directas al proveedor (sin factura): se listan una sola vez, igual en USD y en Bs. Las ligadas a una factura ya van dentro de esa factura.
+      const ncDir=g.ncDir||[];
+      ncDir.forEach(n=>{
+        const esNC=n.tipo==='NC';
+        const t=pN(n.tasaFactura||0)||tasaBCV||1;
+        const v=bs?R(pN(n.monto||0)):R(t>1?pN(n.monto||0)/t:0);
+        const vU=t>1?pN(n.monto||0)/t:0; // USD de la nota: el mismo cálculo que usa la pantalla en dólares
+        rows.push({nivel:0,esDoc:false,tono:'nc',cat:'NOTA',doc:(esNC?'NC':'ND')+' · '+(n.nroDocumento||'—'),fecha:n.fecha||'',vence:'',tipoTxt:esNC?'Nota de Crédito':'Nota de Débito',
+          detalle:n.descripcion||'Ajuste directo al proveedor',tasa:null,cargo:esNC?null:v,ncret:esNC?v:null,abono:null,saldo:esNC?R(-v):v,saldoUsd:esNC?-vU:vU,estado:''});
+      });
+      // Anticipos pendientes de aplicar
+      (_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[]).forEach(a=>{
+        const ab=ecbAnticipoBs(a,a._saldoAnt);
+        const v=bs?(ab.sinTasa?null:ab.saldoBs):R(a._saldoAnt);
+        rows.push({nivel:0,esDoc:false,tono:'ant',cat:'OTRO',doc:'ANTICIPO',fecha:a.fecha||'',vence:'',tipoTxt:'Anticipo',
+          detalle:[a.concepto||'Anticipo a proveedor',a.referencia?'#'+a.referencia:'',a.banco,'Pagado '+ecbMoney('USD',pN(a.monto||0)),pN(a.montoAplicado||0)>0.01?'Aplicado '+ecbMoney('USD',pN(a.montoAplicado||0)):''].filter(Boolean).join(' · '),
+          tasa:bs&&pN(a.tasa||0)>1?pN(a.tasa):null,cargo:null,ncret:null,abono:v,saldo:v==null?null:R(-v),saldoUsd:-a._saldoAnt,estado:'',aviso:(bs&&ab.sinTasa)?'⚠ Sin tasa':''});
+      });
+      // Ajustes de banco / caja a la cuenta del proveedor
+      getAjustesCxpProv(g).forEach(a=>{
+        const pos=a._montoUSD>=0;
+        const aj=ecbAjusteBs(a);
+        const v=bs?(aj.sinTasa?null:aj.bs):R(Math.abs(a._montoUSD));
+        rows.push({nivel:0,esDoc:false,tono:'aju',cat:'OTRO',doc:'AJUSTE',fecha:a.fecha||'',vence:'',tipoTxt:a.tipo||'Ajuste',
+          detalle:(a.concepto||'Ajuste a Cuenta por Pagar')+(a.referencia?' · #'+a.referencia:'')+((a.cuentaNombre||a.cajaNombre)?' · '+(a.cuentaNombre||a.cajaNombre):''),
+          tasa:bs&&pN(a.tasa||0)>1?pN(a.tasa):null,cargo:pos?v:null,ncret:null,abono:pos?null:v,saldo:v==null?null:R(pos?v:-v),saldoUsd:ecbNum(a._montoUSD),estado:'',aviso:(bs&&aj.sinTasa)?'⚠ Sin tasa':''});
+      });
+      const saldoUsdG=getSaldoProv(g);
+      return {key:g.provId,nombre:g.nombre,rif:g.rif,vendedor:'',estado:ecbEstadoDe(saldoUsdG),saldoUsd:saldoUsdG,sinFactura:sinBsN?{n:sinBsN,usd:R(sinBsUsd)}:null,rows};
+    });
+    const filtros=['Moneda: '+(bs?'Bolívares (Bs.)':'Dólares (USD)')];
+    if(ecSearch) filtros.push('Búsqueda: «'+ecSearch+'»');
+    if(ecDesde) filtros.push('Facturas desde '+ecbFecha(ecDesde));
+    if(ecHasta) filtros.push('Hasta '+ecbFecha(ecHasta));
+    const haySinTasa=terceros.some(t=>t.rows.some(r=>(r.aviso||'').indexOf('Sin tasa')>=0));
+    const notas=[];
+    if(bs){
+      notas.push('Cada documento se expresa con sus propios datos en Bs.: la factura con su total del Libro de Compras, la retención de IVA con el monto en Bs. de su comprobante, la de ISLR con su monto en Bs., las notas de crédito/débito con el monto de la nota y cada pago con los Bs. de ese pago (USD × la tasa registrada en el pago). Nada se convierte con una tasa de corte.');
+      notas.push('Saldo Bs. = Facturado + notas de débito − notas de crédito − retenciones − pagado ± anticipos y ajustes. Las notas se aplican con su monto (sin IVA), igual que en Cuentas por Pagar.');
+      notas.push('El estado (Pendiente / Saldado / A favor) y el «Saldo USD (ref.)» son los que lleva el sistema en dólares. El saldo en Bs. puede diferir por la variación de la tasa entre la factura y cada pago (diferencial cambiario).');
+      if(terceros.some(t=>t.sinFactura)) notas.push('Los documentos sin datos en Bs. (por ejemplo, saldos iniciales cargados sin tasa) se muestran solo en USD y no suman al saldo en Bs.');
+    } else {
+      notas.push('Montos en dólares (USD) tal como los muestra el sistema. Las retenciones de IVA y las notas se convierten a USD con la tasa de cada documento.');
+    }
+    if(haySinTasa) notas.push('Las partidas marcadas «Sin tasa» no tienen monto en Bs. registrado ni tasa para calcularlo; no se suman.');
+    const modelo=ecbCerrarModelo({ent:'CXP',mon,titulo:'ESTADO DE CUENTA — CUENTAS POR PAGAR',subtitulo:'CUENTAS POR PAGAR · PROVEEDORES',terNombre:'Proveedor',terPlural:'proveedores',terVendedor:false,lblCargo:'Facturado',lblAbono:'Pagado',lblSinBs:'doc. sin datos en Bs.',
+      empresa:settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.',rif:settings?.empresaRif||'J-41230937-4',direccion:settings?.empresaDireccion||'',
+      corte:ecHasta||hoy,desde:ecDesde,hasta:ecHasta,neFiltro:'TODAS',pagina:'LEGAL',filtros,notas,terceros});
+    if(!bs&&modelo.terceros.some((t)=>!t.sum.cuadra)) modelo.notas.push('En USD el saldo es el que calcula el sistema; en algunos proveedores puede diferir de la suma de las partidas mostradas.');
+    return modelo;
+  };
+  let modeloBs=null, errorBs='';
+  if(ecMoneda==='BS'){ try{ modeloBs=construirModeloProv('BS'); }catch(e){ errorBs=(e&&e.message)||String(e); console.error(e); } }
+  const avisarEc = (t) => { if(typeof setDialog==='function') setDialog({title:'Estado de Cuenta',text:String(t),type:'alert'}); else alert(t); };
+
   // ── PDF ────────────────────────────────────────────────────────────
   const exportarPDF = () => {
+    if(ecMoneda==='BS'){ try{ ecbAbrirPdf(construirModeloProv('BS'),avisarEc); }catch(e){ avisarEc('Error PDF: '+((e&&e.message)||e)); } return; }
     const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
     const rifEmp=settings?.empresaRif||'J-41230937-4';
     const body=filtrados.map(g=>{
       const saldoG=getSaldoProv(g);
       const factsProv=g.facts;
-      const ncNDs=_ncPorProv.get(g.rif)||[];
+      const ncNDs=g.ncDir||[];
       const anticiposG=_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
       const factRows=factsProv.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(f=>{
         const tasa=Math.max(pN(f.tasa||0)||tasaBCV||1,1);
@@ -18910,7 +19048,8 @@ const EstadoCuentaProvView = ({
 </tr>
 ${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#16a34a" colspan="3">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''}</td><td style="color:#16a34a">${p.banco||''}</td><td colspan="3" style="text-align:right;color:#16a34a;font-family:monospace">-$${fN(pN(p.monto||0))}</td><td></td><td style="color:#16a34a;font-style:italic">${p.concepto||'—'}</td></tr>`).join('')}
 ${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#dc2626" colspan="3">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'}</td><td></td><td colspan="3" style="text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasa)}</td><td></td><td></td></tr>`).join('')}
-${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}`;
+${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}
+${(_ncPorFact.get(f.id)||[]).map(n=>{const tN=pN(n.tasaFactura||0)||tasa||1;const uN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'+$'}${fN(uN)}</td><td></td><td></td></tr>`;}).join('')}`;
       }).join('');
       const ncRows=ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'$'}${fN(u)}</td><td></td><td></td></tr>`;}).join('');
       const anticipoRows=anticiposG.map(a=>`<tr style="background:#ecfdf5;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#0f766e">↳ 💰 Anticipo ${fD(a.fecha)} · ${a.metodo||'—'} ${a.referencia?'#'+a.referencia:''}</td><td style="color:#0f766e">${a.banco||''}</td><td colspan="3" style="text-align:right;color:#0f766e;font-family:monospace">-$${fN(a._saldoAnt)}</td><td></td><td style="color:#0f766e;font-style:italic">${a.concepto||'Anticipo a proveedor'}</td></tr>`).join('');
@@ -18940,7 +19079,16 @@ ${body}
   };
 
   // ── Excel ──────────────────────────────────────────────────────────
-  const exportarExcel = () => {
+  const exportarExcel = async () => {
+    try{
+      await ecbExportXLSX(construirModeloProv(ecMoneda));
+    }catch(e){
+      const msg=(e&&e.message)||String(e);
+      if(ecMoneda!=='BS'&&!/No hay registros/.test(msg)){ console.error(e); try{ exportarExcelBasico(); return; }catch(e2){} }
+      avisarEc('Error Excel: '+msg);
+    }
+  };
+  const exportarExcelBasico = () => {
     const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
     const ths=['Proveedor','RIF','Facturado','Cobrado','Ret. IVA','Ret. ISLR','NC/ND','Anticipo','Saldo','Estado'];
     const rows=filtrados.map(g=>{
@@ -18949,7 +19097,7 @@ ${body}
       const pagado=g.facts.reduce((s,f)=>s+(_pagosPorFact.get(f.id)||[]).reduce((ss,p)=>ss+pN(p.monto||0),0),0);
       const retIVA=g.facts.reduce((s,f)=>{const t=Math.max(pN(f.tasa||0)||tasaBCV||1,1);return s+(_retsPorFact.get(f.id)||[]).reduce((ss,r)=>ss+pN(r.montoBs||r.montoRetenido||0)/t,0);},0);
       const retISLR=g.facts.reduce((s,f)=>s+(f.retISLRLista||[]).reduce((ss,r)=>ss+pN(r.monto||0),0),0);
-      const ncNet=(_ncPorProv.get(g.rif)||[]).reduce((s,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return s+(n.tipo==='ND'?u:-u);},0);
+      const ncNet=(g.ncDir||[]).reduce((s,n)=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return s+(n.tipo==='ND'?u:-u);},0)-g.facts.reduce((s,f)=>s+getNetoNCND(f.id,f.tasa),0); // notas directas + las ligadas a sus facturas, cada una una sola vez
       return [g.nombre,g.rif,facturado,pagado,retIVA,retISLR,ncNet,getAnticipoProv(g),saldoG,saldoG<-0.01?'A favor':saldoG<0.01?'Saldado':'Pendiente'];
     });
     const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${emp} — ESTADO DE CUENTA PROVEEDORES · Corte: ${ecHasta||hoy}</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td style="padding:4px 6px">${c}</td>`).join('')}</tr>`).join('')}</tbody><tfoot><tr><td colspan="8" style="font-weight:bold;padding:4px 6px">TOTAL</td><td style="font-weight:bold;padding:4px 6px">${fN(totalSaldo)}</td><td></td></tr></tfoot></table></body></html>`;
@@ -18962,7 +19110,7 @@ ${body}
       <div className="bg-white rounded-2xl border p-4 flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-black text-xl uppercase flex items-center gap-2"><BarChart3 size={20} className="text-orange-500"/>Estado de Cuenta — Proveedores</h2>
-          <p className="text-xs text-gray-500 mt-1">{filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facts.length,0)} documentos · Saldo total: <span className="font-black text-orange-700">${fN(totalSaldo)}</span></p>
+          <p className="text-xs text-gray-500 mt-1">{ecMoneda==='BS'&&modeloBs?modeloBs.terceros.length:filtrados.length} proveedores · {filtrados.reduce((s,g)=>s+g.facts.length,0)} documentos · {ecMoneda==='BS'&&modeloBs?<>Saldo total: <span className="font-black text-orange-700">{ecbMoney('BS',modeloBs.tot.saldo)}</span> <span className="text-gray-400">(ref. USD ${fN(modeloBs.tot.saldoUsd)})</span></>:<>Saldo total: <span className="font-black text-orange-700">${fN(totalSaldo)}</span></>}</p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
           <input value={ecSearch} onChange={e=>setEcSearch(e.target.value)} placeholder="Buscar proveedor..." className="border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400 w-44"/>
@@ -18974,13 +19122,22 @@ ${body}
             <span className="text-[9px] text-gray-400 font-bold">Hasta</span>
             <input type="date" value={ecHasta} onChange={e=>setEcHasta(e.target.value)} className="border border-gray-200 rounded-xl px-2 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
           </div>
+          <div className="flex items-center gap-1" data-testid="ec-moneda">
+            <span className="text-[9px] text-gray-400 font-bold uppercase">Moneda</span>
+            <div className="flex rounded-xl overflow-hidden border border-orange-300">
+              <button onClick={()=>setEcMoneda('USD')} data-testid="ec-moneda-usd" className={'px-3 py-2 text-[10px] font-black uppercase transition-all '+(ecMoneda!=='BS'?'bg-orange-500 text-white':'bg-white text-gray-500 hover:bg-orange-50')}>$ USD</button>
+              <button onClick={()=>setEcMoneda('BS')} data-testid="ec-moneda-bs" className={'px-3 py-2 text-[10px] font-black uppercase transition-all '+(ecMoneda==='BS'?'bg-orange-500 text-white':'bg-white text-gray-500 hover:bg-orange-50')}>Bs.</button>
+            </div>
+          </div>
           <button onClick={()=>setEcExpandAll(v=>!v)} className="px-3 py-2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-100">{ecExpandAll?'▲':'▼'} Todo</button>
-          <button onClick={exportarPDF} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF</button>
-          <button onClick={exportarExcel} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-sm"><Download size={12}/>Excel</button>
+          <button data-testid="ec-btn-pdf" onClick={exportarPDF} className="flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-red-700 shadow-sm"><Printer size={12}/>PDF{ecMoneda==='BS'?' Bs.':''}</button>
+          <button data-testid="ec-btn-excel" onClick={exportarExcel} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700 shadow-sm"><Download size={12}/>Excel{ecMoneda==='BS'?' Bs.':''}</button>
         </div>
       </div>
 
       {/* TABLA */}
+      {ecMoneda==='BS'&&((errorBs||!modeloBs)?<div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs font-bold text-red-700" data-testid="ecb-error">No se pudo armar el Estado de Cuenta en Bs.: {errorBs||'sin datos'}. Vuelve a USD.</div>:<EcbPanel m={modeloBs} expanded={ecExpanded} setExpanded={setEcExpanded} todoAbierto={ecExpandAll}/>)}
+      {ecMoneda!=='BS'&&(
       <div className="bg-white border-2 border-gray-100 rounded-2xl overflow-hidden">
         {filtrados.length===0?(
           <div className="text-center py-16 text-gray-400 font-bold text-xs uppercase">Sin datos para el período seleccionado</div>
@@ -18988,7 +19145,7 @@ ${body}
           filtrados.map(g=>{
             const saldoG=getSaldoProv(g);
             const isExp=ecExpandAll||!!ecExpanded[g.provId];
-            const ncNDs=_ncPorProv.get(g.rif)||[];
+            const ncNDs=g.ncDir||[];
             const anticiposG=_anticiposPorProv.get(g.rif)||_anticiposPorProv.get(g.provId)||[];
             const ajustesG=getAjustesCxpProv(g);
             const facturado=g.facts.reduce((s,f)=>s+pN(f.total||0),0);
@@ -19178,6 +19335,7 @@ ${body}
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };
@@ -21020,9 +21178,9 @@ const getDeviceLabel = () => {
   return `${nav} en ${os}`;
 };
 
-const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num || 0);
+const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' }).format(num || 0);
 // Tasa de cambio: hasta 4 decimales (mínimo 2)
-const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num || 0);
+const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4, useGrouping: 'always' }).format(num || 0);
 
 // Format finished goods label: PRODUCTO ANCHO×LARGO×MICMiC - CLIENTE
 // Video de login: se carga desde Firebase settings.loginVideo
@@ -21464,7 +21622,7 @@ const generateDefaultPermissions = () => {
 
 
 // ============================================================================
-const contFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+const contFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' }).format(Number(n) || 0);
 const sugerirTipoPartida = (codigo) => {
   const c = String(codigo||'');
   if (/^1\.1\.01/.test(c)) return 'MONETARIA';      // Efectivo, Bancos
@@ -21481,7 +21639,7 @@ const sugerirTipoPartida = (codigo) => {
 // superando el costo histórico de un activo viejo, o un tercero con posición acreedora) se
 // mostraba como si fuera positivo, sin signo ni ningún indicio visual. Visto en datos reales:
 // "Total Inmueble (Galpón)" mostrando Bs.3.738.003,64 cuando el neto real era -3.738.003,64.
-const ccFmtR = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+const ccFmtR = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' }).format(Number(n) || 0);
 
 // ════════════════════════════════════════════════════════════════════════
 // ÁRBOL CONTABLE — Estado de Resultados / Balance General (Contabilidad)
@@ -22071,6 +22229,605 @@ const ccExportXLSX = async (titulo, subtitulo, tree, currency, totalBase, getDet
   document.body.appendChild(link); link.click(); document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
+// == INICIO EC BS ==
+// ESTADO DE CUENTA EN Bs. (CxC y CxP) y EXCEL PROFESIONAL (USD y Bs.)
+// Principio: cada documento aporta SUS PROPIOS datos en Bs. — los mismos que van al Libro de Ventas / Libro de Compras y a las
+// retenciones — y nada se re-valora a una tasa de corte. Si un dato no existe en Bs., se marca «sin tasa» y no se inventa.
+const ecbNum = (v) => { const n = parseNum(v); return Number.isFinite(n) ? n : 0; };
+const ecbR2 = (v) => { const n = ecbNum(v); return (Math.round((n + (n < 0 ? -1e-9 : 1e-9)) * 100) / 100) || 0; };
+// Formato venezolano 1.234,56 (igual que el Libro de Ventas / Compras); nunca «-0,00»
+const ecbFmt = (n) => { const v = ecbR2(n); const p = Math.abs(v).toFixed(2).split('.'); return (v < 0 ? '-' : '') + p[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + p[1]; };
+const ecbMoney = (mon, n) => { const v = ecbR2(n); return (v < 0 ? '-' : '') + (mon === 'BS' ? 'Bs. ' : '$') + ecbFmt(Math.abs(v)); };
+const ecbFecha = (d) => { if (!d) return ''; const s = String(d).slice(0, 10).split('-'); return (s.length === 3 && s[0].length === 4) ? s[2] + '/' + s[1] + '/' + s[0] : String(d); };
+const ecbSumaDias = (f, dias) => { const p = String(f || '').slice(0, 10).split('-').map(Number); const n = Math.round(Number(dias) || 0); if (p.length !== 3 || !p[0] || !(n > 0)) return ''; return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10); };
+const ecbEsc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// Estado según el saldo en USD (que es como el sistema decide si algo está pendiente)
+const ecbEstadoDe = (v) => (v < -0.01 ? 'FAVOR' : (v < 0.01 ? 'SALDADO' : 'PENDIENTE'));
+const ECB_ESTADO_TXT = { FAVOR: 'A favor', SALDADO: 'Saldado', PENDIENTE: 'Pendiente' };
+const ecbNombreArchivo = (m, ext) => 'Estado_Cuenta_' + (m.ent === 'CXP' ? 'CxP' : 'CxC') + '_' + (m.mon === 'BS' ? 'Bs' : 'USD') + (m.neFiltro && m.neFiltro !== 'TODAS' ? (m.neFiltro === 'CON_FACTURA' ? '_CxC_fiscal' : '_CxC_sin_factura') : '') + '_' + (m.corte || getTodayDate()) + '.' + ext;
+
+// ── Datos en Bs. de cada documento (mismos criterios que los libros) ──
+// Factura de venta: igual que la fila FACTURA del Libro de Ventas (totalBs / baseGravableBs / ivaBs propios; si no están, USD × tasa de la factura)
+const ecbFacturaVenta = (inv, tasaFb) => {
+  const tasa = ecbNum(inv.tasa) || ecbNum(tasaFb) || 1;
+  const base = ecbNum(inv.montoBase);
+  const ivaAmt = ecbNum(inv.iva) || (inv.aplicaIva === 'SI' ? parseFloat((base * 0.16).toFixed(2)) : 0);
+  const total = ecbNum(inv.total) || base + ivaAmt;
+  return { tasa, baseBs: ecbR2(ecbNum(inv.baseGravableBs) || base * tasa), ivaBs: ecbR2(ecbNum(inv.ivaBs) || ivaAmt * tasa), totalBs: ecbR2(ecbNum(inv.totalBs) || total * tasa) };
+};
+// NC/ND de venta: igual que el Libro de Ventas (monto = base en Bs.; IVA y total propios de la nota si existen, si no 16 %). No fiscal: sin IVA
+const ecbNotaVenta = (n) => {
+  const baseBs = ecbNum(n.monto);
+  const fiscal = (n.naturaleza || 'FISCAL') === 'FISCAL';
+  const ivaBs = fiscal ? (ecbNum(n.ivaBs) || ecbR2(baseBs * 0.16)) : 0;
+  const totalBs = fiscal ? (ecbNum(n.totalBs) || ecbR2(baseBs + ivaBs)) : baseBs;
+  return { baseBs: ecbR2(baseBs), ivaBs: ecbR2(ivaBs), totalBs: ecbR2(totalBs), fiscal };
+};
+// Cobro (CxC) o pago (CxP): el Bs. que se registró (montoBs); si no existe, USD × la tasa de ese cobro/pago; si tampoco, la tasa de la factura. Sin dato → «sin tasa»
+const ecbMovBs = (c, tasaDoc) => {
+  const usd = ecbNum(c.monto);
+  const bsRec = ecbNum(c.montoBs);
+  if (bsRec > 0) return { bs: ecbR2(bsRec), tasa: ecbNum(c.tasa) || (usd > 0 ? bsRec / usd : 0), via: 'monto en Bs. registrado', sinTasa: false };
+  const t = ecbNum(c.tasa);
+  if (t > 1) return { bs: ecbR2(usd * t), tasa: t, via: 'tasa del movimiento', sinTasa: false };
+  const td = ecbNum(tasaDoc);
+  if (td > 1) return { bs: ecbR2(usd * td), tasa: td, via: 'tasa de la factura', sinTasa: false };
+  return { bs: 0, tasa: 0, via: 'sin tasa', sinTasa: usd > 0 };
+};
+// Saldo a favor (anticipo) en Bs.: la parte del Bs. recibido/pagado que corresponde a lo que aún no se aplicó
+const ecbAnticipoBs = (a, saldoUSD) => {
+  const usd = ecbNum(a.monto), bs = ecbNum(a.montoBs), t = ecbNum(a.tasa);
+  const totalBs = bs > 0 ? bs : (t > 1 ? usd * t : 0);
+  const sinTasa = !(totalBs > 0) && usd > 0;
+  const saldoBs = (saldoUSD > 0.005 && usd > 0 && !sinTasa) ? ecbR2(totalBs * Math.min(1, saldoUSD / usd)) : 0;
+  return { totalBs: ecbR2(totalBs), saldoBs, sinTasa };
+};
+// Ajuste de banco/caja: el Bs. del movimiento; si no, USD × tasa del movimiento
+const ecbAjusteBs = (a) => {
+  const bs = ecbNum(a.montoBs), usd = ecbNum(a.montoUSD), t = ecbNum(a.tasa);
+  const v = bs > 0 ? bs : (usd > 0 && t > 1 ? usd * t : 0);
+  return { bs: ecbR2(v), sinTasa: !(v > 0) && usd > 0 };
+};
+// Factura de compra: igual que el Libro de Compras (totales.totalBs → totalBs → USD × tasa)
+const ecbFacturaCompra = (f) => {
+  const tot = f.totales || {};
+  const tasa = ecbNum(f.tasa);
+  const propio = ecbNum(tot.totalBs) || ecbNum(f.totalBs);
+  return {
+    tasa, totalBs: ecbR2(propio || ecbNum(f.total) * tasa), sinTasa: !(propio > 0) && !(tasa > 0) && ecbNum(f.total) > 0,
+    base16Bs: ecbR2(tot.base16Bs), iva16Bs: ecbR2(tot.iva16Bs), base8Bs: ecbR2(tot.base8Bs), iva8Bs: ecbR2(tot.iva8Bs), exentoBs: ecbR2(tot.exentoBs),
+  };
+};
+// Retención de ISLR de una factura de compra en Bs.: montoBs guardado; si no, USD × tasa de la factura
+const ecbIslrBs = (r, tasaFact) => ecbR2(ecbNum(r.montoBs) || ecbNum(r.monto) * ecbNum(tasaFact));
+
+// Reparto de un monto en Bs. (p. ej. una factura o su retención que cubre varias NE) según el peso de cada NE, sin perder ni ganar centavos:
+// cada NE recibe la diferencia entre los acumulados redondeados, así la suma de las partes es exactamente el monto (el del Libro de Ventas).
+const ecbReparto = (monto, pesos, i) => {
+  const n = pesos.length;
+  if (n <= 1 || i < 0 || i >= n) return ecbR2(monto);
+  const w0 = pesos.map((p) => Math.max(0, ecbNum(p)));
+  const tot = w0.reduce((s, p) => s + p, 0);
+  const w = (k) => (tot > 0 ? w0[k] / tot : 1 / n);
+  let a = 0; for (let k = 0; k < i; k++) a += w(k);
+  const b = i === n - 1 ? 1 : a + w(i);
+  return ecbR2(ecbR2(monto * b) - ecbR2(monto * a));
+};
+
+// ── Cierre del modelo: totales por tercero y generales (a partir de las filas) ──
+// Fila: {nivel 0|1, tono, cat('FACT'|'NOTA'|'RET'|'COBRO'|'OTRO'|''), doc, fecha, vence, tipoTxt, detalle, tasa, cargo, ncret, abono, saldo, saldoUsd, estado, aviso}
+// Con la identidad  saldo = facturado + notas − retenido − cobrado + otros  (solo cuenta el saldo de las filas de nivel 0).
+const ecbCerrarModelo = (m) => {
+  // En Bs. cada monto ya está en centavos exactos (se redondea solo el ruido de coma flotante). En USD se conservan los montos tal como los calcula la pantalla
+  // (sin redondear por fila), para que los subtotales coincidan con ella; el formato muestra 2 decimales.
+  const RR = m.mon === 'BS' ? ecbR2 : (v) => v;
+  const z = () => ({ facturado: 0, notas: 0, retenido: 0, cobrado: 0, otros: 0, cargo: 0, ncret: 0, abono: 0, saldo: 0, saldoUsd: 0 });
+  const G = z();
+  m.terceros.forEach((t) => {
+    const s = z();
+    (t.rows || []).forEach((r) => {
+      const cg = r.cargo == null ? 0 : r.cargo, nr = r.ncret == null ? 0 : r.ncret, ab = r.abono == null ? 0 : r.abono;
+      s.cargo += cg; s.ncret += nr; s.abono += ab;
+      if (r.nivel === 0 && r.saldo != null) s.saldo += r.saldo;
+      if (r.nivel === 0 && r.saldoUsd != null) s.saldoUsd += r.saldoUsd;
+      if (r.cat === 'FACT') s.facturado += cg;
+      else if (r.cat === 'NOTA') s.notas += cg - nr;
+      else if (r.cat === 'RET') s.retenido += nr;
+      else if (r.cat === 'COBRO') s.cobrado += ab;
+      else if (r.cat === 'OTRO') s.otros += cg - ab;
+    });
+    Object.keys(s).forEach((k) => { if (k !== 'saldoUsd') s[k] = RR(s[k]); });
+    s.cuadra = Math.abs(s.saldo - (s.facturado + s.notas - s.retenido - s.cobrado + s.otros)) < 0.05;
+    t.sum = s;
+    t.nDocs = (t.rows || []).filter((r) => r.esDoc).length;
+    ['facturado', 'notas', 'retenido', 'cobrado', 'otros', 'cargo', 'ncret', 'abono', 'saldo', 'saldoUsd'].forEach((k) => { G[k] += s[k]; });
+  });
+  Object.keys(G).forEach((k) => { if (k !== 'saldoUsd') G[k] = RR(G[k]); });
+  m.tot = G;
+  m.nDocs = m.terceros.reduce((a, t) => a + t.nDocs, 0);
+  return m;
+};
+
+// ── Paleta de tonos por tipo de fila (la misma de la pantalla actual) ──
+const ECB_TONOS = {
+  doc: { bg: '#ffffff', fg: '#111827', bd: '#e5e7eb', badge: '#eff6ff', badgeFg: '#1d4ed8', x: 'FFFFFFFF', xf: 'FF111827', xb: 'FF1D4ED8' },
+  fac: { bg: '#eef2ff', fg: '#4338ca', bd: '#e0e7ff', badge: '#eef2ff', badgeFg: '#4338ca', x: 'FFEEF2FF', xf: 'FF4338CA', xb: 'FF4338CA' },
+  nc: { bg: '#faf5ff', fg: '#7c3aed', bd: '#d8b4fe', badge: '#faf5ff', badgeFg: '#7c3aed', x: 'FFFAF5FF', xf: 'FF7C3AED', xb: 'FF7C3AED' },
+  ret: { bg: '#fffbeb', fg: '#b45309', bd: '#fde68a', badge: '#fffbeb', badgeFg: '#b45309', x: 'FFFFFBEB', xf: 'FFB45309', xb: 'FFB45309' },
+  retx: { bg: '#f0fdfa', fg: '#0f766e', bd: '#99f6e4', badge: '#f0fdfa', badgeFg: '#0f766e', x: 'FFF0FDFA', xf: 'FF0F766E', xb: 'FF0F766E' },
+  pago: { bg: '#f0fdf4', fg: '#166534', bd: '#bbf7d0', badge: '#f0fdf4', badgeFg: '#166534', x: 'FFF0FDF4', xf: 'FF166534', xb: 'FF166534' },
+  ant: { bg: '#f0fdfa', fg: '#0f766e', bd: '#99f6e4', badge: '#f0fdfa', badgeFg: '#0f766e', x: 'FFF0FDFA', xf: 'FF0F766E', xb: 'FF0F766E' },
+  aju: { bg: '#ecfeff', fg: '#0e7490', bd: '#a5f3fc', badge: '#ecfeff', badgeFg: '#0e7490', x: 'FFECFEFF', xf: 'FF0E7490', xb: 'FF0E7490' },
+  info: { bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0', badge: '#f1f5f9', badgeFg: '#475569', x: 'FFF1F5F9', xf: 'FF475569', xb: 'FF475569' },
+};
+
+// ── HTML para imprimir / guardar como PDF (pantalla de impresión del navegador) ──
+const ecbHtmlPdf = (m) => {
+  const bs = m.mon === 'BS';
+  const E = ecbEsc;
+  const M = (n) => ecbMoney(m.mon, n);
+  const badge = (txt, bg, col) => '<span style="background:' + bg + ';color:' + col + ';padding:1px 6px;border-radius:8px;font-size:7px;font-weight:900;white-space:nowrap">' + E(txt) + '</span>';
+  const estB = (e) => e === 'FAVOR' ? badge('A favor', '#f0fdfa', '#0f766e') : e === 'SALDADO' ? badge('Saldado', '#f0fdf4', '#16a34a') : e === 'PENDIENTE' ? badge('Pendiente', '#fef2f2', '#dc2626') : '';
+  const colSaldo = (v) => v < -0.01 ? '#0f766e' : v < 0.01 ? '#16a34a' : '#dc2626';
+  const celNum = (v, st) => '<td style="padding:3px 6px;text-align:right;font-family:monospace;white-space:nowrap;' + (st || '') + '">' + (v == null ? '<span style="color:#cbd5e1">—</span>' : E(ecbFmt(v))) + '</td>';
+  const nCols = bs ? 12 : 10;
+  const th = (t, al) => '<th style="padding:4px 6px;text-align:' + (al || 'left') + ';font-size:7px;color:#f97316;white-space:nowrap">' + t + '</th>';
+  let body = '';
+  m.terceros.forEach((t) => {
+    const s = t.sum;
+    let filas = '';
+    t.rows.forEach((r, i) => {
+      const tn = ECB_TONOS[r.tono] || ECB_TONOS.doc;
+      const sub = r.nivel > 0;
+      const bg = (r.tono === 'doc' && i % 2) ? '#f8fafc' : tn.bg;
+      filas += '<tr style="background:' + bg + ';border-bottom:1px solid ' + tn.bd + '">'
+        + '<td style="padding:' + (sub ? '2px 6px 2px 18px' : '3px 6px') + ';color:' + (sub ? tn.fg : '#f97316') + ';font-weight:' + (sub ? '700' : '900') + ';font-size:' + (sub ? '8' : '9') + 'px;white-space:nowrap">' + (sub ? '↳ ' : '') + E(r.doc) + '</td>'
+        + '<td style="padding:3px 6px;font-size:8px;white-space:nowrap;color:' + (sub ? tn.fg : '#111827') + '">' + E(ecbFecha(r.fecha)) + (r.vence ? '<br><span style="color:#b45309;font-size:7px">Vence: ' + E(ecbFecha(r.vence)) + '</span>' : '') + '</td>'
+        + '<td style="padding:3px 6px">' + badge(r.tipoTxt || '', tn.badge, tn.badgeFg) + '</td>'
+        + '<td style="padding:3px 6px;font-size:8px;color:' + (sub ? tn.fg : '#475569') + ';max-width:' + (bs ? '230' : '260') + 'px">' + E(r.detalle || '') + (r.aviso ? ' <b style="color:#dc2626">' + E(r.aviso) + '</b>' : '') + '</td>'
+        + (bs ? '<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:#64748b;white-space:nowrap">' + (r.tasa > 0 ? E(ecbFmt(r.tasa)) : '') + '</td>' : '')
+        + celNum(r.cargo, 'font-weight:' + (sub ? '700' : '800') + ';font-size:' + (sub ? '8' : '9') + 'px')
+        + celNum(r.ncret, 'font-size:8px;color:#dc2626;font-weight:700')
+        + celNum(r.abono, 'font-size:8px;color:#16a34a;font-weight:700')
+        + (r.nivel === 0 && r.saldo != null ? celNum(r.saldo, 'font-weight:900;font-size:9px;color:' + colSaldo(r.saldo)) : celNum(null))
+        + (bs ? (r.nivel === 0 && r.saldoUsd != null ? celNum(r.saldoUsd, 'font-size:8px;color:#64748b') : celNum(null)) : '')
+        + '<td style="padding:3px 6px;text-align:center">' + (r.nivel === 0 ? estB(r.estado) : '') + '</td>'
+        + '</tr>';
+    });
+    const chip = (l, v, c) => '<div style="text-align:right"><div style="color:' + (c || '#94a3b8') + '">' + l + '</div><div style="font-weight:900;color:' + (c || '#fff') + '">' + E(v) + '</div></div>';
+    body += '<div style="margin-bottom:14px;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden">'
+      + '<div style="background:#1e293b;color:#fff;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;page-break-after:avoid">'
+      + '<div><div style="font-weight:900;font-size:11px">' + E(t.nombre) + '</div><div style="font-size:8px;color:#94a3b8">' + E(t.rif || '') + (t.vendedor ? ' · ' + E(t.vendedor) : '') + ' · ' + t.nDocs + ' documento' + (t.nDocs === 1 ? '' : 's') + (bs && t.sinFactura ? ' · ' + t.sinFactura.n + ' ' + E(m.lblSinBs || 'NE sin factura') + ' (solo USD)' : '') + '</div></div>'
+      + '<div style="display:flex;align-items:center;gap:18px;font-size:9px">'
+      + chip(m.lblCargo || 'Facturado', M(s.facturado)) + chip(m.lblAbono || 'Cobrado', M(s.cobrado), '#6ee7b7')
+      + (s.retenido > 0.004 ? chip('Retenciones', M(s.retenido), '#5eead4') : '')
+      + chip('Saldo ' + (bs ? 'Bs.' : 'USD'), M(s.saldo), s.saldo < -0.01 ? '#5eead4' : s.saldo < 0.01 ? '#6ee7b7' : '#f97316')
+      + (bs ? chip('Saldo USD (ref.)', ecbMoney('USD', s.saldoUsd), '#cbd5e1') : '')
+      + '<div>' + estB(t.estado) + '</div></div></div>'
+      + '<table style="width:100%;border-collapse:collapse"><thead style="display:table-header-group"><tr style="background:#0f172a">'
+      + th('DOCUMENTO') + th('FECHA') + th('TIPO') + th('DETALLE') + (bs ? th('TASA', 'right') : '')
+      + th((bs ? 'CARGO Bs.' : 'CARGO USD'), 'right') + th('NC/RET.', 'right') + th('ABONO', 'right') + th((bs ? 'SALDO Bs.' : 'SALDO USD'), 'right') + (bs ? th('SALDO USD', 'right') : '') + th('ESTADO', 'center')
+      + '</tr></thead><tbody>' + filas + '</tbody>'
+      + '<tfoot><tr style="background:#1e293b;color:#fff;page-break-inside:avoid"><td colspan="' + (bs ? 5 : 4) + '" style="padding:4px 8px;font-size:8px;font-weight:900">SUBTOTAL · ' + t.nDocs + ' DOC' + (t.nDocs === 1 ? '' : 'S') + '</td>'
+      + celNum(s.cargo, 'font-weight:900;font-size:9px') + celNum(s.ncret, 'font-weight:900;font-size:9px;color:#5eead4') + celNum(s.abono, 'font-weight:900;font-size:9px;color:#6ee7b7')
+      + celNum(s.saldo, 'font-weight:900;font-size:10px;color:' + (s.saldo < -0.01 ? '#5eead4' : s.saldo < 0.01 ? '#6ee7b7' : '#f97316'))
+      + (bs ? celNum(s.saldoUsd, 'font-size:9px;color:#cbd5e1') : '') + '<td></td></tr></tfoot></table></div>';
+  });
+  const G = m.tot;
+  const css = '@page{size:' + (m.pagina === 'LEGAL' ? 'legal' : 'A4') + ' landscape;margin:1cm 1.2cm}*{margin:0;padding:0;box-sizing:border-box}body{font-family:Arial,sans-serif;font-size:9px;color:#111}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}';
+  const header = '<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px">'
+    + '<div><div style="font-size:15px;font-weight:900">' + E(m.empresa) + '</div><div style="font-size:8px;color:#64748b">RIF: ' + E(m.rif) + (m.direccion ? ' · ' + E(m.direccion) : '') + '</div></div>'
+    + '<div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#f97316">' + E(m.titulo) + ' — ' + (bs ? 'EXPRESADO EN BOLÍVARES (Bs.)' : 'EXPRESADO EN DÓLARES (USD)') + '</div>'
+    + '<div style="font-size:8px;color:#64748b">Corte: ' + E(ecbFecha(m.corte)) + ' · ' + m.terceros.length + ' ' + E(m.terPlural) + ' · ' + m.nDocs + ' docs · Saldo total: ' + E(M(G.saldo)) + (bs ? ' (ref. USD ' + E(ecbMoney('USD', G.saldoUsd)) + ')' : '') + '</div>'
+    + '</div></div>'
+    + (m.filtros && m.filtros.length ? '<div style="font-size:8px;color:#475569;margin-bottom:10px"><b>Filtros:</b> ' + m.filtros.map(E).join(' · ') + '</div>' : '');
+  const notas = (m.notas && m.notas.length) ? '<div style="margin-top:12px;border-top:1px solid #cbd5e1;padding-top:6px;font-size:7.5px;color:#64748b;line-height:1.5">' + m.notas.map((x) => '• ' + E(x)).join('<br>') + '</div>' : '';
+  const total = '<div style="background:#0f172a;color:#fff;padding:8px 12px;margin-top:10px;display:flex;justify-content:space-between;font-weight:900;font-size:11px;page-break-inside:avoid">'
+    + '<span>SALDO TOTAL · ' + m.terceros.length + ' ' + E(m.terPlural).toUpperCase() + '</span><span style="color:#f97316">' + E(M(G.saldo)) + (bs ? ' <span style="font-size:9px;color:#cbd5e1;font-weight:700">(ref. USD ' + E(ecbMoney('USD', G.saldoUsd)) + ')</span>' : '') + '</span></div>';
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + E(m.titulo) + '</title><style>' + css + '</style></head><body>' + header + body + total + notas + '<script>window.onload=function(){window.print();}<\/script></body></html>';
+};
+const ecbAbrirPdf = (m, alertFn) => {
+  try {
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(ecbHtmlPdf(m)); w.document.close(); }
+    else (alertFn || window.alert)('Activa las ventanas emergentes para este sitio.');
+  } catch (e) { (alertFn || window.alert)('Error PDF: ' + e.message); }
+};
+
+// ── Excel profesional (ExcelJS): hojas «Resumen», «Estado de Cuenta» (por tercero, imprimible) y «Datos» (plana, con filtros) ──
+const ecbExportXLSX = async (m) => {
+  const EJ = await ccLoadExcelJS();
+  const bs = m.mon === 'BS';
+  if (!m.terceros.length) throw new Error('No hay registros para exportar con los filtros actuales.');
+  const INK = 'FF0F172A', ORANGE = 'FFF97316', WHITE = 'FFFFFFFF', GRID = 'FFD1D5DB', SLATE = 'FFF1F5F9', ZEBRA = 'FFF8FAFC', DARK = 'FF1E293B';
+  const NF = bs ? '#,##0.00;[Red]\\-#,##0.00;"–"' : '"$"#,##0.00;[Red]\\-"$"#,##0.00;"–"';
+  const NF_SAL = bs ? '#,##0.00;[Red]\\-#,##0.00;0.00' : '"$"#,##0.00;[Red]\\-"$"#,##0.00;"$"0.00';
+  const NF_USD = '"$"#,##0.00;[Red]\\-"$"#,##0.00;"–"';
+  const NF_USD_SAL = '"$"#,##0.00;[Red]\\-"$"#,##0.00;"$"0.00';
+  const fill = (a) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: a } });
+  const thin = { style: 'thin', color: { argb: GRID } };
+  const bd = { top: thin, left: thin, bottom: thin, right: thin };
+  const F = (o) => Object.assign({ name: 'Arial', size: 9, color: { argb: INK } }, o || {});
+  const fechaCell = (s) => { const p = String(s || '').slice(0, 10).split('-').map(Number); return (p.length === 3 && p[0] > 1900 && p[1] >= 1 && p[1] <= 12 && p[2] >= 1 && p[2] <= 31) ? new Date(Date.UTC(p[0], p[1] - 1, p[2])) : (s || null); };
+  const hoy = ecbFecha(getTodayDate());
+  const corteTxt = ecbFecha(m.corte);
+  const monTxt = bs ? 'BOLÍVARES (Bs.)' : 'DÓLARES (USD)';
+  const wb = new EJ.Workbook();
+  wb.creator = String(m.empresa || ''); wb.created = new Date();
+  const pie = (txt) => ({ oddFooter: '&L&8&"Arial,Regular"' + txt + '&C&8&"Arial,Regular"Página &P de &N&R&8&"Arial,Regular"Generado el ' + hoy });
+  const put = (ws, r, c1, c2, val, font, al) => { if (c2 > c1) ws.mergeCells(r, c1, r, c2); const cell = ws.getCell(r, c1); cell.value = val; cell.font = font; cell.alignment = al || { vertical: 'middle', horizontal: 'left', indent: 1 }; return cell; };
+  // Membrete común: empresa a la izquierda, recuadro con moneda / corte / filtros a la derecha
+  const membrete = (ws, NCOL, tituloHoja, boxDesde) => {
+    const c2 = Math.max(1, boxDesde - 1);
+    put(ws, 1, 1, c2, String(m.empresa || ''), F({ size: 15, bold: true }));
+    put(ws, 2, 1, c2, 'RIF: ' + (m.rif || ''), F({ color: { argb: 'FF475569' } }));
+    put(ws, 3, 1, c2, String(m.direccion || ''), F({ size: 8, color: { argb: 'FF64748B' } }));
+    put(ws, 4, 1, c2, tituloHoja, F({ size: 16, bold: true, color: { argb: ORANGE } }));
+    const boxC = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    const filtTxt = (m.filtros || []).filter((x) => !/^Moneda/i.test(x)).join('  ·  ') || 'Sin filtros adicionales';
+    put(ws, 1, boxDesde, NCOL, m.subtitulo || '', F({ size: 9, bold: true, color: { argb: 'FFEA580C' } }), boxC).fill = fill(SLATE);
+    put(ws, 2, boxDesde, NCOL, 'MONEDA:  ' + monTxt, F({ size: 10, bold: true }), boxC).fill = fill(SLATE);
+    put(ws, 3, boxDesde, NCOL, 'CORTE:  ' + corteTxt, F({ size: 10, bold: true }), boxC).fill = fill(SLATE);
+    put(ws, 4, boxDesde, NCOL, filtTxt, F({ size: 8, color: { argb: 'FF475569' } }), boxC).fill = fill(SLATE);
+    [24, 15, 14, 30].forEach((h, i) => { ws.getRow(i + 1).height = h; });
+    for (let c = 1; c <= NCOL; c++) ws.getCell(5, c).fill = fill(ORANGE);
+    ws.getRow(5).height = 4;
+  };
+  const encabezado = (ws, HR, heads) => {
+    heads.forEach((t, i) => {
+      const c = ws.getCell(HR, i + 1);
+      c.value = t; c.font = F({ size: 9, bold: true, color: { argb: WHITE } }); c.fill = fill(DARK);
+      c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      c.border = { left: { style: 'thin', color: { argb: WHITE } }, right: { style: 'thin', color: { argb: WHITE } }, bottom: { style: 'medium', color: { argb: ORANGE } } };
+    });
+    ws.getRow(HR).height = 30;
+  };
+  const colTer = m.terVendedor ? 'Vendedor' : null;
+  const lblCargo = m.lblCargo || 'Facturado', lblAbono = m.lblAbono || 'Cobrado';
+
+  // ═══════════ Hoja 1: Resumen por tercero ═══════════
+  {
+    const ws = wb.addWorksheet('Resumen', {
+      properties: { tabColor: { argb: ORANGE } },
+      views: [{ state: 'frozen', ySplit: 7, showGridLines: false }],
+      pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: '7:7' },
+      headerFooter: pie('Estado de Cuenta ' + (m.ent === 'CXP' ? 'Proveedores' : 'Clientes') + ' — Resumen'),
+    });
+    const cols = [
+      { h: 'N°', w: 5, al: 'center', v: (t, i) => i + 1 },
+      { h: m.terNombre, w: 38, al: 'left', v: (t) => t.nombre },
+      { h: 'RIF', w: 15, al: 'center', v: (t) => t.rif || '' },
+    ];
+    if (colTer) cols.push({ h: colTer, w: 16, al: 'center', v: (t) => t.vendedor || '' });
+    cols.push({ h: 'Docs', w: 7, al: 'center', v: (t) => t.nDocs });
+    const money = (h, k, bold, nf) => ({ h, w: 17, al: 'right', money: true, key: k, bold, nf, v: (t) => t.sum[k] });
+    cols.push(money(lblCargo + (bs ? ' Bs.' : ' USD'), 'facturado'));
+    cols.push(money('NC / ND (neto)', 'notas'));
+    cols.push(money('Retenciones', 'retenido'));
+    cols.push(money(lblAbono, 'cobrado'));
+    cols.push(money('Anticipos / ajustes', 'otros'));
+    cols.push(Object.assign(money('SALDO ' + (bs ? 'Bs.' : 'USD'), 'saldo', true, NF_SAL)));
+    if (bs) cols.push({ h: 'Saldo USD (ref.)', w: 16, al: 'right', money: true, key: 'saldoUsd', nf: NF_USD_SAL, usd: true, v: (t) => t.sum.saldoUsd });
+    cols.push({ h: 'Estado', w: 12, al: 'center', v: (t) => ECB_ESTADO_TXT[t.estado] || '' });
+    const NCOL = cols.length;
+    cols.forEach((c, i) => { ws.getColumn(i + 1).width = c.w; });
+    membrete(ws, NCOL, m.titulo, Math.max(2, NCOL - 4));
+    const sumRes = m.terceros.length + ' ' + m.terPlural + '  ·  ' + m.nDocs + ' documentos  ·  Emitido el ' + hoy;
+    put(ws, 6, 1, NCOL, sumRes, F({ italic: true, color: { argb: 'FF64748B' } }));
+    ws.getRow(6).height = 18;
+    encabezado(ws, 7, cols.map((c) => c.h));
+    const FIRST = 8;
+    m.terceros.forEach((t, i) => {
+      const ri = FIRST + i;
+      const bg = i % 2 ? ZEBRA : WHITE;
+      cols.forEach((c, ci) => {
+        const cell = ws.getCell(ri, ci + 1);
+        const v = c.v(t, i);
+        cell.value = (v === '' ? null : v);
+        cell.font = F({ bold: !!c.bold || c.h === m.terNombre, color: { argb: c.key === 'saldo' ? (t.sum.saldo < -0.01 ? 'FF0F766E' : t.sum.saldo < 0.01 ? 'FF15803D' : 'FFDC2626') : (c.h === 'Estado' ? (t.estado === 'PENDIENTE' ? 'FFDC2626' : t.estado === 'FAVOR' ? 'FF0F766E' : 'FF15803D') : INK) } });
+        cell.fill = fill(bg); cell.border = bd;
+        cell.alignment = { vertical: 'middle', horizontal: c.al, indent: c.al === 'left' ? 1 : 0 };
+        if (c.money) cell.numFmt = c.nf || (c.usd ? NF_USD : NF);
+      });
+      ws.getRow(ri).height = 17;
+    });
+    const LAST = FIRST + m.terceros.length - 1;
+    ws.autoFilter = { from: { row: 7, column: 1 }, to: { row: LAST, column: NCOL } };
+    const T = LAST + 1;
+    for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(T, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'medium', color: { argb: ORANGE } } }; }
+    const firstMoney = cols.findIndex((c) => c.money) + 1;
+    ws.mergeCells(T, 1, T, firstMoney - 1);
+    const tl = ws.getCell(T, 1); tl.value = 'TOTAL GENERAL  —  ' + m.terceros.length + ' ' + m.terPlural; tl.font = F({ size: 10, bold: true }); tl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+    cols.forEach((c, ci) => {
+      if (!c.money) return;
+      const L = ws.getColumn(ci + 1).letter;
+      const cell = ws.getCell(T, ci + 1);
+      cell.value = { formula: 'SUM(' + L + FIRST + ':' + L + LAST + ')', result: m.tot[c.key] };
+      cell.numFmt = c.nf || (c.usd ? NF_USD : NF); cell.font = F({ size: 10, bold: true }); cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+    ws.getRow(T).height = 24;
+    // Cómo leer este reporte
+    let rr = T + 2;
+    put(ws, rr, 1, NCOL, 'NOTAS DEL REPORTE', F({ size: 10, bold: true })); ws.getRow(rr).height = 18; rr++;
+    (m.notas || []).forEach((x) => { put(ws, rr, 1, NCOL, '•  ' + x, F({ size: 8, color: { argb: 'FF475569' } }), { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 }); ws.getRow(rr).height = x.length > 170 ? 24 : 14; rr++; });
+    ws.pageSetup.printArea = 'A1:' + ws.getColumn(NCOL).letter + rr;
+  }
+
+  // ═══════════ Hoja 2: Estado de Cuenta por tercero (imprimible) ═══════════
+  {
+    const ws = wb.addWorksheet('Estado de Cuenta', {
+      properties: { tabColor: { argb: DARK }, outlineProperties: { summaryBelow: false } },
+      views: [{ state: 'frozen', ySplit: 7, showGridLines: false }],
+      pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: '7:7' },
+      headerFooter: pie('Estado de Cuenta ' + (m.ent === 'CXP' ? 'Proveedores' : 'Clientes') + ' — ' + (bs ? 'Bs.' : 'USD')),
+    });
+    // A Documento · B Fecha · C Vence · D Tipo · E Detalle · [F Tasa] · Cargo · NC/Ret · Abono · Saldo · [Saldo USD] · Estado
+    const heads = ['Documento', 'Fecha', 'Vence', 'Tipo', 'Detalle'];
+    const widths = [20, 11, 11, 17, 58];
+    if (bs) { heads.push('Tasa Bs/$'); widths.push(10); }
+    heads.push('Cargo ' + (bs ? 'Bs.' : 'USD'), 'NC / Ret. ' + (bs ? 'Bs.' : 'USD'), 'Abono ' + (bs ? 'Bs.' : 'USD'), 'Saldo ' + (bs ? 'Bs.' : 'USD')); widths.push(16, 16, 16, 17);
+    if (bs) { heads.push('Saldo USD (ref.)'); widths.push(15); }
+    heads.push('Estado'); widths.push(11);
+    const NCOL = heads.length;
+    widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    const cTasa = bs ? 6 : 0, cCargo = bs ? 7 : 6, cNC = cCargo + 1, cAb = cCargo + 2, cSal = cCargo + 3, cUsd = bs ? cCargo + 4 : 0, cEst = NCOL;
+    membrete(ws, NCOL, m.titulo, Math.max(2, NCOL - 4));
+    put(ws, 6, 1, NCOL, m.terceros.length + ' ' + m.terPlural + '  ·  ' + m.nDocs + ' documentos  ·  Emitido el ' + hoy, F({ italic: true, color: { argb: 'FF64748B' } }));
+    ws.getRow(6).height = 18;
+    encabezado(ws, 7, heads);
+    const L = (c) => ws.getColumn(c).letter;
+    let r = 8;
+    const subtotalRows = [];
+    m.terceros.forEach((t) => {
+      // Banda del tercero
+      const bandaTxt = t.nombre + (t.rif ? '   ·   ' + t.rif : '') + (t.vendedor && m.terVendedor ? '   ·   ' + t.vendedor : '') + '   ·   ' + t.nDocs + ' documento' + (t.nDocs === 1 ? '' : 's') + (bs && t.sinFactura ? '   ·   ' + t.sinFactura.n + ' ' + (m.lblSinBs || 'NE sin factura') + ' (solo USD)' : '');
+      ws.mergeCells(r, 1, r, NCOL);
+      const bc = ws.getCell(r, 1); bc.value = bandaTxt; bc.font = F({ size: 10, bold: true, color: { argb: WHITE } }); bc.fill = fill(DARK);
+      bc.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      for (let c = 1; c <= NCOL; c++) ws.getCell(r, c).fill = fill(DARK);
+      ws.getRow(r).height = 20;
+      r++;
+      const iniT = r;
+      t.rows.forEach((row, i) => {
+        const tn = ECB_TONOS[row.tono] || ECB_TONOS.doc;
+        const sub = row.nivel > 0;
+        const bg = (row.tono === 'doc' && i % 2) ? ZEBRA : tn.x;
+        const vals = [(sub ? '   ↳ ' : '') + (row.doc || ''), fechaCell(row.fecha), fechaCell(row.vence), row.tipoTxt || '', (row.detalle || '') + (row.aviso ? '  ' + row.aviso : '')];
+        if (bs) vals.push(row.tasa > 0 ? ecbR2(row.tasa * 10000) / 10000 : null);
+        vals.push(row.cargo == null ? null : row.cargo, row.ncret == null ? null : row.ncret, row.abono == null ? null : row.abono, (row.nivel === 0 && row.saldo != null) ? row.saldo : null);
+        if (bs) vals.push((row.nivel === 0 && row.saldoUsd != null) ? row.saldoUsd : null);
+        vals.push(row.nivel === 0 ? (ECB_ESTADO_TXT[row.estado] || '') : '');
+        vals.forEach((v, ci) => {
+          const col = ci + 1;
+          const c = ws.getCell(r, col);
+          c.value = (v === '' ? null : v);
+          let color = sub ? tn.xf : INK, bold = !sub;
+          if (col === 1) { color = sub ? tn.xf : 'FFEA580C'; bold = true; }
+          if (col === 5) { bold = false; color = sub ? tn.xf : 'FF475569'; }
+          if (col === 4) { color = tn.xb; bold = true; }
+          if (col === cNC) { color = 'FFDC2626'; bold = true; }
+          if (col === cAb) { color = 'FF15803D'; bold = true; }
+          if (col === cSal && row.saldo != null) { color = row.saldo < -0.01 ? 'FF0F766E' : row.saldo < 0.01 ? 'FF15803D' : 'FFDC2626'; bold = true; }
+          if (cUsd && col === cUsd) { color = 'FF64748B'; bold = false; }
+          if (col === cEst) { color = row.estado === 'PENDIENTE' ? 'FFDC2626' : row.estado === 'FAVOR' ? 'FF0F766E' : 'FF15803D'; bold = true; }
+          c.font = F({ size: sub ? 8 : 9, bold, color: { argb: color } });
+          c.fill = fill(bg); c.border = bd;
+          const al = (col === 2 || col === 3 || col === 4 || col === cEst || (cTasa && col === cTasa)) ? 'center' : (col >= cCargo && col <= (cUsd || cSal)) ? 'right' : 'left';
+          c.alignment = { vertical: 'middle', horizontal: al, wrapText: col === 5, indent: (col === 1 || col === 5) ? 1 : 0 };
+          if (col === 2 || col === 3) c.numFmt = 'dd/mm/yyyy';
+          if (cTasa && col === cTasa) c.numFmt = '#,##0.00##';
+          if (col === cCargo || col === cNC || col === cAb) c.numFmt = NF;
+          if (col === cSal) c.numFmt = NF_SAL;
+          if (cUsd && col === cUsd) c.numFmt = NF_USD_SAL;
+        });
+        ws.getRow(r).height = (row.detalle || '').length > 95 ? 24 : 16;
+        if (sub) ws.getRow(r).outlineLevel = 1;
+        r++;
+      });
+      const finT = r - 1;
+      // Subtotal del tercero (con fórmulas)
+      for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(r, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'thin', color: { argb: ORANGE } }, bottom: { style: 'medium', color: { argb: ORANGE } } }; }
+      ws.mergeCells(r, 1, r, 3);
+      const sl = ws.getCell(r, 1); sl.value = 'SUBTOTAL — ' + t.nombre; sl.font = F({ size: 9, bold: true }); sl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+      const st = ws.getCell(r, 4); st.value = 'SUBTOTAL'; st.font = F({ size: 8, bold: true, color: { argb: 'FF64748B' } }); st.alignment = { horizontal: 'center', vertical: 'middle' };
+      [[cCargo, t.sum.cargo, NF], [cNC, t.sum.ncret, NF], [cAb, t.sum.abono, NF], [cSal, t.sum.saldo, NF_SAL], [cUsd, t.sum.saldoUsd, NF_USD_SAL]].forEach(([c, res, nf]) => {
+        if (!c) return;
+        const cell = ws.getCell(r, c);
+        cell.value = { formula: 'SUM(' + L(c) + iniT + ':' + L(c) + finT + ')', result: res };
+        cell.numFmt = nf; cell.font = F({ size: 9, bold: true }); cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      });
+      const ce = ws.getCell(r, cEst); ce.value = ECB_ESTADO_TXT[t.estado] || ''; ce.font = F({ size: 9, bold: true, color: { argb: t.estado === 'PENDIENTE' ? 'FFDC2626' : t.estado === 'FAVOR' ? 'FF0F766E' : 'FF15803D' } }); ce.alignment = { horizontal: 'center', vertical: 'middle' };
+      ws.getRow(r).height = 20;
+      subtotalRows.push(r);
+      r += 2; // fila en blanco entre terceros
+    });
+    // Total general: suma de los subtotales (SUMIF por la marca «SUBTOTAL» de la columna Tipo)
+    const FIRSTD = 8, LASTD = r - 2;
+    for (let c = 1; c <= NCOL; c++) { const cell = ws.getCell(r, c); cell.fill = fill(DARK); cell.border = { top: { style: 'medium', color: { argb: ORANGE } } }; }
+    ws.mergeCells(r, 1, r, 3);
+    const gl = ws.getCell(r, 1); gl.value = 'TOTAL GENERAL — ' + m.terceros.length + ' ' + m.terPlural; gl.font = F({ size: 10, bold: true, color: { argb: WHITE } }); gl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+    [[cCargo, m.tot.cargo, NF], [cNC, m.tot.ncret, NF], [cAb, m.tot.abono, NF], [cSal, m.tot.saldo, NF_SAL], [cUsd, m.tot.saldoUsd, NF_USD_SAL]].forEach(([c, res, nf]) => {
+      if (!c) return;
+      const cell = ws.getCell(r, c);
+      cell.value = { formula: 'SUMIF($D$' + FIRSTD + ':$D$' + LASTD + ',"SUBTOTAL",' + L(c) + FIRSTD + ':' + L(c) + LASTD + ')', result: res };
+      cell.numFmt = nf; cell.font = F({ size: 10, bold: true, color: { argb: 'FFFDBA74' } }); cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    });
+    ws.getRow(r).height = 24;
+    r += 2;
+    put(ws, r, 1, NCOL, 'NOTAS DEL REPORTE', F({ size: 10, bold: true })); ws.getRow(r).height = 18; r++;
+    (m.notas || []).forEach((x) => { put(ws, r, 1, NCOL, '•  ' + x, F({ size: 8, color: { argb: 'FF475569' } }), { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 }); ws.getRow(r).height = x.length > 190 ? 24 : 14; r++; });
+    ws.pageSetup.printArea = 'A1:' + L(NCOL) + r;
+  }
+
+  // ═══════════ Hoja 3: Datos (tabla plana, con filtros de Excel) ═══════════
+  {
+    const ws = wb.addWorksheet('Datos', {
+      properties: { tabColor: { argb: 'FF64748B' } },
+      views: [{ state: 'frozen', ySplit: 1, xSplit: 0, showGridLines: true }],
+    });
+    const heads = [m.terNombre, 'RIF'];
+    const widths = [34, 15];
+    if (colTer) { heads.push(colTer); widths.push(14); }
+    heads.push('Documento', 'Fecha', 'Vence', 'Tipo', 'Nivel', 'Detalle'); widths.push(20, 11, 11, 17, 11, 60);
+    if (bs) { heads.push('Tasa Bs/$'); widths.push(10); }
+    heads.push('Cargo', 'NC / Ret.', 'Abono', 'Saldo'); widths.push(16, 16, 16, 17);
+    if (bs) { heads.push('Saldo USD (ref.)'); widths.push(15); }
+    heads.push('Estado'); widths.push(11);
+    const NCOL = heads.length;
+    widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    heads.forEach((t, i) => { const c = ws.getCell(1, i + 1); c.value = t; c.font = F({ bold: true, color: { argb: WHITE } }); c.fill = fill(DARK); c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+    ws.getRow(1).height = 24;
+    let r = 2;
+    m.terceros.forEach((t) => {
+      t.rows.forEach((row) => {
+        const vals = [t.nombre, t.rif || ''];
+        if (colTer) vals.push(t.vendedor || '');
+        vals.push(row.doc || '', fechaCell(row.fecha), fechaCell(row.vence), row.tipoTxt || '', row.nivel === 0 ? 'Documento' : 'Detalle', (row.detalle || '') + (row.aviso ? '  ' + row.aviso : ''));
+        if (bs) vals.push(row.tasa > 0 ? ecbR2(row.tasa * 10000) / 10000 : null);
+        vals.push(row.cargo == null ? null : row.cargo, row.ncret == null ? null : row.ncret, row.abono == null ? null : row.abono, (row.nivel === 0 && row.saldo != null) ? row.saldo : null);
+        if (bs) vals.push((row.nivel === 0 && row.saldoUsd != null) ? row.saldoUsd : null);
+        vals.push(row.nivel === 0 ? (ECB_ESTADO_TXT[row.estado] || '') : '');
+        vals.forEach((v, ci) => {
+          const c = ws.getCell(r, ci + 1);
+          c.value = (v === '' ? null : v);
+          c.font = F({ size: 9, bold: row.nivel === 0 && (ci === heads.indexOf('Documento')) });
+          const h = heads[ci];
+          if (h === 'Fecha' || h === 'Vence') c.numFmt = 'dd/mm/yyyy';
+          if (h === 'Tasa Bs/$') c.numFmt = '#,##0.00##';
+          if (h === 'Cargo' || h === 'NC / Ret.' || h === 'Abono') c.numFmt = NF;
+          if (h === 'Saldo') c.numFmt = NF_SAL;
+          if (h === 'Saldo USD (ref.)') c.numFmt = NF_USD_SAL;
+          c.alignment = { vertical: 'middle', horizontal: (h === 'Cargo' || h === 'NC / Ret.' || h === 'Abono' || h === 'Saldo' || h === 'Saldo USD (ref.)') ? 'right' : (h === 'Fecha' || h === 'Vence' || h === 'Nivel' || h === 'Estado') ? 'center' : 'left' };
+        });
+        r++;
+      });
+    });
+    const LAST = r - 1;
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: LAST, column: NCOL } };
+    // Totales que respetan el filtro (SUBTOTAL 109)
+    const cT = ws.getCell(r + 1, heads.indexOf('Detalle') + 1); cT.value = 'TOTAL (respeta los filtros)'; cT.font = F({ bold: true }); cT.alignment = { horizontal: 'right' };
+    [['Cargo', m.tot.cargo, NF], ['NC / Ret.', m.tot.ncret, NF], ['Abono', m.tot.abono, NF], ['Saldo', m.tot.saldo, NF_SAL], ['Saldo USD (ref.)', m.tot.saldoUsd, NF_USD_SAL]].forEach(([h, res, nf]) => {
+      const idx = heads.indexOf(h); if (idx < 0) return;
+      const Lc = ws.getColumn(idx + 1).letter;
+      const cell = ws.getCell(r + 1, idx + 1);
+      cell.value = { formula: 'SUBTOTAL(109,' + Lc + '2:' + Lc + LAST + ')', result: res };
+      cell.numFmt = nf; cell.font = F({ bold: true }); cell.alignment = { horizontal: 'right' };
+      cell.border = { top: { style: 'medium', color: { argb: ORANGE } } };
+    });
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = ecbNombreArchivo(m, 'xlsx');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+
+// ── Pantalla: una tarjeta por cliente / proveedor, con el detalle desplegable ──
+const EcbPanel = ({ m, expanded, setExpanded, todoAbierto }) => {
+  const bs = m.mon === 'BS';
+  const M = (n) => ecbMoney(m.mon, n);
+  const estCls = { FAVOR: 'bg-teal-100 text-teal-700', SALDADO: 'bg-green-100 text-green-700', PENDIENTE: 'bg-red-100 text-red-600' };
+  const colSaldo = (v) => v < -0.01 ? 'text-teal-700' : v < 0.01 ? 'text-green-700' : 'text-red-600';
+  const num = (v, cls, key) => <td key={key} className={'py-1.5 px-3 text-right font-mono whitespace-nowrap ' + (cls || '')}>{v == null ? <span className="text-gray-300">—</span> : ecbFmt(v)}</td>;
+  return (
+    <div className="space-y-3" data-testid="ecb-panel" data-moneda={m.mon}>
+      {m.terceros.map((t) => {
+        const s = t.sum;
+        const exp = !!todoAbierto || !!(expanded || {})[t.key];
+        return (
+          <div key={t.key} className="bg-white rounded-2xl border border-gray-100 overflow-hidden" data-testid="ecb-tercero" data-key={t.key}>
+            <div className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 gap-3 flex-wrap" onClick={() => setExpanded((p) => ({ ...p, [t.key]: !p[t.key] }))}>
+              <div className="flex items-center gap-3">
+                <div className={'w-9 h-9 rounded-full flex items-center justify-center font-black text-xs ' + (t.estado === 'FAVOR' ? 'bg-teal-100 text-teal-700' : t.estado === 'SALDADO' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700')}>
+                  {(t.nombre || '?').slice(0, 2).toUpperCase()}
+                </div>
+                <div>
+                  <div className="font-black text-sm text-gray-900">{t.nombre}</div>
+                  <div className="text-[9px] text-gray-400">{t.rif}{t.vendedor && m.terVendedor ? ' · ' + t.vendedor : ''} · {t.nDocs} doc{t.nDocs === 1 ? '' : 's'}{bs && t.sinFactura ? ' · ' + t.sinFactura.n + ' ' + (m.lblSinBs || 'NE sin factura') + ' (solo USD)' : ''}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">{m.lblCargo || 'Facturado'}</div><div className="text-sm font-black text-gray-700 font-mono" data-testid="ecb-chip-facturado">{M(s.facturado)}</div></div>
+                <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">{m.lblAbono || 'Cobrado'}</div><div className="text-sm font-black text-green-700 font-mono" data-testid="ecb-chip-cobrado">{M(s.cobrado)}</div></div>
+                {s.retenido > 0.004 && <div className="text-right hidden md:block"><div className="text-[9px] text-gray-400">Retenciones</div><div className="text-sm font-black text-amber-700 font-mono" data-testid="ecb-chip-retenido">{M(s.retenido)}</div></div>}
+                <div className="text-right"><div className="text-[9px] text-gray-400">Saldo {bs ? 'Bs.' : 'USD'}</div><div className={'text-sm font-black font-mono ' + colSaldo(s.saldo)} data-testid="ecb-chip-saldo">{M(s.saldo)}</div></div>
+                {bs && <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Saldo USD (ref.)</div><div className={'text-sm font-black font-mono ' + colSaldo(s.saldoUsd)} data-testid="ecb-chip-saldousd">{ecbMoney('USD', s.saldoUsd)}</div></div>}
+                <span className={'text-[8px] font-black px-2 py-0.5 rounded-full ' + (estCls[t.estado] || '')}>{t.estado === 'FAVOR' ? 'A favor' : t.estado === 'SALDADO' ? 'Saldado' : 'Con saldo'}</span>
+                <ChevronDown size={14} className={'text-gray-400 transition-transform ' + (exp ? 'rotate-180' : '')} />
+              </div>
+            </div>
+            {exp && (
+              <div className="border-t border-gray-100 overflow-x-auto">
+                <table className="w-full text-[9px]" style={{ minWidth: bs ? 1100 : 920 }}>
+                  <thead style={{ background: '#0f172a' }}>
+                    <tr className="text-gray-400 font-black uppercase">
+                      <th className="py-2 px-3 text-left">Documento</th>
+                      <th className="py-2 px-3 text-left">Fecha</th>
+                      <th className="py-2 px-3 text-left text-amber-500">Vence</th>
+                      <th className="py-2 px-3 text-left">Tipo</th>
+                      <th className="py-2 px-3 text-left">Detalle</th>
+                      {bs && <th className="py-2 px-3 text-right">Tasa</th>}
+                      <th className="py-2 px-3 text-right">{bs ? 'Cargo Bs.' : 'Cargo USD'}</th>
+                      <th className="py-2 px-3 text-right">NC/Ret.</th>
+                      <th className="py-2 px-3 text-right">Abono</th>
+                      <th className="py-2 px-3 text-right">{bs ? 'Saldo Bs.' : 'Saldo USD'}</th>
+                      {bs && <th className="py-2 px-3 text-right">Saldo USD</th>}
+                      <th className="py-2 px-3 text-center">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {t.rows.map((r, i) => {
+                      const tn = ECB_TONOS[r.tono] || ECB_TONOS.doc;
+                      const sub = r.nivel > 0;
+                      return (
+                        <tr key={t.key + '-' + i} data-ecb-row={r.tono} data-ecb-doc={r.doc} style={{ background: (r.tono === 'doc' && i % 2) ? '#f8fafc' : tn.bg, borderBottom: '1px solid ' + tn.bd }}>
+                          <td className={'py-1.5 px-3 font-black ' + (sub ? 'pl-7 text-[8px]' : '')} style={{ color: sub ? tn.fg : '#ea580c' }}>{sub ? '↳ ' : ''}{r.doc}</td>
+                          <td className="py-1.5 px-3 whitespace-nowrap" style={{ color: sub ? tn.fg : '#6b7280' }}>{ecbFecha(r.fecha) || '—'}</td>
+                          <td className="py-1.5 px-3 text-amber-600 font-bold whitespace-nowrap">{r.vence ? ecbFecha(r.vence) : ''}</td>
+                          <td className="py-1.5 px-3"><span className="px-1.5 py-0.5 rounded text-[8px] font-black whitespace-nowrap" style={{ background: tn.badge, color: tn.badgeFg }}>{r.tipoTxt}</span></td>
+                          <td className="py-1.5 px-3 text-gray-500" style={{ maxWidth: 360 }}>{r.detalle}{r.aviso && <span className="ml-1 text-red-600 font-black">{r.aviso}</span>}</td>
+                          {bs && <td className="py-1.5 px-3 text-right font-mono text-gray-500 whitespace-nowrap">{r.tasa > 0 ? ecbFmt(r.tasa) : ''}</td>}
+                          {num(r.cargo, sub ? 'text-gray-700' : 'font-black text-gray-800', 'c')}
+                          {num(r.ncret, 'font-bold text-red-600', 'n')}
+                          {num(r.abono, 'font-bold text-green-700', 'a')}
+                          {num(r.nivel === 0 ? r.saldo : null, 'font-black ' + (r.saldo != null ? colSaldo(r.saldo) : ''), 's')}
+                          {bs && num(r.nivel === 0 ? r.saldoUsd : null, 'text-gray-500', 'u')}
+                          <td className="py-1.5 px-3 text-center">{r.nivel === 0 && r.estado && <span className={'text-[8px] font-black px-1.5 py-0.5 rounded ' + (estCls[r.estado] || '')}>{ECB_ESTADO_TXT[r.estado]}</span>}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: '#0f172a' }} className="text-[9px]">
+                      <td colSpan={bs ? 6 : 5} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {t.nDocs} doc{t.nDocs === 1 ? '' : 's'}</td>
+                      <td className="py-2 px-3 text-right text-white font-black font-mono whitespace-nowrap">{ecbFmt(s.cargo)}</td>
+                      <td className="py-2 px-3 text-right text-teal-400 font-black font-mono whitespace-nowrap">{ecbFmt(s.ncret)}</td>
+                      <td className="py-2 px-3 text-right text-green-400 font-black font-mono whitespace-nowrap">{ecbFmt(s.abono)}</td>
+                      <td className="py-2 px-3 text-right text-orange-400 font-black font-mono whitespace-nowrap">{ecbFmt(s.saldo)}</td>
+                      {bs && <td className="py-2 px-3 text-right text-gray-300 font-black font-mono whitespace-nowrap">{ecbFmt(s.saldoUsd)}</td>}
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {m.terceros.length === 0 && <div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin registros con los filtros aplicados</div>}
+      {(m.notas || []).length > 0 && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[9px] text-slate-600 space-y-1" data-testid="ecb-notas">
+          {(m.notas || []).map((x, i) => <div key={i}>• {x}</div>)}
+        </div>
+      )}
+    </div>
+  );
+};
+// == FIN EC BS ==
+
 // ===== Exporte a Excel del Historial de Entradas / Salidas de Inventario (ExcelJS) =====
 // Recibe SOLO las filas que se ven en pantalla (ya filtradas por producto, fechas y tipo), en el mismo orden:
 // lo que se ve es lo que baja. Misma linea visual del Libro de Ventas: membrete, franja naranja, encabezado con
@@ -28613,6 +29370,7 @@ function App() {
   // convertir la depreciación mensual a Bs (independiente de la tasa de adquisición de cada activo).
   const [afPeriodo, setAfPeriodo] = useState({mes:String(new Date().getMonth()+1).padStart(2,'0'), anio:String(new Date().getFullYear())});
   const [afPeriodoTasa, setAfPeriodoTasa] = useState('');
+  const [afRelVerVendidos, setAfRelVerVendidos] = useState(false); // Relación de Activos: mostrar la sección «Vendidos / dados de baja»
   // Snapshots mensuales de depreciación ya guardados (para el badge "Guardado" y como
   // registro auditable — el cálculo en pantalla es en vivo, esto es la foto fija del cierre).
   const [depreciacionesMensualesGuardadas, setDepreciacionesMensualesGuardadas] = useState([]);
@@ -29209,6 +29967,8 @@ function App() {
   const [ecDesde, setEcDesde] = useState('');
   const [ecHasta, setEcHasta] = useState('');
   const [ecExpanded, setEcExpanded] = useState({});
+  const [ecMoneda, setEcMoneda] = useState('USD'); // Estado de Cuenta: 'USD' (vista de siempre) o 'BS' (datos en Bs. propios de cada documento)
+  const [ecNeFiltro, setEcNeFiltro] = useState('TODAS'); // Estado de Cuenta: 'TODAS' | 'CON_FACTURA' | 'SIN_FACTURA'
   const [localNroFiscal, setLocalNroFiscal] = useState({}); // optimistic update: invId → nroFiscal
   const [cxcPagoModal, setCxcPagoModal] = useState(null); // modal multi-NE cobro masivo
   const [showOtraRetModal, setShowOtraRetModal] = useState(false);
@@ -32372,35 +33132,104 @@ function App() {
       try { const doc_=(activosFijos||[]).find(a=>a.id===id); if(doc_) await archivarEnPapelera('activos_fijos', id, doc_, `Activo Fijo — ${doc_.nombre||id}`, appUser); await deleteDoc(getDocRef('activos_fijos', id)); } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
     }, 'Eliminar Activo Fijo');
   };
+  // Busca en Ajustes Contables un asiento que parezca ser la venta / baja de este activo: el nombre del activo aparece en el
+  // concepto o en el detalle de alguna línea, junto con la palabra VENTA / BAJA. Sirve para NO generar un segundo asiento cuando
+  // la venta ya se registró a mano. (No mira la columna «cuenta»: el comprobante «ALTA DE ACTIVOS FIJOS» lleva ahí cada nombre.)
+  const afNormTxt = (t) => String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+  const afBuscarAsientoVenta = (a) => {
+    if (!a) return null;
+    const nom = afNormTxt(a.nombre);
+    if (nom.length < 6) return null;
+    const hallados = [];
+    (ajustesApp||[]).forEach(c => {
+      const propio = c.nroComprobante === `BAJA-${a.id}`; // el que genera este mismo botón
+      if (!propio) {
+        const txt = [c.concepto, c.nroComprobante, ...(c.lineas||[]).map(l=>l.detalle)].map(afNormTxt).join(' | ');
+        if (!txt.includes(nom)) return;
+        if (!/\b(VENTA|VENDID[OA]|BAJA|DESINCORPORACION)\b/.test(txt.split(nom).join(' '))) return;
+      }
+      const usd = (l) => { const u = Number(l.montoUSD)||0; if (u) return u; const b = Number(l.montoBs)||0, t = Number(c.tasa)||0; return (b && t) ? b/t : 0; };
+      let totD = 0, depD = 0, perdD = 0;
+      (c.lineas||[]).forEach(l => {
+        if (l.tipo !== 'D') return;
+        const v = usd(l); totD += v;
+        const cta = afNormTxt(l.cuenta);
+        if (/DEP.*ACUM/.test(cta)) depD += v;
+        else if (/PERDIDA|INGRESOS? POR VENTA/.test(cta)) perdD += v;
+      });
+      hallados.push({id:c.id, fecha:c.fecha||'', concepto:c.concepto||'', nroComprobante:c.nroComprobante||'', totD:Number(totD.toFixed(2)), precioSugerido:Math.max(0, Number((totD-depD-perdD).toFixed(2))), propio, createdAt:c.createdAt||0});
+    });
+    if (!hallados.length) return null;
+    hallados.sort((x,y)=>String(y.fecha).localeCompare(String(x.fecha)) || (y.createdAt-x.createdAt));
+    return hallados[0];
+  };
+  // Abre «Registrar venta / baja». Si ya existe el asiento de la venta, la casilla «ya registré el asiento» sale marcada y
+  // se propone su fecha y el precio que resulta de él (editables).
+  const abrirVentaActivo = (a) => {
+    const det = afBuscarAsientoVenta(a);
+    setShowBajaActivoModal({...a});
+    setBajaForm(det ? {fecha: det.fecha||getTodayDate(), precioVenta: det.precioSugerido>0?String(det.precioSugerido):'', asientoYaRegistrado:true} : {});
+  };
   const procesarBajaActivo = async (a) => {
     const precio = Number(bajaForm.precioVenta||0);
     const fecha = bajaForm.fecha || getTodayDate();
-    if (precio>0 && !bajaForm.cuentaCobroNombre) { setDialog({title:'Falta la cuenta', text:'Elige qué cuenta recibe el pago de la venta.', type:'alert'}); return; }
-    if (!a.cuentaActivoNombre || !a.cuentaDeprAcumNombre) { setDialog({title:'Faltan cuentas', text:'Este activo no tiene configurada su cuenta contable o de depreciación acumulada — edítalo primero.', type:'alert'}); return; }
-    const [codActivo, nomActivo] = a.cuentaActivoNombre.split('—').map(s=>s.trim());
-    const [codDepr, nomDepr] = a.cuentaDeprAcumNombre.split('—').map(s=>s.trim());
-    const ganancia = precio - a._valorLibros;
-    const tasa = Number(settings?.tasaBCV||0)||1;
-    const lineas = [
-      {codigo:codDepr, cuenta:nomDepr, tipo:'D', montoUSD:a._deprAcumulada, montoBs:a._deprAcumulada*tasa, detalle:'Cancela depreciación acumulada'},
-    ];
-    if (precio>0) {
-      const [codCobro, nomCobro] = bajaForm.cuentaCobroNombre.split('—').map(s=>s.trim());
-      lineas.push({codigo:codCobro, cuenta:nomCobro, tipo:'D', montoUSD:precio, montoBs:precio*tasa, detalle:'Precio de venta'});
+    const yaRegistrado = !!bajaForm.asientoYaRegistrado;
+    if (!yaRegistrado && precio>0 && !bajaForm.cuentaCobroNombre) { setDialog({title:'Falta la cuenta', text:'Elige qué cuenta recibe el pago de la venta.', type:'alert'}); return; }
+    // Depreciación y valor en libros al mes de la venta: el activo se deprecia hasta ese mes inclusive (igual que el generador mensual)
+    const calc = calcDepreciacionActivo({...a, status:'ACTIVO', fechaBaja:''}, fecha);
+    const deprAcum = calc.deprAcumulada, valorLibros = calc.valorLibros;
+    const ganancia = precio - valorLibros;
+    const marcarActivo = (extra) => updateDoc(getDocRef('activos_fijos', a.id), {status: precio>0?'VENDIDO':'DE_BAJA', fechaBaja:fecha, precioVenta:precio, gananciaVenta:ganancia, updatedAt:Date.now(), ...extra});
+    // Ya registró el asiento a mano: solo se saca el activo; NO se crea ningún asiento
+    if (yaRegistrado) {
+      try {
+        const det = afBuscarAsientoVenta(a);
+        await marcarActivo({asientoVentaExterno:true, asientoVentaRef:det?.id||''});
+        setShowBajaActivoModal(null); setBajaForm({});
+        setDialog({title:'✅ Activo fuera de la Relación', text:`«${a.nombre}» quedó como ${precio>0?'vendido':'dado de baja'} el ${contDd(fecha)}. Ya no suma en la Relación de Activos (desde ese cierre) y deja de depreciarse después de ese mes. No se creó ningún asiento: se respetó el que ya registraste.`, type:'alert'});
+      } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+      return;
     }
-    lineas.push({codigo:codActivo, cuenta:nomActivo, tipo:'H', montoUSD:a.valorCosto, montoBs:a.valorCosto*tasa, detalle:'Cancela costo del activo'});
-    if (Math.abs(ganancia)>0.005) {
-      lineas.push({codigo:'4.2.01.01.001', cuenta:'INGRESOS POR VENTA DE ACTIVO', tipo:ganancia>0?'H':'D', montoUSD:Math.abs(ganancia), montoBs:Math.abs(ganancia)*tasa, detalle:ganancia>0?'Ganancia en venta de activo':'Pérdida en venta de activo'});
+    if (!a.cuentaActivoNombre || !a.cuentaDeprAcumNombre) { setDialog({title:'Faltan cuentas', text:'Este activo no tiene configurada su cuenta contable o de depreciación acumulada — edítalo primero. (Si el asiento de la venta ya lo registraste a mano, marca «Ya registré el asiento».)', type:'alert'}); return; }
+    const generar = async () => {
+      const [codActivo, nomActivo] = a.cuentaActivoNombre.split('—').map(s=>s.trim());
+      const [codDepr, nomDepr] = a.cuentaDeprAcumNombre.split('—').map(s=>s.trim());
+      const tasa = Number(settings?.tasaBCV||0)||1;
+      const lineas = [
+        {codigo:codDepr, cuenta:nomDepr, tipo:'D', montoUSD:deprAcum, montoBs:deprAcum*tasa, detalle:'Cancela depreciación acumulada'},
+      ];
+      if (precio>0) {
+        const [codCobro, nomCobro] = bajaForm.cuentaCobroNombre.split('—').map(s=>s.trim());
+        lineas.push({codigo:codCobro, cuenta:nomCobro, tipo:'D', montoUSD:precio, montoBs:precio*tasa, detalle:'Precio de venta'});
+      }
+      lineas.push({codigo:codActivo, cuenta:nomActivo, tipo:'H', montoUSD:a.valorCosto, montoBs:a.valorCosto*tasa, detalle:'Cancela costo del activo'});
+      if (Math.abs(ganancia)>0.005) {
+        lineas.push({codigo:'4.2.01.01.001', cuenta:'INGRESOS POR VENTA DE ACTIVO', tipo:ganancia>0?'H':'D', montoUSD:Math.abs(ganancia), montoBs:Math.abs(ganancia)*tasa, detalle:ganancia>0?'Ganancia en venta de activo':'Pérdida en venta de activo'});
+      }
+      try {
+        await addDoc(getColRef('comprobantes_ajustes'), {
+          fecha, nroComprobante:`BAJA-${a.id}`, concepto:`${precio>0?'Venta':'Baja'} de Activo Fijo — ${a.nombre}`,
+          tasa, lineas, createdAt:Date.now(), user:appUser?.name||'—', origen:'activos_fijos',
+        });
+        await marcarActivo({});
+        setShowBajaActivoModal(null); setBajaForm({});
+        setDialog({title:'✅ Procesado', text:`Activo ${precio>0?'vendido':'dado de baja'}. Se registró el asiento en Ajustes Contables — revísalo ahí para confirmar.`, type:'alert'});
+      } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+    };
+    // Aviso antes de duplicar: si ya existe un asiento que parece ser la venta de este activo, no se genera otro sin confirmar
+    const det = afBuscarAsientoVenta(a);
+    if (det) {
+      setDialog({title:'Ya existe un asiento de esta venta', text:`En Ajustes Contables ya hay «${det.concepto||det.nroComprobante}» del ${contDd(det.fecha)} (Debe $${contFmt(det.totD)}) que parece ser la venta de este activo. Si generas otro quedará duplicado. ¿Generarlo de todas formas?`, type:'confirm', onConfirm: generar});
+      return;
     }
-    try {
-      await addDoc(getColRef('comprobantes_ajustes'), {
-        fecha, nroComprobante:`BAJA-${a.id}`, concepto:`${precio>0?'Venta':'Baja'} de Activo Fijo — ${a.nombre}`,
-        tasa, lineas, createdAt:Date.now(), user:appUser?.name||'—', origen:'activos_fijos',
-      });
-      await updateDoc(getDocRef('activos_fijos', a.id), {status: precio>0?'VENDIDO':'DE_BAJA', fechaBaja:fecha, precioVenta:precio, gananciaVenta:ganancia});
-      setShowBajaActivoModal(null); setBajaForm({});
-      setDialog({title:'✅ Procesado', text:`Activo ${precio>0?'vendido':'dado de baja'}. Se registró el asiento en Ajustes Contables — revísalo ahí para confirmar.`, type:'alert'});
-    } catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+    await generar();
+  };
+  // Deshace «Registrar venta / baja»: el activo vuelve a la Relación y a depreciarse. NO borra ningún asiento.
+  const reactivarActivoVendido = (a) => {
+    setDialog({title:'¿Reactivar este activo?', text:`«${a.nombre}» volverá a la Relación de Activos y a depreciarse normalmente. Este botón NO elimina ningún asiento contable: si la venta tiene asiento (el que generó el sistema o el que registraste a mano), elimínalo tú en Ajustes Contables.`, type:'confirm', onConfirm: async()=>{
+      try { await updateDoc(getDocRef('activos_fijos', a.id), {status:'ACTIVO', fechaBaja:'', precioVenta:0, gananciaVenta:0, asientoVentaExterno:false, asientoVentaRef:'', updatedAt:Date.now()}); }
+      catch(e) { setDialog({title:'Error', text:e.message, type:'alert'}); }
+    }});
   };
   const [invoiceOriginalNeOrigen, setInvoiceOriginalNeOrigen] = useState('');
   const [invoiceOriginalNesAdicionales, setInvoiceOriginalNesAdicionales] = useState([]);
@@ -32464,6 +33293,8 @@ function App() {
 
     try { 
       await setDoc(getDocRef('maquilaInvoices', id), {
+        // Al editar se conserva todo lo que el documento ya tenía y el formulario no maneja (setDoc reemplaza el documento completo)
+        ...(editingInvoiceId?((invoices||[]).find(i=>i.id===editingInvoiceId)||{}):{}),
         ...newInvoiceForm, id, documento: id,
         nroFiscal: newInvoiceForm.nroFiscal||'',
         tasa: parseNum(newInvoiceForm.tasa||settings?.tasaBCV||0),
@@ -32639,6 +33470,11 @@ function App() {
       fgCantidad:        inv.fgCantidad || '',
       ncAsignada:        inv.ncAsignada || '',
       neOrigen:          inv.neOrigen || '',
+      // Las demás NE y OP que cubre la factura y su fecha fiscal vuelven al formulario: antes no volvían y al guardar la
+      // edición se borraban del documento y las NE adicionales quedaban desvinculadas de su factura.
+      nesAdicionales:    inv.nesAdicionales || [],
+      opsAsignadas:      inv.opsAsignadas || [],
+      ...(inv.fechaFactura?{fechaFactura:inv.fechaFactura}:{}),
       timestamp:         inv.timestamp,
       // Valores en Bs — restituir entrada manual para Libro de Ventas
       baseGravableBs:    String(inv.baseGravableBs || ''),
@@ -45916,27 +46752,67 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const saldoGrupo=grupo.reduce((s,n)=>s+_saldoDirectoNE(n,fRef),0);
             return saldoGrupo*pesoNE;
           };
-          // NC/ND en USD — O(1) usando mapa pre-computado
+          // NC/ND por NE, sin repetirlas — una nota FISCAL es de la FACTURA: si la factura junta varias NE, cada NE descuenta
+          // SOLO su parte (en proporción al total de cada NE, igual que las retenciones); antes cada NE descontaba la nota
+          // completa y el saldo del cliente quedaba de menos (o «a favor»). Una nota NO fiscal es de UNA NE (su neId): la
+          // descuenta solo esa NE. Las notas que alcanza cada NE son las mismas de siempre (por NE, documento y factura).
+          const _ncsVistasCache=new Map();
+          const _ncsVistas=(ne)=>{
+            if(_ncsVistasCache.has(ne.id)) return _ncsVistasCache.get(ne.id);
+            const inv=findInvForNE(ne);
+            const keys=[ne.id,ne.documento,inv?.id,inv?.nroFiscal,inv?.documento,ne.facturaId].filter(Boolean);
+            const seen=new Set(); const out=[];
+            for(const k of keys){ for(const n of (_ncsByNe.get(k)||[])){
+              if(seen.has(n.id)) continue; seen.add(n.id);
+              out.push(n);
+            } }
+            _ncsVistasCache.set(ne.id,out); return out;
+          };
+          let _nesDeNotaMap=null;
+          const _nesDeNota=(n)=>{
+            if(!_nesDeNotaMap){
+              _nesDeNotaMap=new Map();
+              for(const x of (notasEntrega||[])){
+                if(x.status==='ANULADA') continue;
+                for(const m of _ncsVistas(x)){ if(!_nesDeNotaMap.has(m.id)) _nesDeNotaMap.set(m.id,[]); _nesDeNotaMap.get(m.id).push(x); }
+              }
+            }
+            const vistas=_nesDeNotaMap.get(n.id)||[];
+            if((n.naturaleza||'FISCAL')!=='FISCAL'&&n.neId){
+              const propia=vistas.filter(x=>x.id===n.neId||x.documento===n.neId);
+              if(propia.length) return propia; // nota NO fiscal: pertenece a esa NE
+            }
+            return vistas;
+          };
+          // Parte (de 0 a 1) de la nota que le toca a esta NE
+          const _pesoNota=(ne,n)=>{
+            const g=_nesDeNota(n);
+            if(!g.length) return 1; // ninguna NE viva la ve (p. ej. NE anulada): como antes
+            if(!g.some(x=>x.id===ne.id)) return 0; // es de otra NE
+            if(g.length===1) return 1;
+            const tot=g.reduce((s,x)=>s+parseNum(x.total||x.totalUSD||0),0);
+            return tot>0?parseNum(ne.total||ne.totalUSD||0)/tot:1/g.length;
+          };
+          // USD de la nota completa (misma fórmula de siempre); null si no se puede convertir por falta de tasa
+          const _usdNota=(n)=>{
+            const dir=parseNum(n.montoUSD||0);
+            if(dir>0) return dir;
+            const t=parseNum(n.tasaFactura||0)||tasaBCV;
+            if(!t||t<2) return null;
+            const baseBs=parseNum(n.monto||0);
+            return (n.tieneIva===false?baseBs:baseBs*1.16)/t;
+          };
+          // NC/ND en USD de esta NE (su parte) — O(1) usando mapa pre-computado
           const getNCUSDNEAtFecha=(ne,fRef)=>{
             const cacheKey=ne.id+(fRef||'');
             if(_ncCache.has(cacheKey)) return _ncCache.get(cacheKey);
-            const neId=ne.id||''; const neDoc=ne.documento||'';
-            const invLinked=findInvForNE(ne);
-            const keys=[neId,neDoc,invLinked?.id,invLinked?.nroFiscal,invLinked?.documento,ne.facturaId].filter(Boolean);
-            const seen=new Set(); const ncs=[];
-            for(const k of keys){for(const n of (_ncsByNe.get(k)||[])){if(!seen.has(n.id)){seen.add(n.id);ncs.push(n);}}}
-            const result=ncs.filter(n=>!fRef||(n.fecha||'')<=fRef).reduce((s,n)=>{
-              const t=parseNum(n.tasaFactura||0)||tasaBCV;
-              const baseBs=parseNum(n.monto||0);
-              const montoUSDdirecto=parseNum(n.montoUSD||0);
-              let u;
-              if(montoUSDdirecto>0){ u=montoUSDdirecto; }
-              else { if(!t||t<2) return s; u=(n.tieneIva===false?baseBs:baseBs*1.16)/t; }
+            const result=_ncsVistas(ne).filter(n=>!fRef||(n.fecha||'')<=fRef).reduce((s,n)=>{
+              const u=_usdNota(n); if(u==null) return s;
               // NC resta del saldo (reduce lo que debe el cliente) → contribuye positivo aquí,
               // ya que getSaldoNEAtFecha hace total - getNCUSDNEAtFecha(...).
               // ND SUMA al saldo (aumenta lo que debe el cliente) → contribuye NEGATIVO aquí,
               // para que esa resta termine sumando la ND a la deuda en vez de restarla.
-              return s+(n.tipo==='ND'?-u:u);
+              return s+(n.tipo==='ND'?-u:u)*_pesoNota(ne,n);
             },0);
             _ncCache.set(cacheKey,result); return result;
           };
@@ -47051,7 +47927,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         const ivaBs=baseBs*ivaPct;
                         const totalBs=baseBs+ivaBs;
                         // NC/ND aplicadas a esta NE/factura, para mostrarlas desglosadas igual que las retenciones
-                        const ncsAplicadas=ne._esNDDirecta?[]:[..._ncsByNe.get(ne.id)||[],..._ncsByNe.get(ne.documento)||[],..._ncsByNe.get(ne.facturaId)||[],..._ncsByNe.get(invVinc?.id)||[],..._ncsByNe.get(invVinc?.nroFiscal)||[],..._ncsByNe.get(invVinc?.documento)||[]].filter((n,idx,arr)=>arr.findIndex(x=>x.id===n.id)===idx);
+                        const ncsAplicadas=ne._esNDDirecta?[]:_ncsVistas(ne).map(n=>({...n,_peso:_pesoNota(ne,n)})).filter(n=>n._peso>0);
                         const esCredito=saldo<-0.005;
                         return(
                         <div key={ne.id} onClick={()=>{if(esCredito)return;setCxcPagoModal(m=>({...m,nesSelec:{...m.nesSelec,[ne.id]:!sel}}));}}
@@ -47094,12 +47970,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             {ncsAplicadas.length>0&&(
                               <div style={{marginTop:4,paddingTop:4,borderTop:'1px dashed #ddd6fe'}}>
                                 {ncsAplicadas.map((n,ni)=>{
-                                  const t=parseNum(n.tasaFactura||0)||tasaBCV;
-                                  const baseBsNc=parseNum(n.monto||0);
-                                  const usdNc=(t>1)?((((n.naturaleza||'FISCAL')==='FISCAL')?baseBsNc*1.16:baseBsNc)/t):0;
+                                  const usdNc=(_usdNota(n)||0)*n._peso; // su parte de la nota (si la factura junta varias NE)
                                   return(
                                     <div key={ni} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
-                                      <span style={{fontSize:8,color:'#7c3aed',fontWeight:700}}>{n.tipo==='NC'?'📋 N.Crédito':'📋 N.Débito'} · Doc.{n.nroDocumento||n.id}</span>
+                                      <span style={{fontSize:8,color:'#7c3aed',fontWeight:700}}>{n.tipo==='NC'?'📋 N.Crédito':'📋 N.Débito'} · Doc.{n.nroDocumento||n.id}{n._peso<0.9999?` · esta NE: ${formatNum(n._peso*100)} %`:''}</span>
                                       <span style={{fontSize:8,fontWeight:900,color:n.tipo==='NC'?'#7c3aed':'#0891b2'}}>{n.tipo==='NC'?'-':'+'}${formatNum(usdNc)}</span>
                                     </div>
                                   );
@@ -47591,21 +48465,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       </thead>
                       <tbody>
                         {clientesList.map((cl)=>{
-                          const _ncsByKeyEc = new Map();
-                          for(const n of (notasVentaCD||[])){
-                            const kk=[n.neId,n.neOrigen,n.facturaId].filter(Boolean);
-                            for(const k of kk){ if(!_ncsByKeyEc.has(k)) _ncsByKeyEc.set(k,[]); _ncsByKeyEc.get(k).push(n); }
-                          }
-                          const getNCsNE = (ne) => {
-                            const rifOkNc=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
-                            const invNc = ne.facturaId
-                              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkNc(i))
-                              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOkNc(i));
-                            const ncKeys=[ne.id,ne.documento,invNc?.id,invNc?.nroFiscal,invNc?.documento,ne.facturaId].filter(Boolean);
-                            const seenNc=new Set(); const ncsNe=[];
-                            for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
-                            return ncsNe;
-                          };
+                          const getNCsNE = (ne) => _ncsVistas(ne).filter(n=>_pesoNota(ne,n)>0);
                           const sel=cxcExpandAll||cxcSelectedClient===cl.clientRif;
                           const estado=cl.estado;
                           const eBg={CRÍTICO:'bg-red-100 text-red-700',VENCIDO:'bg-orange-100 text-orange-700','POR COBRAR':'bg-amber-100 text-amber-700','AL DÍA':'bg-green-100 text-green-700','A FAVOR':'bg-teal-100 text-teal-700'}[estado];
@@ -47683,11 +48543,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             ...(ne.facturaId?[ne.facturaId]:[])
                                           ]);
                                           // NCs/NDs para sub-filas — lookup completo igual que getNCUSDNEAtFecha
-                                          const ncsNE=(notasVentaCD||[]).filter(n=>{
-                                            const ni=n.neId||'',no=n.neOrigen||'',nf=n.facturaId||'';
-                                            return ((_neId2&&(ni===_neId2||no===_neId2))||(_neDoc2&&(ni===_neDoc2||no===_neDoc2))||(nf&&_lnkIds.has(nf)))
-                                                   &&(!fechaRef||(n.fecha||'')<=fechaRef);
-                                          });
+                                          const ncsNE=_ncsVistas(ne).filter(n=>!fechaRef||(n.fecha||'')<=fechaRef).map(n=>({...n,_peso:_pesoNota(ne,n)})).filter(n=>n._peso>0);
                                           // Reactivado: usa el mapa seguro _retsPorNE (facturaId → invoice → neOrigen → NE)
                                           const retsNE=[...retDetalle.iva,...retDetalle.otras].sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
                                           const invLinkedIds=invVinc?[invVinc.id]:[];
@@ -47740,7 +48596,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                 const tNC=parseNum(nc.tasaFactura||0)||tasaBCV;
                                                 const baseBs=parseNum(nc.monto||0);
                                                 const totalBs=nc.tieneIva===false?baseBs:baseBs*1.16;
-                                                const ncUSD=parseNum(nc.montoUSD||0)>0?parseNum(nc.montoUSD):(tNC>1?totalBs/tNC:0);
+                                                const ncUSDtot=parseNum(nc.montoUSD||0)>0?parseNum(nc.montoUSD):(tNC>1?totalBs/tNC:0);
+                                                const ncUSD=ncUSDtot*nc._peso; // su parte de la nota
                                                 return(
                                                 <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
                                                   <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'}</td>
@@ -47755,6 +48612,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
                                                     <span className="text-purple-500 italic">{nc.descripcion||'Nota de crédito'}</span>
                                                     {baseBs>0&&<span className="ml-2 text-gray-400">· Bs.{formatNum(baseBs)}{tNC>1?` / Tasa ${formatNum(tNC)}`:''}</span>}
+                                                    {nc._peso<0.9999&&<span className="ml-2 text-purple-500 font-bold">· esta NE: {formatNum(nc._peso*100)} % de ${formatNum(ncUSDtot)}</span>}
                                                   </td>
                                                 </tr>);
                                               })}
@@ -47770,10 +48628,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={4}>—</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
-                                                    {parseNum(invVinc.baseImponible||invVinc.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invVinc.baseImponible||invVinc.montoBase||0))}</b></span>}
-                                                    {parseNum(invVinc.montoIVA||invVinc.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invVinc.montoIVA||invVinc.iva||0))}</b></span>}
-                                                    {parseNum(invVinc.totalBs||0)>0&&<span className="ml-2">Total: <b className="text-indigo-700">Bs.{formatNum(parseNum(invVinc.totalBs||0))}</b></span>}
-                                                    {parseNum(invVinc.tasa||0)>0&&<span className="ml-2 text-gray-400">· Tasa: {formatNum(parseNum(invVinc.tasa))} Bs/$</span>}
+                                                    {(()=>{
+                                                      // Datos en Bs. de la factura = los del Libro de Ventas (base / IVA / total en Bs.); si la factura no tiene ni Bs. ni tasa, no se inventan
+                                                      const _tieneBsF=ecbNum(invVinc.baseGravableBs)>0||ecbNum(invVinc.totalBs)>0||ecbNum(invVinc.tasa)>1;
+                                                      const fb=_tieneBsF?ecbFacturaVenta(invVinc,0):null;
+                                                      return fb?(<>
+                                                        {fb.baseBs>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(fb.baseBs)}</b></span>}
+                                                        {fb.ivaBs>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(fb.ivaBs)}</b></span>}
+                                                        {fb.totalBs>0&&<span className="ml-2">Total: <b className="text-indigo-700">Bs.{formatNum(fb.totalBs)}</b></span>}
+                                                        {fb.tasa>1&&<span className="ml-2 text-gray-400">· Tasa: {formatNum(fb.tasa)} Bs/$</span>}
+                                                      </>):null;
+                                                    })()}
                                                   </td>
                                                 </tr>
                                               )}
@@ -47830,15 +48695,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             </React.Fragment>
                                           );
                                         })}
-                                        {cl.nes.flatMap(ne=>getNCsNE(ne).filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).map(n=>{
-                                          const t=parseNum(n.tasaFactura||0)||tasaBCVec;
-                                          const usdN=t>=2?parseFloat((parseNum(n.monto||0)/t).toFixed(2)):0;
+                                        {cl.nes.flatMap(ne=>getNCsNE(ne).filter(n=>!fechaRef||(n.fecha||'')<=fechaRef).map(n=>{
+                                          const uN=_usdNota(n);
+                                          const usdN=uN==null?0:parseFloat((uN*_pesoNota(ne,n)).toFixed(2));
                                           const esND=n.tipo==='ND';
                                           return (
                                             <tr key={n.id} className="border-b" style={{background:esND?'#fff7ed':'#faf5ff',borderColor:esND?'#fed7aa':'#e9d5ff'}}>
                                               <td className={`py-2 px-2 font-black text-[9px] ${esND?'text-orange-700':'text-purple-700'}`}>↳ {esND?'Nota Débito':'Nota Crédito'} {n.nroDocumento||''} · {ne.documento||ne.id}</td>
                                               <td className={`py-2 px-2 text-center text-[9px] ${esND?'text-orange-600':'text-purple-600'}`}>{n.fecha||'—'}</td>
-                                              <td className="py-2 px-2 text-center text-gray-300 text-[9px]" colSpan={2}>{n.descripcion||n.observaciones||'—'}</td>
+                                              <td className="py-2 px-2 text-center text-gray-300 text-[9px]" colSpan={2}>{n.descripcion||n.observaciones||'—'}{_pesoNota(ne,n)<0.9999?' · esta NE: '+formatNum(_pesoNota(ne,n)*100)+' %':''}</td>
                                               <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
                                               <td className={`py-2 px-2 text-right font-black text-[9px] ${esND?'text-orange-700':'text-purple-700'}`}>{esND?'+':'-'}${formatNum(usdN)}</td>
                                               <td className="py-2 px-2 text-right text-gray-300 text-[9px]" colSpan={2}>—</td>
@@ -48231,7 +49096,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const peso=parseNum(neTarget.total||neTarget.totalUSD||0)/totalFacturaPeso;
               const key=neTarget.id;
               if(!_retsPorNEec.has(key)) _retsPorNEec.set(key,[]);
-              _retsPorNEec.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||''});
+              _retsPorNEec.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||'',_peso:peso,_grupo:nesTarget});
             });
           }
           const getRetsDetalleNEec=(ne)=>{
@@ -48254,21 +49119,84 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             for(const k of kk){ if(!_ncsByKeyEc.has(k)) _ncsByKeyEc.set(k,[]); _ncsByKeyEc.get(k).push(n); }
           }
           const getVenceEc=(ne)=>{const f=new Date(ne.fecha||ne.fechaEmision||getTodayDate());f.setDate(f.getDate()+parseNum(ne.diasCredito||0));return f.toISOString().split('T')[0];};
+          // NC/ND de una NE (por su NE, su documento y su factura). Se memoriza por NE: se consulta muchas veces al armar la pantalla.
+          const _cacheNcsNEec=new Map();
           const getNCsNE = (ne) => {
-            const rifOkNc=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
-            const invNc = ne.facturaId
-              ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkNc(i))
-              : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOkNc(i));
+            if(_cacheNcsNEec.has(ne.id)) return _cacheNcsNEec.get(ne.id);
+            // Misma factura que usa el resto del Estado de Cuenta (por facturaId / NE origen y, si la NE solo figura en las «NE adicionales» de una
+            // factura, esa factura): así las notas de la factura llegan a todas sus NE y se reparten entre ellas igual que las retenciones.
+            const invNc = invDeNEec(ne);
             const ncKeys=[ne.id,ne.documento,invNc?.id,invNc?.nroFiscal,invNc?.documento,ne.facturaId].filter(Boolean);
             const seenNc=new Set(); const ncsNe=[];
             for(const k of ncKeys){ for(const n of (_ncsByKeyEc.get(k)||[])){ if(!seenNc.has(n.id)){ seenNc.add(n.id); ncsNe.push(n); } } }
+            _cacheNcsNEec.set(ne.id,ncsNe);
             return ncsNe;
           };
+          // Reparto de las notas entre las NE de una misma factura (igual que las retenciones). Una nota FISCAL es de la FACTURA: si la
+          // factura junta varias NE, cada NE descuenta SU parte (según el total de cada NE) y no la nota completa en cada una de ellas.
+          // Una nota NO fiscal es de UNA sola NE (su neId): la descuenta solo esa NE.
+          let _nesDeNotaMapEc=null;
+          const nesDeNotaEc=(n)=>{
+            if(!_nesDeNotaMapEc){
+              _nesDeNotaMapEc=new Map();
+              for(const x of (notasEntrega||[])){
+                if(x.status==='ANULADA') continue;
+                for(const m of getNCsNE(x)){ if(!_nesDeNotaMapEc.has(m.id)) _nesDeNotaMapEc.set(m.id,[]); _nesDeNotaMapEc.get(m.id).push(x); }
+              }
+            }
+            const vistas=_nesDeNotaMapEc.get(n.id)||[];
+            if((n.naturaleza||'FISCAL')!=='FISCAL'&&n.neId){
+              const propia=vistas.filter(x=>x.id===n.neId||x.documento===n.neId);
+              if(propia.length) return propia; // nota NO fiscal: pertenece a esa NE
+            }
+            return vistas;
+          };
+          // Parte (de 0 a 1) de la nota que le toca a esta NE
+          const pesoNotaEc=(ne,n)=>{
+            const g=nesDeNotaEc(n);
+            if(!g.length) return 1; // ninguna NE viva la ve (p. ej. NE anulada): como antes
+            if(!g.some(x=>x.id===ne.id)) return 0; // es de otra NE
+            if(g.length===1) return 1;
+            const tot=g.reduce((s,x)=>s+parseNum(x.total||x.montoBase||0),0);
+            return tot>0?parseNum(ne.total||ne.montoBase||0)/tot:1/g.length;
+          };
+          // USD de la nota completa (misma fórmula de siempre); null si no se puede convertir por falta de tasa
+          const usdNotaEc=(n)=>{
+            const t=parseNum(n.tasaFactura||0)||tasaBCVec;
+            if(!t||t<2) return null;
+            const b=parseNum(n.monto||0);
+            return (((n.naturaleza||'FISCAL')==='FISCAL')?b*1.16:b)/t;
+          };
+          // Suma firmada (ND +, NC −) de las notas de un conjunto de NE: cada NE con SU parte y hasta la fecha de corte
+          const notasNeFirmadoEc=(nes)=>nes.reduce((s0,ne)=>s0+getNCsNE(ne).filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).reduce((s1,n)=>{
+            const u=usdNotaEc(n);
+            return u==null?s1:s1+(n.tipo==='ND'?u:-u)*pesoNotaEc(ne,n);
+          },0),0);
           const findInvForNEec=(ne)=>{
             const rifOkEc2=inv=>!(ne.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase();
             return ne.facturaId
               ? (invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOkEc2(i))
               : (invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&rifOkEc2(i));
+          };
+          // Factura (documento) de una NE: la que ya usa Estado de Cuenta o, si la NE solo figura en las «NE adicionales» de una factura, esa factura.
+          // Sirve para el filtro «NE con factura / sin factura» y para tomar los datos en Bs. del documento.
+          const _cacheInvNEec=new Map(); // por NE, solo durante este armado de la pantalla (evita recorrer todas las facturas una y otra vez)
+          const invDeNEec=(ne)=>{
+            if(_cacheInvNEec.has(ne.id)) return _cacheInvNEec.get(ne.id);
+            const r=findInvForNEec(ne)||(invoices||[]).find(i=>!i.esAnulacionFiscal&&[i.neOrigen,...(i.nesAdicionales||[])].filter(Boolean).some(x=>x===ne.id||x===ne.documento)&&(!(ne.clientRif||'').trim()||!(i.clientRif||'').trim()||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()))||null;
+            _cacheInvNEec.set(ne.id,r); return r;
+          };
+          // NE que cubre UN documento de factura (neOrigen + nesAdicionales + las NE que apuntan a esa factura con su facturaId)
+          const _cacheNesInvEc=new Map(); // por factura, solo durante este armado de la pantalla
+          const nesDeInvEc=(inv)=>{
+            const ck=inv.id||inv.documento;
+            if(_cacheNesInvEc.has(ck)) return _cacheNesInvEc.get(ck);
+            const out=[];
+            const add=(n)=>{ if(n&&!out.some(x=>x.id===n.id)) out.push(n); };
+            [inv.neOrigen,...(inv.nesAdicionales||[])].filter(Boolean).forEach(id=>add((notasEntrega||[]).find(n=>n.id===id||n.documento===id)));
+            (notasEntrega||[]).forEach(n=>{ if(n.facturaId&&(n.facturaId===inv.id||n.facturaId===inv.documento)&&(!(n.clientRif||'').trim()||!(inv.clientRif||'').trim()||(inv.clientRif||'').trim().toUpperCase()===(n.clientRif||'').trim().toUpperCase())) add(n); });
+            _cacheNesInvEc.set(ck,out);
+            return out;
           };
           // Grupo de NE que comparten una misma factura fiscal consolidada — mismo criterio que en CxC.
           const getGrupoInvoiceNEsEc=(ne)=>{
@@ -48285,11 +49213,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // NC/ND: matchear por NE Y por su factura vinculada (nroFiscal/documento/id), como lo hace Registrar Cobro
             const ncsNe=getNCsNE(ne);
             const nc=ncsNe.filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).reduce((s,n)=>{
-              const t=parseNum(n.tasaFactura||0)||tasaBCVec;
-              if(!t||t<2) return s;
-              const b=parseNum(n.monto||0);
-              const u=(((n.naturaleza||'FISCAL')==='FISCAL')?b*1.16:b)/t;
-              return s+(n.tipo==='NC'?u:-u);
+              const u=usdNotaEc(n);
+              if(u==null) return s;
+              // su parte de la nota (si la factura junta varias NE, cada una descuenta solo la suya)
+              return s+(n.tipo==='NC'?u:-u)*pesoNotaEc(ne,n);
             },0);
             const retD=getRetsDetalleNEec(ne);
             // igtfUSD se excluye del descuento: el IGTF es un cargo aparte, ya excluido arriba de
@@ -48316,10 +49243,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const saldoGrupo=grupo.reduce((s,n)=>s+_saldoDirectoNEec(n),0);
             return saldoGrupo*pesoNE;
           };
+          // «CxC fiscal»: el documento es la FACTURA, así que el rango de fechas se aplica a su fecha fiscal (fechaFactura, o su fecha);
+          // en «CxC sin factura» y en «Todas» se aplica a la fecha de la NE, como siempre.
+          const fechaCxcEc=(ne)=>{
+            if(ecNeFiltro==='CON_FACTURA'){ const iv=invDeNEec(ne); if(iv) return String(iv.fechaFactura||iv.fecha||ne.fecha||'').substring(0,10); }
+            return ne.fecha||'';
+          };
           const allNEs=(notasEntrega||[]).filter(ne=>{
             if(ne.status==='ANULADA') return false;
-            if(ecDesde&&(ne.fecha||'')<ecDesde) return false;
-            if(ecHasta&&(ne.fecha||'')>ecHasta) return false;
+            if(ecNeFiltro==='CON_FACTURA'&&!invDeNEec(ne)) return false;
+            if(ecNeFiltro==='SIN_FACTURA'&&invDeNEec(ne)) return false;
+            const fCxc=fechaCxcEc(ne);
+            if(ecDesde&&fCxc<ecDesde) return false;
+            if(ecHasta&&fCxc>ecHasta) return false;
             return true;
           });
           // ── Retenciones MANUALES (factura no registrada en el sistema) ──────────
@@ -48384,6 +49320,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(!_anticiposPorClienteEc.has(rif)) _anticiposPorClienteEc.set(rif,[]);
             _anticiposPorClienteEc.get(rif).push({...a,_saldoAnt:saldoAnt,_aplicadoHasta:aplicadoHasta,_reintegrado:reintegrado});
           }
+          // Con un filtro de CxC solo se muestran documentos de CxC: los anticipos y las retenciones manuales no pertenecen a una NE ni a una factura.
+          // Las NC/ND de clientes directos (sin NE) sí: las FISCALES salen en «CxC fiscal» y las NO fiscales en «CxC sin factura»,
+          // y el rango de fechas se aplica a la fecha de cada nota.
+          if(ecNeFiltro!=='TODAS'){
+            _anticiposPorClienteEc.clear(); _manualRetsPorClienteEc.clear();
+            for(const [rifD,arrD] of [..._manualNCPorClienteEc]){
+              const okD=arrD.filter(n=>{
+                const esFiscalD=(n.naturaleza||'FISCAL')==='FISCAL';
+                if(ecNeFiltro==='CON_FACTURA'?!esFiscalD:esFiscalD) return false;
+                const fechaD=n.fecha||'';
+                if(ecDesde&&fechaD<ecDesde) return false;
+                if(ecHasta&&fechaD>ecHasta) return false;
+                return true;
+              });
+              if(okD.length) _manualNCPorClienteEc.set(rifD,okD); else _manualNCPorClienteEc.delete(rifD);
+            }
+          }
           const porCli={};
           allNEs.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
@@ -48429,6 +49382,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             });
             return m;
           })();
+          if(ecNeFiltro!=='TODAS') _ajustesCxcPorClienteEc.clear(); // los ajustes de banco/caja tampoco pertenecen a una NE
           const getAjustesCxcClienteEc=(cl)=>_ajustesCxcPorClienteEc.get(cl.clientRif)||[];
           const getAjustesCxcClienteTotalEc=(cl)=>getAjustesCxcClienteEc(cl).reduce((s,a)=>s+a._montoUSD,0);
           const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(_anticiposPorClienteEc.get(cl.clientRif)||[]).reduce((s,a)=>s+Math.max(0,a._saldoAnt),0)+getAjustesCxcClienteTotalEc(cl);
@@ -48437,9 +49391,173 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const vendedoresEc=['TODOS',...new Set(allNEs.map(ne=>(ne.vendedor||'').toUpperCase()).filter(Boolean))];
           const totalFact=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+parseNum(ne.total||ne.montoBase||0),0),0);
           const totalSaldo=cliList.reduce((s,cl)=>s+getSaldoClienteTotalEc(cl),0);
-          const totalCobrado=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((sss,c)=>sss+parseNum(c.monto||0),0),0),0);
+          const totalCobrado=cliList.reduce((s,cl)=>s+cl.nes.reduce((ss,ne)=>ss+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((sss,c)=>sss+parseNum(c.monto||0),0),0),0);
+
+          // ── Modelo del reporte (pantalla en Bs., PDF en Bs. y Excel profesional USD / Bs.) ──
+          // mon='BS': cada documento con SUS PROPIOS datos en Bs. (factura = Libro de Ventas; retenciones = monto retenido;
+          // NC/ND = monto de la nota; cobros = Bs. registrados en el cobro). Nada se re-valora a una tasa de corte.
+          // mon='USD': los mismos montos en USD que muestra la pantalla.
+          const construirModeloEc=(mon)=>{
+            const bs=mon==='BS';
+            const R=bs?ecbR2:ecbNum; // en USD se conservan los montos tal como los calcula la pantalla (sin redondear por fila)
+            const num=(v)=>parseNum(v||0);
+            const fiscalDe=(inv)=>{ if(!inv) return ''; const f=localNroFiscal[inv.id||'']||inv.nroFiscal||''; return f?String(f).padStart(8,'0'):(inv.documento||''); };
+            const venceDe=(ne)=>{ try{ return getVenceEc(ne); }catch(e){ return ''; } };
+            const pesoDe=(ne,inv)=>{ const g=nesDeInvEc(inv); if(g.length<=1||!g.some((x)=>x.id===ne.id)) return 1; const tot=g.reduce((s,n)=>s+num(n.total||n.montoBase),0); return tot>0?num(ne.total||ne.montoBase)/tot:1/g.length; };
+            // Reparto exacto (sin perder ni ganar centavos) de un monto de una factura entre las NE que cubre
+            const ordenNE=(a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||''))||String(a.id||'').localeCompare(String(b.id||''));
+            const parteDe=(monto,grupo,ne)=>{ const g=[...grupo].sort(ordenNE); return ecbReparto(monto,g.map((n)=>num(n.total||n.montoBase)),g.findIndex((x)=>x.id===ne.id)); };
+            const porFecha=(a,b)=>(a.fecha||'').localeCompare(b.fecha||'');
+            const detCobro=(cb,extra)=>[cb.metodo||'—',cb.cuentaBancoNombre||'',cb.referencia?'Ref: '+cb.referencia:'',cb.concepto?'«'+cb.concepto+'»':'',extra||''].filter(Boolean).join(' · ');
+            const terceros=cliList.map((cl)=>{
+              const rows=[];
+              let sinFacN=0, sinFacUsd=0;
+              [...cl.nes].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne)=>{
+                const sNE=getSaldoNE(ne);
+                const inv=invDeNEec(ne);
+                const descNE=(ne.items||[])[0]?.desc||ne.descripcion||'';
+                const docBase={nivel:0,esDoc:true,doc:ne.documento||ne.id,fecha:ne.fecha||'',vence:venceDe(ne),saldoUsd:ecbNum(sNE),estado:ecbEstadoDe(sNE)};
+                if(bs&&!inv){
+                  // NE sin factura: no tiene datos en Bs. (no hay factura en el Libro de Ventas) → solo USD; no suma al saldo en Bs.
+                  sinFacN++; sinFacUsd+=sNE;
+                  rows.push({...docBase,tono:'info',cat:'',tipoTxt:'NE sin factura',detalle:(descNE?descNE+' · ':'')+'Total NE '+ecbMoney('USD',num(ne.total||ne.montoBase))+' · sin factura: sin datos en Bs.',tasa:null,cargo:null,ncret:null,abono:null,saldo:null});
+                  return;
+                }
+                const fv=inv?ecbFacturaVenta(inv,tasaBCVec):null;
+                const peso=inv?pesoDe(ne,inv):1;
+                const sub=[];
+                if(inv){
+                  sub.push({nivel:1,tono:'fac',cat:'',doc:fiscalDe(inv)||'—',fecha:inv.fechaFactura||inv.fecha||ne.fecha||'',tipoTxt:'Fac. Fiscal',
+                    detalle:'Base Bs. '+ecbFmt(fv.baseBs)+' · IVA Bs. '+ecbFmt(fv.ivaBs)+' · Total Bs. '+ecbFmt(fv.totalBs)+(peso<0.9999?' · esta NE toma el '+ecbFmt(peso*100)+' %':''),
+                    tasa:fv.tasa>1?fv.tasa:null,cargo:null,ncret:null,abono:null});
+                }
+                // NC / ND vinculadas a esta NE o a su factura. Una nota de una factura que junta varias NE se reparte entre ellas
+                // (cada NE muestra y descuenta SU parte, como la factura y las retenciones): ya no se descuenta completa en cada NE.
+                getNCsNE(ne).filter((n)=>(!ecHasta||(n.fecha||'')<=ecHasta)&&pesoNotaEc(ne,n)>0).sort(porFecha).forEach((n)=>{
+                  const esNC=n.tipo==='NC';
+                  const nv=ecbNotaVenta(n);
+                  const pn=pesoNotaEc(ne,n);
+                  const compartN=pn<0.9999;
+                  let v, aviso='';
+                  if(bs) v=compartN?parteDe(nv.totalBs,nesDeNotaEc(n),ne):nv.totalBs;
+                  else { const u=usdNotaEc(n); if(u==null){ v=null; aviso='⚠ Sin tasa'; } else v=R(u*pn); }
+                  sub.push({nivel:1,tono:'nc',cat:'NOTA',doc:(n.tipo||'NC')+' · '+(n.nroDocumento||'—'),fecha:n.fecha||'',tipoTxt:esNC?'Nota de Crédito':'Nota de Débito',
+                    detalle:(n.descripcion||'—')+(bs?' · Base Bs. '+ecbFmt(nv.baseBs)+(nv.fiscal?' · IVA Bs. '+ecbFmt(nv.ivaBs):' · no fiscal'):'')+(compartN?' · esta NE toma el '+ecbFmt(pn*100)+' % de la nota':''),
+                    tasa:null,cargo:esNC?null:v,ncret:esNC?v:null,abono:null,aviso});
+                });
+                // Retenciones (IVA y otras); el IGTF es informativo y nunca se descuenta
+                const rd=getRetsDetalleNEec(ne);
+                [...rd.iva,...rd.otras].sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||'')).forEach((r)=>{
+                  const bsFull=R(num(r.montoRetenido));
+                  if(r.tipo==='IGTF'){
+                    sub.push({nivel:1,tono:'info',cat:'',doc:r.nroRetencion||r.nroComprobante||'IGTF',fecha:r.fechaComprobante||r.fecha||'',tipoTxt:'IGTF',detalle:'IGTF Bs. '+ecbFmt(bsFull)+' · Fac. '+(r._invNroFiscal||'—')+' · informativo: no se descuenta del saldo',tasa:r._tasa>1?r._tasa:null,cargo:null,ncret:null,abono:null});
+                    return;
+                  }
+                  const x=!!r.tipoExtra;
+                  const pct=r.porcentaje||r.pct||r.pctRetencion;
+                  const compart=r._peso!=null&&r._peso<0.9999;
+                  sub.push({nivel:1,tono:x?'retx':'ret',cat:'RET',doc:r.nroRetencion||r.nroComprobante||'—',fecha:r.fechaComprobante||r.fecha||'',tipoTxt:x?(r.tipoLabel||r.tipo||'Otra Ret.'):'Retención IVA',
+                    detalle:[pct?pct+'%':'','Bs. '+ecbFmt(bsFull)+(compart?' (esta NE: '+ecbFmt(r._peso*100)+' %)':''),'Fac. '+(r._invNroFiscal||'—')].filter(Boolean).join(' · '),
+                    tasa:r._tasa>1?r._tasa:null,cargo:null,ncret:bs?parteDe(bsFull,r._grupo||[ne],ne):(r._sinTasa?null:R(r._montoUSD)),abono:null,aviso:(!bs&&r._sinTasa)?'⚠ Sin tasa':''});
+                });
+                // Cobros (los de IGTF son un cargo aparte: informativos)
+                const cobrosNE=(cobrosCxc||[]).filter((c)=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).sort(porFecha);
+                const nPagosNE=cobrosNE.filter((c)=>c.tipo!=='IGTF').length;
+                let iPago=0;
+                cobrosNE.forEach((cb)=>{
+                  const mv=bs?ecbMovBs(cb,fv?fv.tasa:0):null;
+                  if(cb.tipo==='IGTF'){
+                    sub.push({nivel:1,tono:'info',cat:'',doc:'IGTF',fecha:cb.fecha||'',tipoTxt:'IGTF',detalle:detCobro(cb,'IGTF '+(bs?'Bs. '+ecbFmt(mv.bs):ecbMoney('USD',num(cb.monto)))+' · informativo: no se suma al cobrado'),tasa:null,cargo:null,ncret:null,abono:null});
+                    return;
+                  }
+                  const lbl='Pago'+(nPagosNE>1?' '+(++iPago):'');
+                  sub.push({nivel:1,tono:'pago',cat:'COBRO',doc:lbl,fecha:cb.fecha||'',tipoTxt:'Pago',
+                    detalle:detCobro(cb,bs?ecbMoney('USD',num(cb.monto))+(mv.via==='tasa de la factura'?' · Bs. a la tasa de la factura':''):''),
+                    tasa:bs&&mv.tasa>1?mv.tasa:null,cargo:null,ncret:null,abono:bs?mv.bs:R(num(cb.monto)),aviso:(bs&&mv.sinTasa)?'⚠ Sin tasa':''});
+                });
+                const suma=(k)=>sub.reduce((s,r)=>s+(r[k]||0),0);
+                const cargoDoc=bs?parteDe(fv.totalBs,nesDeInvEc(inv),ne):R(num(ne.total||ne.montoBase));
+                rows.push({...docBase,tono:'doc',cat:'FACT',tipoTxt:'NE',detalle:descNE||'—',tasa:(bs&&fv.tasa>1)?fv.tasa:null,cargo:cargoDoc,ncret:null,abono:null,
+                  saldo:bs?R(cargoDoc+suma('cargo')-suma('ncret')-suma('abono')):R(sNE)});
+                sub.forEach((r)=>rows.push(r));
+              });
+              // Partidas de la cuenta del cliente que no pertenecen a una NE (no salen cuando se filtra por NE)
+              (_manualRetsPorClienteEc.get(cl.clientRif)||[]).forEach((r)=>{
+                const vBs=R(num(r.montoRetenido));
+                const v=bs?vBs:(r._sinTasa?null:R(r._montoUSD));
+                rows.push({nivel:0,esDoc:false,tono:'retx',cat:'RET',doc:r.nroRetencion||'RET-MANUAL',fecha:r.fechaComprobante||r.fecha||'',vence:'',tipoTxt:r.tipoLabel||'Ret. Manual',
+                  detalle:(r._manualNroFiscal&&r._manualNroFiscal!=='—'?'Factura N° '+r._manualNroFiscal+' · no registrada en el sistema':'Sin factura asociada')+(bs?'':' · Bs. '+ecbFmt(vBs)),
+                  tasa:r._tasa>1?r._tasa:null,cargo:null,ncret:v,abono:null,saldo:v==null?null:R(-v),saldoUsd:r._sinTasa?null:-ecbNum(r._montoUSD),estado:'',aviso:(!bs&&r._sinTasa)?'⚠ Sin tasa':''});
+              });
+              (_manualNCPorClienteEc.get(cl.clientRif)||[]).forEach((n)=>{
+                const esNC=n.tipo==='NC';
+                const nv=ecbNotaVenta(n);
+                const pagos=esNC?[]:(cobrosCxc||[]).filter((c)=>c.neId===`ND-${n.id}`&&(!ecHasta||(c.fecha||'')<=ecHasta)).sort(porFecha);
+                const pagosMv=pagos.map((c)=>ecbMovBs(c,num(n.tasaFactura)));
+                const totalDoc=bs?nv.totalBs:(n._sinTasa?null:R(n._montoUSD));
+                const saldoDoc=bs?(esNC?R(-nv.totalBs):R(Math.max(0,nv.totalBs-pagosMv.reduce((s,p)=>s+p.bs,0)))):(n._sinTasa?null:R(n._signedUSD));
+                rows.push({nivel:0,esDoc:false,tono:'nc',cat:'NOTA',doc:(n.tipo||'NC')+' · '+(n.nroDocumento||'—'),fecha:n.fecha||'',vence:'',tipoTxt:esNC?'Nota de Crédito':'Nota de Débito',
+                  detalle:(n.descripcion||'Cliente directo · sin NE asociada'),tasa:null,cargo:esNC?null:totalDoc,ncret:esNC?totalDoc:null,abono:null,saldo:saldoDoc,saldoUsd:n._sinTasa?null:ecbNum(n._signedUSD),estado:'',aviso:(!bs&&n._sinTasa)?'⚠ Sin tasa':''});
+                pagos.forEach((c,ci)=>{
+                  const mv=pagosMv[ci];
+                  rows.push({nivel:1,tono:'pago',cat:'COBRO',doc:'Pago'+(pagos.length>1?' '+(ci+1):''),fecha:c.fecha||'',tipoTxt:'Pago',detalle:detCobro(c,bs?ecbMoney('USD',num(c.monto)):''),
+                    tasa:bs&&mv.tasa>1?mv.tasa:null,cargo:null,ncret:null,abono:bs?mv.bs:R(num(c.monto)),aviso:(bs&&mv.sinTasa)?'⚠ Sin tasa':''});
+                });
+              });
+              (_anticiposPorClienteEc.get(cl.clientRif)||[]).forEach((a)=>{
+                const sAnt=Math.max(0,a._saldoAnt);
+                const ab=ecbAnticipoBs(a,sAnt);
+                const v=bs?(ab.sinTasa?null:ab.saldoBs):R(sAnt);
+                rows.push({nivel:0,esDoc:false,tono:'ant',cat:'OTRO',doc:'ANTICIPO',fecha:a.fecha||'',vence:'',tipoTxt:'Anticipo',
+                  detalle:(a.concepto||'Anticipo de cliente')+(a.referencia?' · Ref. '+a.referencia:'')+' · Recibido '+ecbMoney('USD',num(a.monto))+(a._aplicadoHasta>0.01?' · Aplicado '+ecbMoney('USD',a._aplicadoHasta):'')+(a._reintegrado>0.01?' · Reintegrado '+ecbMoney('USD',a._reintegrado):''),
+                  tasa:bs&&ecbNum(a.tasa)>1?ecbNum(a.tasa):null,cargo:null,ncret:null,abono:v,saldo:v==null?null:R(-v),saldoUsd:-sAnt,estado:'',aviso:(bs&&ab.sinTasa)?'⚠ Sin tasa':''});
+              });
+              getAjustesCxcClienteEc(cl).forEach((a)=>{
+                const esReint=a._montoUSD<0;
+                const aj=ecbAjusteBs(a);
+                const v=bs?(aj.sinTasa?null:aj.bs):R(Math.abs(a._montoUSD));
+                rows.push({nivel:0,esDoc:false,tono:'aju',cat:'OTRO',doc:esReint?'REINTEGRO':'AJUSTE',fecha:a.fecha||'',vence:'',tipoTxt:'Ajuste CxC',
+                  detalle:(a.concepto||(esReint?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' · Ref. '+a.referencia:''),
+                  tasa:bs&&ecbNum(a.tasa)>1?ecbNum(a.tasa):null,cargo:esReint?null:v,ncret:null,abono:esReint?v:null,saldo:v==null?null:R(esReint?-v:v),saldoUsd:ecbNum(a._montoUSD),estado:'',aviso:(bs&&aj.sinTasa)?'⚠ Sin tasa':''});
+              });
+              const saldoUsdCl=getSaldoClienteTotalEc(cl);
+              return {key:cl.clientRif,nombre:cl.clientName,rif:cl.clientRif,vendedor:cl.nes[0]?.vendedor||cl.vendedor||'—',estado:ecbEstadoDe(saldoUsdCl),saldoUsd:saldoUsdCl,sinFactura:sinFacN?{n:sinFacN,usd:R(sinFacUsd)}:null,rows};
+            });
+            const filtros=['Moneda: '+(bs?'Bolívares (Bs.)':'Dólares (USD)')];
+            if(ecNeFiltro==='CON_FACTURA') filtros.push('Solo CxC fiscal (NE con factura · NC y ND fiscales)');
+            if(ecNeFiltro==='SIN_FACTURA') filtros.push('Solo CxC sin factura (NE sin factura fiscal)');
+            if(ecVendedor!=='TODOS') filtros.push('Vendedor: '+ecVendedor);
+            if(ecEstado==='PENDIENTE') filtros.push('Solo clientes con saldo');
+            if(ecEstado==='SALDADO') filtros.push('Solo clientes saldados');
+            if(ecSearch) filtros.push('Búsqueda: «'+ecSearch+'»');
+            if(ecDesde) filtros.push('Desde '+ecbFecha(ecDesde));
+            if(ecHasta) filtros.push('Hasta '+ecbFecha(ecHasta));
+            if((ecDesde||ecHasta)&&ecNeFiltro==='CON_FACTURA') filtros.push('Fechas según la fecha de la factura fiscal');
+            if((ecDesde||ecHasta)&&ecNeFiltro==='SIN_FACTURA') filtros.push('Fechas según la fecha de la NE');
+            const hayIgtf=terceros.some((t)=>t.rows.some((r)=>r.tipoTxt==='IGTF'));
+            const haySinTasa=terceros.some((t)=>t.rows.some((r)=>(r.aviso||'').indexOf('Sin tasa')>=0));
+            const notas=[];
+            if(bs){
+              notas.push('Cada documento se expresa con sus propios datos en Bs.: la factura con su total del Libro de Ventas, las retenciones con el monto retenido en Bs., las notas de crédito/débito con el monto de la nota y los cobros con los Bs. registrados en cada cobro. Nada se convierte con una tasa de corte.');
+              notas.push('Saldo Bs. = Facturado + notas de débito − notas de crédito − retenciones − cobrado ± anticipos y ajustes. Cuando una factura cubre varias NE, su monto y sus retenciones se reparten entre las NE en proporción al total de cada una.');
+              notas.push('El estado (Pendiente / Saldado / A favor) y el «Saldo USD (ref.)» son los que lleva el sistema en dólares. El saldo en Bs. puede diferir por la variación de la tasa entre la factura y cada cobro (diferencial cambiario).');
+              if(terceros.some((t)=>t.sinFactura)) notas.push('Las NE sin factura no tienen datos en Bs. (no figuran en el Libro de Ventas): se muestran solo en USD y no suman al saldo en Bs.');
+            } else {
+              notas.push('Montos en dólares (USD) tal como los muestra el sistema. Las retenciones y las notas se convierten a USD con la tasa de cada documento; la factura fiscal se muestra con sus datos en Bs. como referencia.');
+            }
+            if(hayIgtf) notas.push('El IGTF se muestra como informativo: no se suma al cobrado ni se descuenta del saldo.');
+            if(haySinTasa) notas.push('Las partidas marcadas «Sin tasa» no tienen monto en Bs. registrado ni tasa para calcularlo; no se suman.');
+            if(ecNeFiltro==='CON_FACTURA') notas.push('CxC fiscal: NE que ya tienen factura fiscal, con su factura, sus notas de crédito/débito, retenciones y cobros, más las notas de crédito/débito fiscales de clientes directos (sin NE). El rango de fechas se aplica a la fecha de la factura fiscal (y a la fecha propia de cada nota directa). No incluye anticipos, ajustes ni retenciones manuales.');
+            if(ecNeFiltro==='SIN_FACTURA') notas.push('CxC sin factura: NE que todavía no tienen factura fiscal (la NE es lo que genera la cuenta por cobrar), más las notas no fiscales de clientes directos. El rango de fechas se aplica a la fecha de la NE (y a la fecha propia de cada nota directa). No incluye anticipos, ajustes ni retenciones manuales.');
+            const modelo=ecbCerrarModelo({ent:'CXC',mon,titulo:'ESTADO DE CUENTA — CUENTAS POR COBRAR',subtitulo:'CUENTAS POR COBRAR · CLIENTES',terNombre:'Cliente',terPlural:'clientes',terVendedor:true,lblCargo:'Facturado',lblAbono:'Cobrado',lblSinBs:'NE sin factura',
+              empresa:settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.',rif:settings?.empresaRif||'J-41230937-4',direccion:settings?.empresaDireccion||'',
+              corte:ecHasta||getTodayDate(),desde:ecDesde,hasta:ecHasta,neFiltro:ecNeFiltro,pagina:'A4',filtros,notas,terceros});
+            if(!bs&&modelo.terceros.some((t)=>!t.sum.cuadra)) modelo.notas.push('En USD el saldo es el que calcula el sistema. En algunos clientes puede diferir de la suma de las partidas mostradas (por ejemplo, cuando una factura junta varias NE y el sistema reparte entre ellas un saldo a favor).');
+            return modelo;
+          };
 
           const exportarECPDF=()=>{
+            if(ecMoneda==='BS'){ try{ ecbAbrirPdf(construirModeloEc('BS'),(t)=>alert(t)); }catch(e){ alert('Error PDF: '+((e&&e.message)||e)); } return; }
             const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
             const rifEmp=settings?.empresaRif||'J-41230937-4';
             const dirEmp=settings?.empresaDireccion||'';
@@ -48459,17 +49577,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const anticiposUSDcl=anticiposCl.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
               const saldoCl=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcl+manualNCSignedUSDcl-anticiposUSDcl+getAjustesCxcClienteTotalEc(cl);
               const facturadoCl=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
-              const cobradoCl=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
+              const cobradoCl=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
               const isEnCredito=saldoCl<-0.01;
               const isSaldado=saldoCl>=-0.01&&saldoCl<0.01;
               const retIvaCl=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
               const retOtrasCl=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).otrasUSD,0)+manualRetUSDcl;
+              const ncNdTotCl=manualNCSignedUSDcl+notasNeFirmadoEc(cl.nes); // notas de crédito/débito (de NE y directas): ND +, NC −
               let neRowsHtml='';
               cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach((ne,ni)=>{
                 const sNE=getSaldoNE(ne);
-                const invV=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                const invV=invDeNEec(ne);
                 const fiscalNum=localNroFiscal[invV?.id||'']||invV?.nroFiscal||'';
-                const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id);
+                const cobrosNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                 const totalCobNE=cobrosNE.reduce((s,c)=>s+parseNum(c.monto||0),0);
                 const retDetallePDFec=getRetsDetalleNEec(ne);
                 const retsNE=[...retDetallePDFec.iva,...retDetallePDFec.otras];
@@ -48491,16 +49610,35 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   +'</tr>';
                 // Fac. Fiscal sub-row
                 if(invV||fiscalNum){
-                  const baseInfo=parseNum(invV?.baseImponible||invV?.montoBase||0)>0?'Base: Bs.'+fV(invV?.baseImponible||invV?.montoBase||0)+(parseNum(invV?.montoIVA||invV?.iva||0)>0?' · IVA: Bs.'+fV(invV?.montoIVA||invV?.iva||0):'')+(parseNum(invV?.tasa||0)>0?' · Tasa: '+formatNum(invV?.tasa)+' Bs/$':''):'';
+                  const baseInfo=(()=>{ if(!invV) return ''; if(!(ecbNum(invV.baseGravableBs)>0||ecbNum(invV.totalBs)>0||ecbNum(invV.tasa)>1)) return ''; const fb=ecbFacturaVenta(invV,0); return [fb.baseBs>0?'Base: Bs.'+fV(fb.baseBs):'',fb.ivaBs>0?'IVA: Bs.'+fV(fb.ivaBs):'',fb.totalBs>0?'Total: Bs.'+fV(fb.totalBs):'',fb.tasa>1?'Tasa: '+formatNum(fb.tasa)+' Bs/$':''].filter(Boolean).join(' · '); })();
                   neRowsHtml+='<tr style="background:#eef2ff;border-bottom:1px solid #e0e7ff">'
                     +'<td style="padding:2px 6px;padding-left:20px;font-size:8px;color:#4338ca;font-weight:700">↳ '+(fiscalNum?String(fiscalNum).padStart(8,'0'):invV?.documento||'—')+'</td>'
-                    +'<td style="padding:2px 6px;font-size:8px;color:#6366f1">'+fD(invV?.fecha||ne.fecha)+'</td>'
+                    +'<td style="padding:2px 6px;font-size:8px;color:#6366f1">'+fD(invV?.fechaFactura||invV?.fecha||ne.fecha)+'</td>'
                     +'<td style="padding:2px 6px">'+badge('Fac. Fiscal','#eef2ff','#4338ca')+'</td>'
                     +'<td style="padding:2px 6px;font-size:8px;color:#64748b">'+baseInfo+'</td>'
                     +'<td colspan="4" style="padding:2px 6px"></td>'
                     +'<td style="padding:2px 6px;text-align:center">'+badge('Emitida','#eef2ff','#4338ca')+'</td>'
                     +'</tr>';
                 }
+                // NC / ND de la NE (su parte, si la factura junta varias NE)
+                getNCsNE(ne).filter(n=>(!ecHasta||(n.fecha||'')<=ecHasta)&&pesoNotaEc(ne,n)>0).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).forEach(n=>{
+                  const esNCp=n.tipo!=='ND';
+                  const pn=pesoNotaEc(ne,n);
+                  const uT=usdNotaEc(n);
+                  const uP=uT==null?null:uT*pn;
+                  const bBs=parseNum(n.monto||0);
+                  neRowsHtml+='<tr style="background:#faf5ff;border-bottom:1px solid #d8b4fe">'
+                    +'<td style="padding:2px 6px;padding-left:20px;font-size:8px;color:#7c3aed;font-weight:700">↳ '+(n.tipo||'NC')+' · '+(n.nroDocumento||'—')+'</td>'
+                    +'<td style="padding:2px 6px;font-size:8px;color:#7c3aed">'+fD(n.fecha)+'</td>'
+                    +'<td style="padding:2px 6px">'+badge(esNCp?'Nota Crédito':'Nota Débito','#faf5ff','#7c3aed')+'</td>'
+                    +'<td style="padding:2px 6px;font-size:8px;color:#7c3aed">'+(n.descripcion||'—')+(bBs>0?' · Bs.'+fV(bBs):'')+(pn<0.9999?' · esta NE: '+fV(pn*100)+' %':'')+'</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:8px;color:#7c3aed">'+(!esNCp&&uP!=null?'+$'+fmtN(uP):'—')+'</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:8px;color:#7c3aed">'+(uP==null?'⚠ Sin tasa':(esNCp?'-$'+fmtN(uP):'—'))+'</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                    +'<td style="padding:2px 6px;text-align:center">'+badge(esNCp?'NC':'ND','#faf5ff','#7c3aed')+'</td>'
+                    +'</tr>';
+                });
                 // Retención sub-rows
                 retsNE.forEach(r=>{
                   const rb=parseNum(r.montoRetenido||0);
@@ -48521,19 +49659,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     +'<td style="padding:2px 6px;text-align:center">'+badge('Ret.',bgX,tcX)+'</td>'
                     +'</tr>';
                 });
-                // Cobro sub-rows
-                cobrosNE.forEach((cb,ci)=>{
-                  const detalle=(cb.metodo||'—')+(cb.cuentaBancoNombre?' · '+cb.cuentaBancoNombre:'')+(cb.referencia?' · Ref:'+cb.referencia:'')+(cb.concepto?' · «'+cb.concepto+'»':'')+(parseNum(cb.montoBs||0)>0?' · Bs.'+fV(parseNum(cb.montoBs)):' · Bs.'+fV(parseNum(cb.monto||0)*parseNum(invV?.tasa||1)));
-                  neRowsHtml+='<tr style="background:#f0fdf4;border-bottom:1px solid #bbf7d0">'
-                    +'<td style="padding:2px 6px;padding-left:20px;font-size:8px;color:#166534;font-weight:700">↳ Pago'+(cobrosNE.length>1?' '+(ci+1):'')+'</td>'
+                // Cobro sub-rows (los de IGTF son un cargo aparte: informativos, no se suman al cobrado)
+                const nPagosPdf=cobrosNE.filter(c=>c.tipo!=='IGTF').length; let iPagoPdf=0;
+                cobrosNE.forEach((cb)=>{
+                  const esIgtf=cb.tipo==='IGTF';
+                  const bsCb=parseNum(cb.montoBs||0)>0?parseNum(cb.montoBs):(parseNum(invV?.tasa||0)>1?parseNum(cb.monto||0)*parseNum(invV.tasa):0);
+                  const detalle=(cb.metodo||'—')+(cb.cuentaBancoNombre?' · '+cb.cuentaBancoNombre:'')+(cb.referencia?' · Ref:'+cb.referencia:'')+(cb.concepto?' · «'+cb.concepto+'»':'')+(bsCb>0?' · Bs.'+fV(bsCb):'')+(esIgtf?' · IGTF $'+fmtN(cb.monto)+' · informativo: no se suma al cobrado':'');
+                  const bgC=esIgtf?'#f1f5f9':'#f0fdf4', bdC=esIgtf?'#e2e8f0':'#bbf7d0', tcC=esIgtf?'#475569':'#166534';
+                  neRowsHtml+='<tr style="background:'+bgC+';border-bottom:1px solid '+bdC+'">'
+                    +'<td style="padding:2px 6px;padding-left:20px;font-size:8px;color:'+tcC+';font-weight:700">↳ '+(esIgtf?'IGTF':'Pago'+(nPagosPdf>1?' '+(++iPagoPdf):''))+'</td>'
                     +'<td style="padding:2px 6px;font-size:8px;color:#16a34a">'+fD(cb.fecha)+'</td>'
-                    +'<td style="padding:2px 6px">'+badge('Pago','#f0fdf4','#166534')+'</td>'
+                    +'<td style="padding:2px 6px">'+badge(esIgtf?'IGTF':'Pago',bgC,tcC)+'</td>'
                     +'<td style="padding:2px 6px;font-size:8px;color:#14532d">'+detalle+'</td>'
                     +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
                     +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
-                    +'<td style="padding:2px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px;color:#16a34a">$'+fmtN(cb.monto)+'</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:9px;color:#16a34a">'+(esIgtf?'—':'$'+fmtN(cb.monto))+'</td>'
                     +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
-                    +'<td style="padding:2px 6px;text-align:center">'+badge('Cobrado','#f0fdf4','#166534')+'</td>'
+                    +'<td style="padding:2px 6px;text-align:center">'+badge(esIgtf?'IGTF':'Cobrado',bgC,tcC)+'</td>'
                     +'</tr>';
                 });
               });
@@ -48623,7 +49765,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 +'<tfoot><tr style="background:#1e293b;color:#fff">'
                 +'<td colspan="4" style="padding:4px 8px;font-size:8px;font-weight:900">SUBTOTAL · '+cl.nes.length+' DOC'+(cl.nes.length>1?'S':'')+(manualNCCl.length>0?' + '+manualNCCl.length+' NC/ND DIRECTA':'')+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px">$'+fmtN(facturadoCl)+'</td>'
-                +'<td style="padding:4px 8px;text-align:right;font-size:9px;color:#5eead4">'+((retIvaCl+retOtrasCl+Math.abs(manualNCSignedUSDcl))>0?'$'+fmtN(retIvaCl)+(retOtrasCl>0?' / O $'+fmtN(retOtrasCl):'')+(manualNCSignedUSDcl!==0?' / NC-ND '+(manualNCSignedUSDcl<0?'-$'+fmtN(Math.abs(manualNCSignedUSDcl)):'+$'+fmtN(manualNCSignedUSDcl)):''):'—')+'</td>'
+                +'<td style="padding:4px 8px;text-align:right;font-size:9px;color:#5eead4">'+((retIvaCl+retOtrasCl+Math.abs(ncNdTotCl))>0.004?'$'+fmtN(retIvaCl)+(retOtrasCl>0?' / O $'+fmtN(retOtrasCl):'')+(Math.abs(ncNdTotCl)>0.004?' / NC-ND '+(ncNdTotCl<0?'-$'+fmtN(Math.abs(ncNdTotCl)):'+$'+fmtN(ncNdTotCl)):''):'—')+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:#6ee7b7">$'+fmtN(cobradoCl)+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:10px;color:'+(isEnCredito?'#5eead4':isSaldado?'#6ee7b7':'#f97316')+'">'+(isEnCredito?'-$'+fmtN(Math.abs(saldoCl)):'$'+fmtN(saldoCl))+'</td>'
                 +'<td></td>'
@@ -48634,7 +49776,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const header='<div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:14px">'
               +'<div><div style="font-size:15px;font-weight:900">'+emp+'</div><div style="font-size:8px;color:#64748b">RIF: '+rifEmp+(dirEmp?' · '+dirEmp:'')+'</div></div>'
               +'<div style="text-align:right"><div style="font-size:13px;font-weight:900;color:#f97316">ESTADO DE CUENTA — CUENTAS POR COBRAR</div>'
-              +'<div style="font-size:8px;color:#64748b">Corte: '+(ecHasta||getTodayDate())+' · '+cliList.length+' clientes · '+cliList.reduce((s,cl)=>s+cl.nes.length,0)+' docs · Saldo total: $'+fmtN(totalSaldo)+'</div>'
+              +'<div style="font-size:8px;color:#64748b">Corte: '+(ecHasta||getTodayDate())+' · '+cliList.length+' clientes · '+cliList.reduce((s,cl)=>s+cl.nes.length,0)+' docs · Saldo total: $'+fmtN(totalSaldo)+(ecNeFiltro!=='TODAS'?' · '+(ecNeFiltro==='CON_FACTURA'?'Solo CxC fiscal (NE con factura · NC y ND fiscales)':'Solo CxC sin factura (NE sin factura fiscal)'):'')+'</div>'
               +'</div></div>';
             const html='<!DOCTYPE html><html><head><meta charset="utf-8"><style>'+css+'</style></head><body>'+header+bodyHtml+'<script>window.onload=function(){window.print();}<\/script></body></html>';
             try{
@@ -48644,7 +49786,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }catch(e){alert('Error PDF: '+e.message);}
           };
 
-          const exportarECExcel=()=>{
+          const exportarECExcel=async()=>{
+            try{
+              await ecbExportXLSX(construirModeloEc(ecMoneda));
+            }catch(e){
+              const msg=(e&&e.message)||String(e);
+              if(ecMoneda!=='BS'&&!/No hay registros/.test(msg)){ console.error(e); try{ exportarECExcelBasico(); return; }catch(e2){} }
+              alert('Error Excel: '+msg);
+            }
+          };
+          const exportarECExcelBasico=()=>{
             try{
               const emp=settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
               const fmtN2=n=>formatNum(parseNum(n||0));
@@ -48658,22 +49809,27 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const anticiposUSDclX=anticiposClX.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
                 const saldoClX=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDclX+manualNCSignedUSDclX-anticiposUSDclX+getAjustesCxcClienteTotalEc(cl);
                 const facturadoClX=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
-                const cobradoClX=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
+                const cobradoClX=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaClX=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
                 const retOtrasClX=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).otrasUSD,0)+manualRetUSDclX;
+                const ncNdTotClX=manualNCSignedUSDclX+notasNeFirmadoEc(cl.nes); // notas de crédito/débito (de NE y directas): ND +, NC −
                 bodyXls+='<tr><td colspan="9" style="background:#1e293b;color:#fff;font-weight:bold;padding:6px">'+cl.clientName+' \u00b7 '+(cl.clientRif||'')+'</td></tr>';
                 bodyXls+='<tr style="background:#0f172a;color:#f97316;font-weight:bold;font-size:9pt"><td>Documento</td><td>Fecha</td><td>Tipo</td><td>Detalle</td><td>Cargo USD</td><td>Ret. IVA</td><td>Otra Ret.</td><td>Cobrado</td><td>Saldo</td></tr>';
                 cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).forEach(ne=>{
                   const sNEx=getSaldoNE(ne);
-                  const invVx=(invoices||[]).find(i=>(i.neOrigen===ne.id||i.neOrigen===ne.documento)&&!i.esAnulacionFiscal&&(!ne.clientRif||!i.clientRif||(i.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                  const invVx=invDeNEec(ne);
                   const fiscalNumX=localNroFiscal[invVx?.id||'']||invVx?.nroFiscal||'';
                   const cobrosNEx=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
                   const totalCobNEx=cobrosNEx.reduce((s,c)=>s+parseNum(c.monto||0),0);
                   const retDx=getRetsDetalleNEec(ne);
                   bodyXls+='<tr><td style="font-weight:bold;color:#ea580c">'+(ne.documento||ne.id)+'</td><td>'+(ne.fecha||'')+' (Vence: '+getVenceEc(ne)+')</td><td>NE</td><td>'+((ne.items||[])[0]?.desc||ne.descripcion||'')+'</td><td>$'+fmtN2(ne.total||ne.montoBase)+'</td><td></td><td></td><td></td><td>'+(sNEx<0?'-$'+fmtN2(Math.abs(sNEx)):'$'+fmtN2(sNEx))+'</td></tr>';
                   if(invVx||fiscalNumX){
-                    bodyXls+='<tr><td style="padding-left:16px;color:#4338ca">\u21b3 '+(fiscalNumX?String(fiscalNumX).padStart(8,'0'):invVx?.documento||'')+'</td><td>'+(invVx?.fecha||'')+'</td><td>Fac. Fiscal</td><td>Tasa '+(parseNum(invVx?.tasa||0)>0?fmtN2(invVx.tasa)+' Bs/$':'')+'</td><td colspan="5"></td></tr>';
+                    bodyXls+='<tr><td style="padding-left:16px;color:#4338ca">\u21b3 '+(fiscalNumX?String(fiscalNumX).padStart(8,'0'):invVx?.documento||'')+'</td><td>'+(invVx?.fechaFactura||invVx?.fecha||'')+'</td><td>Fac. Fiscal</td><td>Tasa '+(parseNum(invVx?.tasa||0)>0?fmtN2(invVx.tasa)+' Bs/$':'')+'</td><td colspan="5"></td></tr>';
                   }
+                  getNCsNE(ne).filter(n=>(!ecHasta||(n.fecha||'')<=ecHasta)&&pesoNotaEc(ne,n)>0).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).forEach(n=>{
+                    const esNCx=n.tipo!=='ND'; const pn=pesoNotaEc(ne,n); const uT=usdNotaEc(n); const uP=uT==null?null:uT*pn;
+                    bodyXls+='<tr><td style="padding-left:16px;color:#7c3aed">↳ '+(n.tipo||'NC')+' · '+(n.nroDocumento||'')+'</td><td>'+(n.fecha||'')+'</td><td>'+(esNCx?'Nota Crédito':'Nota Débito')+'</td><td>'+(n.descripcion||'')+(pn<0.9999?' · esta NE: '+fmtN2(pn*100)+' %':'')+'</td><td>'+(uP==null?'Sin tasa':(esNCx?'-$':'+$')+fmtN2(uP))+'</td><td colspan="4"></td></tr>';
+                  });
                   retDx.iva.forEach(r=>{
                     bodyXls+='<tr><td style="padding-left:16px;color:#b45309">\u21b3 '+(r.nroRetencion||r.nroComprobante||'')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>Retenci\u00f3n IVA</td><td>'+(r.porcentaje||75)+'% \u00b7 Bs.'+fmtN2(r.montoRetenido)+'</td><td></td><td>'+(r._sinTasa?'Sin tasa':'$'+fmtN2(r._montoUSD))+'</td><td colspan="3"></td></tr>';
                   });
@@ -48681,7 +49837,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     bodyXls+='<tr><td style="padding-left:16px;color:#0f766e">\u21b3 '+(r.nroRetencion||r.nroComprobante||'')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>'+(r.tipoLabel||r.tipo||'Otra Ret.')+'</td><td>'+(r.porcentaje||'')+'% \u00b7 Bs.'+fmtN2(r.montoRetenido)+'</td><td colspan="2"></td><td>'+(r._sinTasa?'Sin tasa':'$'+fmtN2(r._montoUSD))+'</td><td colspan="2"></td></tr>';
                   });
                   cobrosNEx.forEach(cb=>{
-                    bodyXls+='<tr><td style="padding-left:16px;color:#166534">\u21b3 Pago</td><td>'+(cb.fecha||'')+'</td><td>Pago</td><td>'+(cb.metodo||'')+' \u00b7 '+(cb.referencia||'')+'</td><td colspan="3"></td><td>$'+fmtN2(cb.monto)+'</td><td></td></tr>';
+                    const esIgtfX=cb.tipo==='IGTF'; // el IGTF es un cargo aparte: informativo, no se suma al cobrado
+                    bodyXls+='<tr><td style="padding-left:16px;color:'+(esIgtfX?'#475569':'#166534')+'">\u21b3 '+(esIgtfX?'IGTF':'Pago')+'</td><td>'+(cb.fecha||'')+'</td><td>'+(esIgtfX?'IGTF (informativo)':'Pago')+'</td><td>'+(cb.metodo||'')+' \u00b7 '+(cb.referencia||'')+(esIgtfX?' \u00b7 IGTF $'+fmtN2(cb.monto)+' \u00b7 no se suma al cobrado':'')+'</td><td colspan="3"></td><td>'+(esIgtfX?'':'$'+fmtN2(cb.monto))+'</td><td></td></tr>';
                   });
                 });
                 manualRetsClX.forEach(r=>{
@@ -48699,7 +49856,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const esReintegro=a._montoUSD<0, colorAj=esReintegro?'#0e7490':'#b45309';
                   bodyXls+='<tr><td style="padding-left:16px;color:'+colorAj+';font-weight:bold">'+(esReintegro?'\u21a9\ufe0f REINTEGRO':'\u26a0\ufe0f AJUSTE')+'</td><td>'+(a.fecha||'')+'</td><td>Ajuste CxC</td><td>'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>'+(!esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td colspan="2"></td><td>'+(esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td style="color:'+colorAj+';font-weight:bold">'+(esReintegro?'-':'+')+'$'+fmtN2(Math.abs(a._montoUSD))+'</td></tr>';
                 });
-                bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(manualNCSignedUSDclX!==0?' / NC-ND '+(manualNCSignedUSDclX<0?'-$'+fmtN2(Math.abs(manualNCSignedUSDclX)):'+$'+fmtN2(manualNCSignedUSDclX)):'')+'</td><td>$'+fmtN2(retIvaClX)+'</td><td>$'+fmtN2(retOtrasClX)+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
+                bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(Math.abs(ncNdTotClX)>0.004?' / NC-ND '+(ncNdTotClX<0?'-$'+fmtN2(Math.abs(ncNdTotClX)):'+$'+fmtN2(ncNdTotClX)):'')+'</td><td>$'+fmtN2(retIvaClX)+'</td><td>$'+fmtN2(retOtrasClX)+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
                 bodyXls+='<tr><td colspan="9"></td></tr>';
               });
               const htmlXls='<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:12pt">'+emp+' \u2014 ESTADO DE CUENTA</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1">'+bodyXls+'</table></body></html>';
@@ -48710,6 +49867,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               URL.revokeObjectURL(url);
             }catch(e){alert('Error Excel: '+e.message);}
           };
+
+          let modeloBs=null, errorBs='';
+          if(ecMoneda==='BS'){ try{ modeloBs=construirModeloEc('BS'); }catch(e){ errorBs=(e&&e.message)||String(e); console.error(e); } }
 
           return (
             <div className="p-4 space-y-4">
@@ -48725,14 +49885,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <option value="PENDIENTE">Con saldo</option>
                     <option value="SALDADO">Saldados</option>
                   </select>
+                  <select value={ecNeFiltro} onChange={e=>setEcNeFiltro(e.target.value)} data-testid="ec-ne-filtro" title="Filtrar las CxC: fiscales (con factura, NC y ND fiscales) o sin factura (solo NE)" className={'border rounded-xl px-3 py-2 text-[10px] font-bold outline-none '+(ecNeFiltro!=='TODAS'?'border-orange-400 bg-orange-50 text-orange-700':'border-gray-200')}>
+                    <option value="TODAS">Todas las CxC</option>
+                    <option value="CON_FACTURA">CxC fiscal (con factura, NC y ND fiscales)</option>
+                    <option value="SIN_FACTURA">CxC sin factura (solo NE)</option>
+                  </select>
                   <div className="flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2">
                     <span className="text-[9px] text-gray-400 font-bold">Desde</span>
                     <input type="date" value={ecDesde} onChange={e=>setEcDesde(e.target.value)} className="border-none outline-none text-[10px] font-bold bg-transparent"/>
                     <span className="text-[9px] text-gray-400 font-bold">hasta</span>
                     <input type="date" value={ecHasta} onChange={e=>setEcHasta(e.target.value)} className="border-none outline-none text-[10px] font-bold bg-transparent"/>
                   </div>
-                  {(ecDesde||ecHasta||ecSearch||ecVendedor!=='TODOS'||ecEstado!=='TODOS')&&
-                    <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
+                  {(ecDesde||ecHasta||ecSearch||ecVendedor!=='TODOS'||ecEstado!=='TODOS'||ecNeFiltro!=='TODAS')&&
+                    <button onClick={()=>{setEcSearch('');setEcVendedor('TODOS');setEcEstado('TODOS');setEcNeFiltro('TODAS');setEcDesde('');setEcHasta('');}} className="text-[9px] text-red-400 font-black hover:underline">✕ Limpiar</button>}
                 </div>
               </div>
               {/* Expandir / Contraer todo + PDF + Excel */}
@@ -48746,22 +49911,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 transition-all flex items-center gap-1">
                   ▲ Contraer todo
                 </button>
-                <button onClick={exportarECPDF} className="flex items-center gap-1.5 px-4 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all">
-                  <FileText size={11}/> PDF
+                <div className="flex items-center gap-1 ml-1" data-testid="ec-moneda">
+                  <span className="text-[9px] text-gray-400 font-black uppercase">Moneda</span>
+                  <div className="flex rounded-lg overflow-hidden border border-orange-300">
+                    <button onClick={()=>setEcMoneda('USD')} data-testid="ec-moneda-usd" className={'px-3 py-1 text-[9px] font-black uppercase transition-all '+(ecMoneda!=='BS'?'bg-orange-500 text-white':'bg-white text-gray-500 hover:bg-orange-50')}>$ USD</button>
+                    <button onClick={()=>setEcMoneda('BS')} data-testid="ec-moneda-bs" className={'px-3 py-1 text-[9px] font-black uppercase transition-all '+(ecMoneda==='BS'?'bg-orange-500 text-white':'bg-white text-gray-500 hover:bg-orange-50')}>Bs.</button>
+                  </div>
+                </div>
+                <button data-testid="ec-btn-pdf" onClick={exportarECPDF} className="flex items-center gap-1.5 px-4 py-1.5 bg-red-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-red-700 transition-all">
+                  <FileText size={11}/> PDF{ecMoneda==='BS'?' Bs.':''}
                 </button>
-                <button onClick={exportarECExcel} className="flex items-center gap-1.5 px-4 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700 transition-all">
-                  <Download size={11}/> Excel
+                <button data-testid="ec-btn-excel" onClick={exportarECExcel} className="flex items-center gap-1.5 px-4 py-1.5 bg-green-600 text-white rounded-lg text-[9px] font-black uppercase hover:bg-green-700 transition-all">
+                  <Download size={11}/> Excel{ecMoneda==='BS'?' Bs.':''}
                 </button>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[{l:'Clientes',v:cliList.length,c:'text-gray-800'},{l:'Total facturado',v:'$'+formatNum(totalFact),c:'text-gray-800'},{l:'Total cobrado',v:'$'+formatNum(totalCobrado),c:'text-green-700'},{l:'Saldo pendiente',v:'$'+formatNum(totalSaldo),c:'text-red-600'}].map(k=>(
+                {(ecMoneda==='BS'&&modeloBs?[{l:'Clientes',v:cliList.length,c:'text-gray-800'},{l:'Total facturado',v:ecbMoney('BS',modeloBs.tot.facturado),c:'text-gray-800'},{l:'Total cobrado',v:ecbMoney('BS',modeloBs.tot.cobrado),c:'text-green-700'},{l:'Saldo pendiente',v:ecbMoney('BS',modeloBs.tot.saldo),c:'text-red-600',s:'Ref. USD '+ecbMoney('USD',modeloBs.tot.saldoUsd)}]:[{l:'Clientes',v:cliList.length,c:'text-gray-800'},{l:'Total facturado',v:'$'+formatNum(totalFact),c:'text-gray-800'},{l:'Total cobrado',v:'$'+formatNum(totalCobrado),c:'text-green-700'},{l:'Saldo pendiente',v:'$'+formatNum(totalSaldo),c:'text-red-600'}]).map(k=>(
                   <div key={k.l} className="bg-white rounded-2xl border border-gray-100 p-4">
                     <div className="text-[9px] font-black text-gray-400 uppercase mb-1">{k.l}</div>
                     <div className={`text-xl font-black ${k.c}`}>{k.v}</div>
+                    {k.s&&<div className="text-[9px] font-bold text-gray-400 mt-0.5">{k.s}</div>}
                   </div>
                 ))}
               </div>
-              {cliList.map(cl=>{
+              {ecMoneda==='BS'?((errorBs||!modeloBs)?<div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs font-bold text-red-700" data-testid="ecb-error">No se pudo armar el Estado de Cuenta en Bs.: {errorBs||'sin datos'}. Vuelve a USD.</div>:<EcbPanel m={modeloBs} expanded={ecExpanded} setExpanded={setEcExpanded} todoAbierto={false}/>):cliList.map(cl=>{
                 const manualRetsCli=_manualRetsPorClienteEc.get(cl.clientRif)||[];
                 const manualRetUSDcli=manualRetsCli.reduce((s,r)=>s+r._montoUSD,0);
                 const manualNCCli=_manualNCPorClienteEc.get(cl.clientRif)||[];
@@ -48770,9 +49943,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const anticiposUSDcli=anticiposCli.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
                 const saldoCli=cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-manualRetUSDcli+manualNCSignedUSDcli-anticiposUSDcli+getAjustesCxcClienteTotalEc(cl);
                 const facturadoCli=cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.montoBase||0),0);
-                const cobradoCli=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
+                const cobradoCli=cl.nes.reduce((s,ne)=>s+(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!ecHasta||(c.fecha||'')<=ecHasta)).reduce((ss,c)=>ss+parseNum(c.monto||0),0),0);
                 const retIvaCli=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).ivaUSD,0);
                 const retOtrasCli=cl.nes.reduce((s,ne)=>s+getRetsDetalleNEec(ne).otrasUSD,0)+manualRetUSDcli;
+                const ncNdTotCli=manualNCSignedUSDcli+notasNeFirmadoEc(cl.nes); // notas de crédito/débito (de NE y directas): ND +, NC −
                 const enCredito=saldoCli<-0.01;
                 const saldado=saldoCli>=-0.01&&saldoCli<0.01;
                 const exp=!!ecExpanded[cl.clientRif];
@@ -48818,8 +49992,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           {cl.nes.sort((a,b)=>new Date(a.fecha)-new Date(b.fecha)).map((ne,ni)=>{
                             const sNE=getSaldoNE(ne);
                             const cobNE=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&(!ecHasta||(c.fecha||'')<=ecHasta));
-                            const ncsNE2=(notasVentaCD||[]).filter(n=>{const ni2=n.neId||'',no=n.neOrigen||'';return ni2===ne.id||no===ne.id||ni2===ne.documento||no===ne.documento;});
-                            const invV2=(invoices||[]).find(inv=>(inv.neOrigen===ne.id||inv.neOrigen===ne.documento||(ne.facturaId&&(inv.id===ne.facturaId||inv.documento===ne.facturaId)))&&!inv.esAnulacionFiscal&&(!ne.clientRif||!inv.clientRif||(inv.clientRif||'').trim().toUpperCase()===(ne.clientRif||'').trim().toUpperCase()));
+                            const ncsNE2=getNCsNE(ne).filter(n=>(!ecHasta||(n.fecha||'')<=ecHasta)&&pesoNotaEc(ne,n)>0).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+                            const invV2=invDeNEec(ne);
                             const retDetalle2=getRetsDetalleNEec(ne);
                             const retsNE2=[...retDetalle2.iva,...retDetalle2.otras].sort((a,b)=>(a.fechaComprobante||'').localeCompare(b.fechaComprobante||''));
                             const enCredito2=sNE<-0.01;
@@ -48843,29 +50017,42 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">
                                   ↳ {String(invV2.nroFiscal||localNroFiscal[invV2.id]).padStart(8,'0')}
                                 </td>
-                                <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fecha||'—'}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-indigo-600">{invV2.fechaFactura||invV2.fecha||'—'}</td>
                                 <td className="py-1.5 px-3"></td>
                                 <td className="py-1.5 px-3"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Fac. Fiscal</span></td>
                                 <td className="py-1.5 px-3 text-[8px] text-gray-500 col-span-2">
-                                  {parseNum(invV2.baseImponible||invV2.montoBase||0)>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(parseNum(invV2.baseImponible||invV2.montoBase||0))}</b></span>}
-                                  {parseNum(invV2.montoIVA||invV2.iva||0)>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(parseNum(invV2.montoIVA||invV2.iva||0))}</b></span>}
-                                  {parseNum(invV2.tasa||0)>0&&<span className="ml-2 text-gray-400">Tasa: {formatNum(parseNum(invV2.tasa))} Bs/$</span>}
+                                  {(()=>{
+                                    // Datos en Bs. de la factura = los del Libro de Ventas; si la factura no tiene Bs. ni tasa, no se inventan
+                                    const fb=(ecbNum(invV2.baseGravableBs)>0||ecbNum(invV2.totalBs)>0||ecbNum(invV2.tasa)>1)?ecbFacturaVenta(invV2,0):null;
+                                    return fb?(<>
+                                      {fb.baseBs>0&&<span>Base: <b className="text-indigo-600">Bs.{formatNum(fb.baseBs)}</b></span>}
+                                      {fb.ivaBs>0&&<span className="ml-2">IVA: <b className="text-red-500">Bs.{formatNum(fb.ivaBs)}</b></span>}
+                                      {fb.totalBs>0&&<span className="ml-2">Total: <b className="text-indigo-700">Bs.{formatNum(fb.totalBs)}</b></span>}
+                                      {fb.tasa>1&&<span className="ml-2 text-gray-400">Tasa: {formatNum(fb.tasa)} Bs/$</span>}
+                                    </>):null;
+                                  })()}
                                 </td>
                                 <td className="py-1.5 px-3 text-right text-gray-300" colSpan={4}>—</td>
                                 <td className="py-1.5 px-3 text-center"><span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">Emitida</span></td>
                               </tr>}
-                              {ncsNE2.map(nc=>{const t=parseNum(nc.tasaFactura||0)||tasaBCVec;const b=parseNum(nc.monto||0);const u=t>1?b/t:parseNum(nc.montoUSD||0);return(
+                              {ncsNE2.map(nc=>{
+                                const esNCu=nc.tipo!=='ND';
+                                const pn=pesoNotaEc(ne,nc);
+                                const uT=usdNotaEc(nc);
+                                const u=uT==null?null:uT*pn; // su parte de la nota (si la factura junta varias NE)
+                                const b=parseNum(nc.monto||0);
+                                return(
                                 <tr key={nc.id} className="border-b border-purple-100" style={{background:'#faf5ff'}}>
                                   <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {nc.tipo||'NC'} · {nc.nroDocumento||'—'}</td>
                                   <td className="py-1.5 px-3 text-[8px] text-purple-600">{nc.fecha||'—'}</td>
                                   <td className="py-1.5 px-3"></td>
-                                  <td className="py-1.5 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">Nota Crédito</span></td>
-                                  <td className="py-1.5 px-3 text-[8px] text-purple-500 italic">{nc.descripcion||'—'}{b>0&&<span className="text-gray-400 ml-2">· Bs.{formatNum(b)}</span>}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">{esNCu?'Nota Crédito':'Nota Débito'}</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-purple-500 italic">{nc.descripcion||'—'}{b>0&&<span className="text-gray-400 ml-2">· Bs.{formatNum(b)}</span>}{pn<0.9999&&<span className="text-purple-500 font-bold not-italic ml-2">· esta NE: {formatNum(pn*100)} %</span>}</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-purple-700">{!esNCu&&u!=null?'+$'+formatNum(u):<span className="text-gray-300 font-normal">—</span>}</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-purple-700">{u==null?<span className="text-red-500 text-[9px]">⚠ Sin tasa</span>:(esNCu?'-$'+formatNum(u):<span className="text-gray-300 font-normal">—</span>)}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right font-black text-purple-700">-${formatNum(u)}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">NC</span></td>
+                                  <td className="py-1.5 px-3 text-center"><span className="bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">{esNCu?'NC':'ND'}</span></td>
                                 </tr>);
                               })}
                               {retsNE2.map((r,ri)=>{
@@ -48891,25 +50078,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   <td className="py-1.5 px-3 text-center"><span className={'px-1.5 py-0.5 rounded text-[8px] font-black '+r2Txt+' '+r2BadgeBg}>Ret.</span></td>
                                 </tr>);
                               })}
-                              {cobNE.map((cb,ci)=>(
-                                <tr key={cb.id||ci} className="border-b border-green-100" style={{background:'#f0fdf4'}}>
-                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-green-700">↳ Pago{cobNE.length>1?' '+(ci+1):''}</td>
-                                  <td className="py-1.5 px-3 text-[8px] text-green-600">{cb.fecha||'—'}</td>
+                              {cobNE.map((cb,ci)=>{
+                                const esIgtf=cb.tipo==='IGTF'; // el IGTF es un cargo aparte: informativo, no se suma al cobrado
+                                const nPag=cobNE.filter(c=>c.tipo!=='IGTF').length;
+                                const iPag=cobNE.slice(0,ci+1).filter(c=>c.tipo!=='IGTF').length;
+                                return(
+                                <tr key={cb.id||ci} className={esIgtf?'border-b border-slate-100':'border-b border-green-100'} style={{background:esIgtf?'#f1f5f9':'#f0fdf4'}}>
+                                  <td className={'py-1.5 px-3 pl-7 text-[8px] font-black '+(esIgtf?'text-slate-600':'text-green-700')}>↳ {esIgtf?'IGTF':'Pago'+(nPag>1?' '+iPag:'')}</td>
+                                  <td className={'py-1.5 px-3 text-[8px] '+(esIgtf?'text-slate-500':'text-green-600')}>{cb.fecha||'—'}</td>
                                   <td className="py-1.5 px-3"></td>
-                                  <td className="py-1.5 px-3"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Pago</span></td>
+                                  <td className="py-1.5 px-3"><span className={'px-1.5 py-0.5 rounded text-[8px] font-black '+(esIgtf?'bg-slate-100 text-slate-600':'bg-green-50 text-green-700')}>{esIgtf?'IGTF':'Pago'}</span></td>
                                   <td className="py-1.5 px-3 text-[8px] text-gray-500">
-                                    <span className="font-bold text-green-700">{cb.metodo||'—'}</span>
+                                    <span className={'font-bold '+(esIgtf?'text-slate-600':'text-green-700')}>{cb.metodo||'—'}</span>
                                     {cb.cuentaBancoNombre&&<span className="ml-1">· {cb.cuentaBancoNombre}</span>}
                                     {cb.referencia&&<span className="ml-1 font-mono text-gray-400">· {cb.referencia}</span>}
                                     {parseNum(cb.montoBs||0)>0&&<span className="ml-1 text-blue-500">· Bs.{formatNum(parseNum(cb.montoBs))}</span>}
+                                    {esIgtf&&<span className="ml-1 font-bold text-slate-600">· IGTF ${formatNum(parseNum(cb.monto))} · informativo: no se suma al cobrado</span>}
                                   </td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-right font-black text-green-700">${formatNum(parseNum(cb.monto))}</td>
+                                  <td className="py-1.5 px-3 text-right font-black text-green-700">{esIgtf?<span className="text-gray-300 font-normal">—</span>:'$'+formatNum(parseNum(cb.monto))}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className="py-1.5 px-3 text-center"><span className="bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-[8px] font-black">Cobrado</span></td>
-                                </tr>
-                              ))}
+                                  <td className="py-1.5 px-3 text-center"><span className={'px-1.5 py-0.5 rounded text-[8px] font-black '+(esIgtf?'bg-slate-100 text-slate-600':'bg-green-50 text-green-700')}>{esIgtf?'IGTF':'Cobrado'}</span></td>
+                                </tr>);
+                              })}
                             </React.Fragment>);
                           })}
                           {manualRetsCli.map((r,ri)=>(
@@ -48993,7 +50185,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <tr style={{background:'#0f172a'}} className="text-[9px]">
                             <td colSpan={5} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}{anticiposCli.length>0?' + '+anticiposCli.length+' anticipo(s)':''}{getAjustesCxcClienteEc(cl).length>0?' + '+getAjustesCxcClienteEc(cl).length+' ajuste(s)':''}</td>
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
-                            <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli+Math.abs(manualNCSignedUSDcli))>0?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):'')+(manualNCSignedUSDcli!==0?' / NC-ND $'+formatNum(manualNCSignedUSDcli):''):'—'}</td>
+                            <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli+Math.abs(ncNdTotCli))>0.004?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):'')+(Math.abs(ncNdTotCli)>0.004?' / NC-ND '+(ncNdTotCli<0?'-$':'+$')+formatNum(Math.abs(ncNdTotCli)):''):'—'}</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
                             <td className="py-2 px-3 text-right text-orange-400 font-black">{saldoCli<-0.01?'-$'+formatNum(Math.abs(saldoCli)):'$'+formatNum(saldoCli)}</td>
                             <td></td>
@@ -49004,7 +50196,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   )}
                 </div>);
               })}
-              {cliList.length===0&&<div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin registros con los filtros aplicados</div>}
+              {ecMoneda!=='BS'&&cliList.length===0&&<div className="text-center py-16 text-gray-400 font-bold uppercase text-xs">Sin registros con los filtros aplicados</div>}
             </div>
           );
         })()}
@@ -58086,7 +59278,10 @@ ${resumen}
     const vidaMeses = vidaAnios*12;
     if (!a.fechaAdquisicion || vidaMeses<=0) return {mesesTranscurridos:0, deprAcumulada:0, valorLibros:costo, deprMensual:0};
     const [ya,ma] = a.fechaAdquisicion.substring(0,7).split('-').map(Number);
-    const [yc,mc] = (fechaCorte||getTodayDate()).substring(0,7).split('-').map(Number);
+    let _corteYM = (fechaCorte||getTodayDate()).substring(0,7);
+    // Vendido / dado de baja: la depreciación se detiene en el mes de la venta (ese mes sí cuenta)
+    if (afEstaDeBaja(a) && a.fechaBaja && String(a.fechaBaja).substring(0,7) < _corteYM) _corteYM = String(a.fechaBaja).substring(0,7);
+    const [yc,mc] = _corteYM.split('-').map(Number);
     let meses = (yc*12+mc)-(ya*12+ma);
     if (meses<0) meses=0; if (meses>vidaMeses) meses=vidaMeses;
     const deprMensual = (costo-residual)/vidaMeses;
@@ -58144,7 +59339,7 @@ ${resumen}
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
                           {!deBaja && <button onClick={()=>abrirEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
-                          {!deBaja && <button onClick={()=>setShowBajaActivoModal({...a, _valorLibros:valorLibros, _deprAcumulada:deprAcumulada})} className="p-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-500 hover:text-white" title="Dar de Baja / Vender"><LogOut size={12}/></button>}
+                          {!deBaja && <button onClick={()=>abrirVentaActivo(a)} className="p-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-500 hover:text-white" title="Dar de Baja / Vender"><LogOut size={12}/></button>}
                           <button onClick={()=>eliminarActivoFijo(a.id)} className="p-1.5 bg-red-50 text-red-400 rounded-lg hover:bg-red-500 hover:text-white" title="Eliminar"><Trash2 size={12}/></button>
                         </div>
                       </td>
@@ -58231,9 +59426,14 @@ ${resumen}
   );
   const renderBajaActivoModal = () => {
     const a = showBajaActivoModal;
+    // Costo, depreciación y valor en libros al mes de la fecha elegida (se deprecia hasta ese mes inclusive)
+    const fechaSel = bajaForm.fecha || getTodayDate();
+    const calcSel = calcDepreciacionActivo({...a, status:'ACTIVO', fechaBaja:''}, fechaSel);
+    const detAsiento = afBuscarAsientoVenta(a);
+    const yaReg = !!bajaForm.asientoYaRegistrado;
     return (
       <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{setShowBajaActivoModal(null);setBajaForm({});}}>
-        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-3 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()} data-testid="af-venta-modal">
           <div className="flex items-center justify-between">
             <h3 className="font-black text-lg text-gray-800">🚪 Dar de Baja / Vender</h3>
             <button onClick={()=>{setShowBajaActivoModal(null);setBajaForm({});}} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
@@ -58241,20 +59441,28 @@ ${resumen}
           <p className="text-xs font-black text-gray-700">{a.nombre}</p>
           <div className="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-3">
             <div><p className="text-[8px] font-black text-gray-400 uppercase">Costo</p><p className="text-sm font-black font-mono">${contFmt(a.valorCosto)}</p></div>
-            <div><p className="text-[8px] font-black text-amber-500 uppercase">Depr. Acum.</p><p className="text-sm font-black font-mono text-amber-600">${contFmt(a._deprAcumulada)}</p></div>
-            <div><p className="text-[8px] font-black text-emerald-500 uppercase">Valor Libros</p><p className="text-sm font-black font-mono text-emerald-600">${contFmt(a._valorLibros)}</p></div>
+            <div><p className="text-[8px] font-black text-amber-500 uppercase">Depr. Acum.</p><p className="text-sm font-black font-mono text-amber-600" data-testid="af-venta-depr">${contFmt(calcSel.deprAcumulada)}</p></div>
+            <div><p className="text-[8px] font-black text-emerald-500 uppercase">Valor Libros</p><p className="text-sm font-black font-mono text-emerald-600" data-testid="af-venta-libros">${contFmt(calcSel.valorLibros)}</p></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Fecha de Venta/Baja</label>
-              <input type="date" value={bajaForm.fecha||getTodayDate()} onChange={e=>setBajaForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+              <input type="date" data-testid="af-venta-fecha" value={bajaForm.fecha||getTodayDate()} onChange={e=>setBajaForm(f=>({...f,fecha:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
             </div>
             <div>
               <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Precio de Venta ($)</label>
-              <input type="number" step="0.01" value={bajaForm.precioVenta||''} onChange={e=>setBajaForm(f=>({...f,precioVenta:e.target.value}))} placeholder="0 si es solo baja" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
+              <input type="number" step="0.01" data-testid="af-venta-precio" value={bajaForm.precioVenta||''} onChange={e=>setBajaForm(f=>({...f,precioVenta:e.target.value}))} placeholder="0 si es solo baja" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
             </div>
           </div>
-          {Number(bajaForm.precioVenta||0)>0 && (
+          <div className={`rounded-xl p-3 border-2 ${yaReg?'bg-sky-50 border-sky-200':'bg-gray-50 border-gray-200'}`}>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" data-testid="af-venta-ya-asiento" checked={yaReg} onChange={e=>setBajaForm(f=>({...f,asientoYaRegistrado:e.target.checked}))} className="mt-0.5"/>
+              <span className="text-[11px] font-black text-gray-700">Ya registré el asiento contable de esta venta / baja (no generar otro)</span>
+            </label>
+            <p className="text-[10px] font-bold text-gray-500 mt-1.5">{yaReg?'Solo se marca el activo como vendido: sale de la Relación de Activos y deja de depreciarse después del mes de la venta. No se crea ningún asiento.':'Se creará el asiento de venta / baja en Ajustes Contables.'}</p>
+            {detAsiento && <p className="text-[10px] font-black text-sky-700 mt-1.5" data-testid="af-venta-asiento-hallado">Asiento encontrado en Ajustes Contables: «{detAsiento.concepto||detAsiento.nroComprobante}» del {contDd(detAsiento.fecha)} · Debe ${contFmt(detAsiento.totD)}.{detAsiento.precioSugerido>0?` Precio de venta que resulta del asiento: $${contFmt(detAsiento.precioSugerido)} (puedes cambiarlo).`:''}</p>}
+          </div>
+          {Number(bajaForm.precioVenta||0)>0 && !yaReg && (
             <div>
               <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Cuenta que recibe el pago</label>
               <select value={bajaForm.cuentaCobroNombre||''} onChange={e=>setBajaForm(f=>({...f,cuentaCobroNombre:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500">
@@ -58265,17 +59473,17 @@ ${resumen}
           )}
           {(() => {
             const precio = Number(bajaForm.precioVenta||0);
-            const ganancia = precio - a._valorLibros;
+            const ganancia = precio - calcSel.valorLibros;
             return (
               <div className={`rounded-xl p-3 text-center ${ganancia>=0?'bg-emerald-50 border border-emerald-200':'bg-red-50 border border-red-200'}`}>
-                <p className={`text-[9px] font-black uppercase ${ganancia>=0?'text-emerald-600':'text-red-600'}`}>{ganancia>=0?'Ganancia':'Pérdida'} en la operación</p>
-                <p className={`text-lg font-black font-mono ${ganancia>=0?'text-emerald-700':'text-red-700'}`}>${contFmt(Math.abs(ganancia))}</p>
+                <p className={`text-[9px] font-black uppercase ${ganancia>=0?'text-emerald-600':'text-red-600'}`}>{ganancia>=0?'Ganancia':'Pérdida'} en la operación (según el sistema)</p>
+                <p className={`text-lg font-black font-mono ${ganancia>=0?'text-emerald-700':'text-red-700'}`} data-testid="af-venta-resultado">${contFmt(Math.abs(ganancia))}</p>
               </div>
             );
           })()}
           <div className="flex gap-2 pt-2">
             <button onClick={()=>{setShowBajaActivoModal(null);setBajaForm({});}} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
-            <button onClick={()=>procesarBajaActivo(a)} className="flex-1 bg-amber-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-amber-700">Generar Asiento y Confirmar</button>
+            <button data-testid="af-venta-confirmar" onClick={()=>procesarBajaActivo(a)} className="flex-1 bg-amber-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-amber-700">{yaReg?'Marcar como vendido (sin asiento)':'Generar Asiento y Confirmar'}</button>
           </div>
         </div>
       </div>
@@ -61953,7 +63161,7 @@ ${resumen}
     const TABS_AF_CC = [
       {id:'configuracion', label:'Configuración', icon:<Settings2 size={13}/>},
       {id:'registro', label:'Registro de Activo Fijo', icon:<PlusCircle size={13}/>},
-      {id:'relacion', label:'Relación de Activos', icon:<ClipboardList size={13}/>, badge:(activosFijos||[]).length},
+      {id:'relacion', label:'Relación de Activos', icon:<ClipboardList size={13}/>, badge:(activosFijos||[]).filter(a=>!afEstaDeBaja(a)).length},
     ];
 
     return (
@@ -61968,7 +63176,7 @@ ${resumen}
             <div className="flex-1"/>
             <div className="hidden md:flex items-center gap-4 text-[10px]">
               <span className="text-gray-400">Centros de Costo: <span className="font-black text-white">{(activoFijoCfgC.centrosCosto||[]).length}</span></span>
-              <span className="text-gray-400">Activos Registrados: <span className="font-black text-orange-400">{(activosFijos||[]).length}</span></span>
+              <span className="text-gray-400">Activos Registrados: <span className="font-black text-orange-400">{(activosFijos||[]).filter(a=>!afEstaDeBaja(a)).length}</span></span>
             </div>
           </div>
 
@@ -62210,11 +63418,15 @@ ${resumen}
             const tasaPeriodo = parseFloat(afPeriodoTasa)||0;
             const buscarTasaPeriodo = async () => { const t=await fetchTasaBCV(fechaCortePeriodo); if(t) setAfPeriodoTasa(String(t)); };
 
-            let lista = [...(activosFijos||[])];
-            if(afRelFiltros.rubro) lista = lista.filter(a=>a.categoria===afRelFiltros.rubro);
-            if(afRelFiltros.centroCosto) lista = lista.filter(a=>a.centroCosto===afRelFiltros.centroCosto);
-            if(afRelFiltros.mes) lista = lista.filter(a=>String(a.fechaAdquisicion||'').startsWith(afRelFiltros.mes));
-            lista.sort((a,b)=>(a.fechaAdquisicion||'').localeCompare(b.fechaAdquisicion||''));
+            let listaBase = [...(activosFijos||[])];
+            if(afRelFiltros.rubro) listaBase = listaBase.filter(a=>a.categoria===afRelFiltros.rubro);
+            if(afRelFiltros.centroCosto) listaBase = listaBase.filter(a=>a.centroCosto===afRelFiltros.centroCosto);
+            if(afRelFiltros.mes) listaBase = listaBase.filter(a=>String(a.fechaAdquisicion||'').startsWith(afRelFiltros.mes));
+            listaBase.sort((a,b)=>(a.fechaAdquisicion||'').localeCompare(b.fechaAdquisicion||''));
+            // Los activos vendidos o dados de baja (a la fecha de cierre elegida) salen de la lista, de las tarjetas, de los totales
+            // y de «Guardar depreciación»; se ven aparte en «Vendidos / baja». En un cierre ANTERIOR a la venta siguen apareciendo.
+            const vendidosLista = listaBase.filter(a=>afFueraAlCorte(a,fechaCortePeriodo));
+            const lista = listaBase.filter(a=>!afFueraAlCorte(a,fechaCortePeriodo));
 
             // Agrupado por rubro (orden fijo de RUBROS_ACTIVO_FIJO_CC); lo que no calce con
             // ninguno de los 6 (dato viejo, o rubro escrito distinto) cae en "Otros / Sin Rubro".
@@ -62241,7 +63453,7 @@ ${resumen}
             // la foto fija del cierre del mes, los filtros son solo para ver/exportar un corte.
             const guardarDepreciacionPeriodo = async () => {
               try{
-                const detalle = (activosFijos||[]).map(a=>{
+                const detalle = (activosFijos||[]).filter(a=>!afFueraAlCorte(a,fechaCortePeriodo)).map(a=>{
                   const {mesesTranscurridos,deprAcumulada,valorLibros,deprMensual} = calcDepreciacionActivo(a,fechaCortePeriodo);
                   return {id:a.id, nombre:a.nombre||'', categoria:a.categoria||'', centroCosto:a.centroCosto||'', valorCosto:Number(a.valorCosto||0), mesesTranscurridos, deprAcumuladaUSD:Number(deprAcumulada.toFixed(2)), valorNetoUSD:Number(valorLibros.toFixed(2)), deprMensualUSD:Number(deprMensual.toFixed(2)), deprMensualBs: tasaPeriodo>0?Number((deprMensual*tasaPeriodo).toFixed(2)):0};
                 });
@@ -62274,10 +63486,19 @@ ${resumen}
                 aoa.push(['Activo','Centro de Costo','Adquisición','Vida Útil (años)','Vida Transcurrida (m.)','Costo $','Costo Bs','Dep. Acum. USD','Dep. Acum. Bs','Val. Neto USD','Val. Neto Bs','Dep. Mensual USD','Dep. Mensual Bs','Estado']);
                 g.items.forEach(a=>{
                   const {mesesTranscurridos,deprAcumulada,valorLibros,deprMensual}=calcDepreciacionActivo(a,fechaCortePeriodo);
-                  aoa.push([a.nombre||'',a.centroCosto||'',a.fechaAdquisicion||'',a.vidaUtilAnios||0,mesesTranscurridos,a.valorCosto||0,a.valorCostoBs||0,Number(deprAcumulada.toFixed(2)),tasaPeriodo>0?Number((deprAcumulada*tasaPeriodo).toFixed(2)):0,Number(valorLibros.toFixed(2)),tasaPeriodo>0?Number((valorLibros*tasaPeriodo).toFixed(2)):0,Number(deprMensual.toFixed(2)),tasaPeriodo>0?Number((deprMensual*tasaPeriodo).toFixed(2)):0,a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo']);
+                  aoa.push([a.nombre||'',a.centroCosto||'',a.fechaAdquisicion||'',a.vidaUtilAnios||0,mesesTranscurridos,a.valorCosto||0,a.valorCostoBs||0,Number(deprAcumulada.toFixed(2)),tasaPeriodo>0?Number((deprAcumulada*tasaPeriodo).toFixed(2)):0,Number(valorLibros.toFixed(2)),tasaPeriodo>0?Number((valorLibros*tasaPeriodo).toFixed(2)):0,Number(deprMensual.toFixed(2)),tasaPeriodo>0?Number((deprMensual*tasaPeriodo).toFixed(2)):0,'Activo']);
                 });
                 aoa.push([]);
               });
+              if(afRelVerVendidos && vendidosLista.length){
+                aoa.push(['VENDIDOS / DADOS DE BAJA AL CIERRE', `${vendidosLista.length} activo(s) · no suman en los totales`]);
+                aoa.push(['Activo','Centro de Costo','Adquisición','Fecha Venta/Baja','Costo $','Dep. Acum. USD (al vender)','Val. Libros USD (al vender)','Precio Venta USD','Resultado USD','Estado']);
+                vendidosLista.forEach(a=>{
+                  const {deprAcumulada,valorLibros}=calcDepreciacionActivo(a,fechaCortePeriodo);
+                  aoa.push([a.nombre||'',a.centroCosto||'',a.fechaAdquisicion||'',a.fechaBaja||'',a.valorCosto||0,Number(deprAcumulada.toFixed(2)),Number(valorLibros.toFixed(2)),a.status==='VENDIDO'?Number(a.precioVenta||0):0,a.gananciaVenta==null?'':Number(a.gananciaVenta||0),a.status==='VENDIDO'?'Vendido':'De Baja']);
+                });
+                aoa.push([]);
+              }
               const ws=XL.utils.aoa_to_sheet(aoa);
               ws['!cols']=[{wch:32},{wch:14},{wch:12},{wch:10},{wch:10},{wch:12},{wch:16},{wch:12},{wch:16},{wch:12},{wch:16},{wch:12},{wch:16},{wch:10}];
               const wb=XL.utils.book_new();
@@ -62300,6 +63521,15 @@ ${resumen}
                 });
                 body += `</tbody></table>`;
               });
+              if(afRelVerVendidos && vendidosLista.length){
+                body += `<h3 style="font-size:11px;text-transform:uppercase;margin:14px 0 4px;color:#7f1d1d">Vendidos / dados de baja al cierre <span style="color:#94a3b8;font-weight:400">(${vendidosLista.length}) · no suman en los totales</span></h3>`;
+                body += `<table><thead><tr><th>Activo</th><th>C. Costo</th><th>Adquisición</th><th>Venta / baja</th><th>Costo $</th><th>Dep. Acum $</th><th>Val. Libros $</th><th>Precio $</th><th>Resultado $</th></tr></thead><tbody>`;
+                vendidosLista.forEach(a=>{
+                  const {deprAcumulada,valorLibros}=calcDepreciacionActivo(a,fechaCortePeriodo);
+                  body += `<tr><td>${a.nombre||''}</td><td>${a.centroCosto||'—'}</td><td>${contDd(a.fechaAdquisicion)}</td><td>${a.fechaBaja?contDd(a.fechaBaja):'—'}</td><td>$${contFmt(a.valorCosto)}</td><td>$${contFmt(deprAcumulada)}</td><td>$${contFmt(valorLibros)}</td><td>${a.status==='VENDIDO'?'$'+contFmt(a.precioVenta):'—'}</td><td>${a.gananciaVenta==null?'—':'$'+contFmt(a.gananciaVenta)}</td></tr>`;
+                });
+                body += `</tbody></table>`;
+              }
               const html = pdfOpen('Relación de Activos Fijos', `Cierre ${contDd(fechaCortePeriodo)}${hayFiltros?' · Filtrado':''}`) + body + pdfClose(`${lista.length} activo(s)`);
               pdfPrint(html);
             };
@@ -62315,7 +63545,7 @@ ${resumen}
                   {items.map(a=>{
                     const {mesesTranscurridos,deprAcumulada,valorLibros,deprMensual} = calcDepreciacionActivo(a,fechaCortePeriodo);
                     const vidaMesesTotal = Math.round(Number(a.vidaUtilAnios||0)*12);
-                    const deBaja = a.status==='VENDIDO'||a.status==='DE_BAJA';
+                    const deBaja = false; // los vendidos / dados de baja al cierre ya no están en esta lista (ver «Vendidos / baja»)
                     return (
                       <tr key={a.id} className={`border-b border-gray-50 hover:bg-gray-50 ${deBaja?'opacity-50':''}`}>
                         <td className="px-3 py-2 font-black text-gray-800">{a.nombre}{a.ubicacion&&<div className="text-[9px] text-gray-400 font-normal">{a.ubicacion}</div>}</td>
@@ -62338,10 +63568,44 @@ ${resumen}
                         <td className="px-3 py-2 text-right font-mono text-emerald-600">{tasaPeriodo>0?`Bs ${contFmt(valorLibros*tasaPeriodo)}`:<span className="text-gray-300">—</span>}</td>
                         <td className="px-3 py-2 text-right font-mono text-gray-500">${contFmt(deprMensual)}</td>
                         <td className="px-3 py-2 text-right font-mono text-gray-500">{tasaPeriodo>0?`Bs ${contFmt(deprMensual*tasaPeriodo)}`:<span className="text-gray-300">—</span>}</td>
-                        <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${deBaja?'bg-red-100 text-red-600':'bg-emerald-100 text-emerald-600'}`}>{a.status==='VENDIDO'?'Vendido':a.status==='DE_BAJA'?'De Baja':'Activo'}</span></td>
+                        <td className="px-3 py-2 text-center"><span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-emerald-100 text-emerald-600">Activo</span></td>
                         <td className="px-3 py-2 text-center">
-                          {!deBaja && <button onClick={()=>iniciarEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
+                          <div className="flex items-center justify-center gap-1">
+                            {!deBaja && <button onClick={()=>iniciarEditarActivo(a)} className="p-1.5 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white" title="Editar"><Edit size={12}/></button>}
+                            {!deBaja && <button data-testid="af-venta-btn" onClick={()=>abrirVentaActivo(a)} className="p-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-500 hover:text-white" title="Registrar venta / baja (lo saca de la Relación)"><LogOut size={12}/></button>}
+                          </div>
                         </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table></div>
+            );
+
+            const TablaVendidos = ({items}) => (
+              <div className="overflow-x-auto"><table className="w-full text-xs">
+                <thead><tr style={{background:'#7f1d1d'}}>
+                  {['Activo','Centro de Costo','Adquisición','Fecha venta / baja','Costo $','Dep. Acum. USD (al vender)','Val. Libros USD (al vender)','Precio de venta $','Resultado $','Estado','Acción'].map((h,i)=>(
+                    <th key={i} className={`px-3 py-2.5 font-black uppercase text-white/90 whitespace-nowrap ${(i>=4&&i<=8)?'text-right':i>=9?'text-center':'text-left'}`} style={{fontSize:'9px'}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {items.map(a=>{
+                    const {deprAcumulada,valorLibros} = calcDepreciacionActivo(a,fechaCortePeriodo);
+                    const res = Number(a.gananciaVenta||0);
+                    return (
+                      <tr key={a.id} className="border-b border-gray-50 hover:bg-gray-50" data-testid="af-vendido-fila">
+                        <td className="px-3 py-2 font-black text-gray-800">{a.nombre}{a.ubicacion&&<div className="text-[9px] text-gray-400 font-normal">{a.ubicacion}</div>}</td>
+                        <td className="px-3 py-2 text-gray-500 font-mono">{a.centroCosto||'—'}</td>
+                        <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{contDd(a.fechaAdquisicion)}</td>
+                        <td className="px-3 py-2 text-gray-500 font-mono whitespace-nowrap">{a.fechaBaja?contDd(a.fechaBaja):'—'}</td>
+                        <td className="px-3 py-2 text-right font-mono">${contFmt(a.valorCosto)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-amber-600">${contFmt(deprAcumulada)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-emerald-600">${contFmt(valorLibros)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{a.status==='VENDIDO'?`$${contFmt(a.precioVenta)}`:<span className="text-gray-300">—</span>}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-black ${res>=0?'text-emerald-600':'text-red-600'}`}>{a.gananciaVenta==null?<span className="text-gray-300">—</span>:`${res<0?'-':''}$${contFmt(Math.abs(res))}`}</td>
+                        <td className="px-3 py-2 text-center"><span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-red-100 text-red-600">{a.status==='VENDIDO'?'Vendido':'De Baja'}</span></td>
+                        <td className="px-3 py-2 text-center"><button data-testid="af-reactivar" onClick={()=>reactivarActivoVendido(a)} className="px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-gray-100 text-gray-600 hover:bg-gray-800 hover:text-white" title="Volver a dejarlo como activo (no borra ningún asiento)">Reactivar</button></td>
                       </tr>
                     );
                   })}
@@ -62402,7 +63666,10 @@ ${resumen}
                     <input type="month" value={afRelFiltros.mes} onChange={e=>setAfRelFiltros(f=>({...f,mes:e.target.value}))} className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-500"/>
                   </div>
                   {hayFiltros && <button onClick={()=>setAfRelFiltros({rubro:'',centroCosto:'',mes:''})} className="text-[10px] font-black uppercase text-gray-400 hover:text-red-500 px-2 py-2">✕ Limpiar filtros</button>}
-                  <div className="ml-auto text-[10px] text-gray-400 font-bold">{lista.length} activo(s){hayFiltros?' (filtrado)':''}</div>
+                  <div className="ml-auto flex items-center gap-3">
+                    <button data-testid="af-toggle-vendidos" onClick={()=>setAfRelVerVendidos(v=>!v)} className={`px-3 py-2 rounded-xl text-[9px] font-black uppercase border-2 ${afRelVerVendidos?'bg-red-600 border-red-600 text-white':'bg-white border-red-200 text-red-600 hover:bg-red-50'}`} title="Activos vendidos o dados de baja a la fecha de cierre elegida (no suman en los totales)">{afRelVerVendidos?'Ocultar':'Ver'} vendidos / baja ({vendidosLista.length})</button>
+                    <span className="text-[10px] text-gray-400 font-bold">{lista.length} activo(s){hayFiltros?' (filtrado)':''}</span>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -62445,6 +63712,18 @@ ${resumen}
 
                   );
                 })}
+                {afRelVerVendidos && (
+                  <div className="bg-white rounded-2xl border border-red-200 overflow-hidden" data-testid="af-vendidos">
+                    <div className="flex items-center justify-between px-4 py-3 bg-red-50 border-b border-red-200">
+                      <p className="text-xs font-black uppercase text-red-700">Vendidos / dados de baja al cierre</p>
+                      <span className="text-[9px] font-bold text-red-400 uppercase">{vendidosLista.length} activo(s) · no suman en los totales ni se siguen depreciando</span>
+                    </div>
+                    {vendidosLista.length===0
+                      ? <p className="p-6 text-center text-[11px] font-bold text-gray-400">Ningún activo vendido o dado de baja a esta fecha de cierre.</p>
+                      : <TablaVendidos items={vendidosLista}/>}
+                  </div>
+                )}
+                {showBajaActivoModal && renderBajaActivoModal()}
               </div>
             );
           })()}
