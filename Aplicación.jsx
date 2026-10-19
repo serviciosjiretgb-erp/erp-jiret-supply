@@ -11890,7 +11890,9 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
   const esManual = (r.facturaId||'').startsWith('MANUAL-');
   const facAsoc = esManual ? null : (facturasVenta||[]).find(f => f.id===r.facturaId || f.documento===r.facturaId);
   const nombreCliente = r._manualCliente || facAsoc?.clientName || r.clientName || '—';
-  const nroFactura = r._manualNroFiscal || facAsoc?.nroFiscal || facAsoc?.documento || '—';
+  const nroFacturaBase = r._manualNroFiscal || facAsoc?.nroFiscal || facAsoc?.documento || '—';
+  // Retención aplicada a una Nota de Débito/Crédito fiscal: el concepto del asiento dice de qué nota es (ej. «00000456 · ND 0001»)
+  const nroFactura = r.notaNro ? `${nroFacturaBase} · ${r.notaTipo||'Nota'} ${r.notaNro}` : nroFacturaBase;
   // El RIF puede venir en el propio registro o, si no, en la factura vinculada — antes el motor
   // central solo miraba r.clientRif y se quedaba sin cliente (y sin su cuenta CxC configurada) en
   // los registros donde ese campo no se llenó directamente.
@@ -11902,9 +11904,14 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
   const reclas = (li,codigo,cuenta) => (aplicarReclas && tabId) ? aplicarReclas(tabId, r.id, li, codigo, cuenta) : {codigo,cuenta};
   const l0 = reclas(0, ctaRet.codigo, `${ctaRet.nombre} (${tipo})`);
   const l1 = reclas(1, codCli||'1.1.02.01.001', nomCli||'Cuentas por Cobrar Clientes');
+  // Retención NEGATIVA (la de una Nota de Crédito: revierte la retención recibida): mismas cuentas, Debe y Haber invertidos y con montos positivos
+  const _rev = montoBs < 0, _aBs = Math.abs(montoBs), _aUSD = Math.abs(montoUSD);
   return {
     tipo, nombreCliente, nroFactura, montoBs, montoUSD,
-    lineas: [
+    lineas: _rev ? [
+      {codigo:l0.codigo, cuenta:l0.cuenta, debeBs:0, haberBs:_aBs, debeUSD:0, haberUSD:_aUSD},
+      {codigo:l1.codigo, cuenta:l1.cuenta, debeBs:_aBs, haberBs:0, debeUSD:_aUSD, haberUSD:0},
+    ] : [
       {codigo:l0.codigo, cuenta:l0.cuenta, debeBs:montoBs, haberBs:0, debeUSD:montoUSD, haberUSD:0},
       {codigo:l1.codigo, cuenta:l1.cuenta, debeBs:0, haberBs:montoBs, debeUSD:0, haberUSD:montoUSD},
     ],
@@ -22402,7 +22409,7 @@ const ecbHtmlPdf = (m) => {
       + '<div><div style="font-weight:900;font-size:11px">' + E(t.nombre) + '</div><div style="font-size:8px;color:#94a3b8">' + E(t.rif || '') + (t.vendedor ? ' · ' + E(t.vendedor) : '') + ' · ' + t.nDocs + ' documento' + (t.nDocs === 1 ? '' : 's') + (bs && t.sinFactura ? ' · ' + t.sinFactura.n + ' ' + E(m.lblSinBs || 'NE sin factura') + ' (solo USD)' : '') + '</div></div>'
       + '<div style="display:flex;align-items:center;gap:18px;font-size:9px">'
       + chip(m.lblCargo || 'Facturado', M(s.facturado)) + chip(m.lblAbono || 'Cobrado', M(s.cobrado), '#6ee7b7')
-      + (s.retenido > 0.004 ? chip('Retenciones', M(s.retenido), '#5eead4') : '')
+      + (Math.abs(s.retenido) > 0.004 ? chip('Retenciones', M(s.retenido), '#5eead4') : '')
       + chip('Saldo ' + (bs ? 'Bs.' : 'USD'), M(s.saldo), s.saldo < -0.01 ? '#5eead4' : s.saldo < 0.01 ? '#6ee7b7' : '#f97316')
       + (bs ? chip('Saldo USD (ref.)', ecbMoney('USD', s.saldoUsd), '#cbd5e1') : '')
       + '<div>' + estB(t.estado) + '</div></div></div>'
@@ -22754,7 +22761,7 @@ const EcbPanel = ({ m, expanded, setExpanded, todoAbierto }) => {
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">{m.lblCargo || 'Facturado'}</div><div className="text-sm font-black text-gray-700 font-mono" data-testid="ecb-chip-facturado">{M(s.facturado)}</div></div>
                 <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">{m.lblAbono || 'Cobrado'}</div><div className="text-sm font-black text-green-700 font-mono" data-testid="ecb-chip-cobrado">{M(s.cobrado)}</div></div>
-                {s.retenido > 0.004 && <div className="text-right hidden md:block"><div className="text-[9px] text-gray-400">Retenciones</div><div className="text-sm font-black text-amber-700 font-mono" data-testid="ecb-chip-retenido">{M(s.retenido)}</div></div>}
+                {Math.abs(s.retenido) > 0.004 && <div className="text-right hidden md:block"><div className="text-[9px] text-gray-400">Retenciones</div><div className="text-sm font-black text-amber-700 font-mono" data-testid="ecb-chip-retenido">{M(s.retenido)}</div></div>}
                 <div className="text-right"><div className="text-[9px] text-gray-400">Saldo {bs ? 'Bs.' : 'USD'}</div><div className={'text-sm font-black font-mono ' + colSaldo(s.saldo)} data-testid="ecb-chip-saldo">{M(s.saldo)}</div></div>
                 {bs && <div className="text-right hidden sm:block"><div className="text-[9px] text-gray-400">Saldo USD (ref.)</div><div className={'text-sm font-black font-mono ' + colSaldo(s.saldoUsd)} data-testid="ecb-chip-saldousd">{ecbMoney('USD', s.saldoUsd)}</div></div>}
                 <span className={'text-[8px] font-black px-2 py-0.5 rounded-full ' + (estCls[t.estado] || '')}>{t.estado === 'FAVOR' ? 'A favor' : t.estado === 'SALDADO' ? 'Saldado' : 'Con saldo'}</span>
@@ -46674,7 +46681,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const peso=parseNum(neTarget.total||neTarget.totalUSD||0)/totalFacturaPeso;
               const key=neTarget.id;
               if(!_retsPorNE.has(key)) _retsPorNE.set(key,[]);
-              _retsPorNE.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||''});
+              _retsPorNE.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:(inv.nroFiscal||inv.documento||'')+(r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:'')});
             });
           }
           const getRetsDetalleNE=(ne)=>{
@@ -46903,7 +46910,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const sinTasaHist=!(tasaHist>1);
             const montoUSDHist=sinTasaHist?0:montoBsHist/tasaHist;
             if(!_manualRetsPorCliente.has(rifHist)) _manualRetsPorCliente.set(rifHist,[]);
-            _manualRetsPorCliente.get(rifHist).push({...r,_montoUSD:montoUSDHist,_sinTasa:sinTasaHist,_tasa:tasaHist,_manualCliente:invHist.clientName,_manualNroFiscal:invHist.nroFiscal||invHist.documento});
+            _manualRetsPorCliente.get(rifHist).push({...r,_montoUSD:montoUSDHist,_sinTasa:sinTasaHist,_tasa:tasaHist,_manualCliente:invHist.clientName,_manualNroFiscal:r.notaNro?((invHist.nroFiscal||invHist.documento||'')+' · '+(r.notaTipo||'Nota')+' '+r.notaNro):(invHist.nroFiscal||invHist.documento)});
           }
 
           // ── NC/ND de Cliente Directo (sin NE) — mismo patrón que retenciones manuales ──
@@ -47147,7 +47154,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="font-size:8px;color:#15803d;font-style:italic">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${parseNum(a.montoBs||0)>0?' · Bs.'+formatNum(a.montoBs):''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td>
                   </tr>`).join('');
                 const notaAjustes=[
-                  manualRetsCl2.length>0?'Retención -$'+formatNum(manualRetUSDclPDF):'',
+                  manualRetsCl2.length>0?'Retención '+(manualRetUSDclPDF<0?'+':'-')+'$'+formatNum(Math.abs(manualRetUSDclPDF)):'',
                 ].filter(Boolean).join(' · ');
                 return `<div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
                   <div class="co-hdr" style="display:grid;grid-template-columns:1fr auto auto">
@@ -47231,16 +47238,16 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const retDetalleAg=getRetsDetalleNE(ne);
                   const retsNE=[...retDetalleAg.iva,...retDetalleAg.otras];
                   const retComp=retsNE.map(r=>r.nroRetencion||'').filter(Boolean).join(' / ');
-                  detRows+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCred>0?diasCred+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFisc}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${retNE>0?'$'+formatNum(retNE)+(retComp?' ('+retComp+')':''):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
+                  detRows+=`<tr class="${i%2===0?'alt':''}"><td class="left" style="font-weight:bold;color:#ea580c">${ne.documento||ne.id}</td><td class="left">${ne.fecha||'—'}</td><td class="left">${getVence(ne)}</td><td class="center" style="color:#7c3aed">${diasCred>0?diasCred+'d':'—'}</td><td class="center" style="color:#4338ca;font-size:8pt">${docFisc}</td><td>$${formatNum(parseNum(ne.total||ne.totalUSD||0))}</td><td class="g">$${formatNum(cobNE)}</td><td class="b">${ncNE>0?'-$'+formatNum(ncNE):'—'}</td><td class="a">${(retNE>0||retNE<0)?(retNE<0?'-':'')+'$'+formatNum(Math.abs(retNE))+(retComp?' ('+retComp+')':''):'—'}</td><td style="font-weight:bold;color:#dc2626">$${formatNum(saldo)}</td><td class="left">${bucket}</td><td class="left" style="font-style:italic;color:#64748b">${ne.observacionCxC||''}</td></tr>`;
                   const cobrosNE=(cobrosCxc||[]).filter(cx=>cx.neId===ne.id&&(!fechaRef||(cx.fecha||'')<=fechaRef));
                   // Factura fiscal
                   if(invVinc){const baseBsA=parseNum(invVinc.baseImponible||invVinc.montoBase||0);const ivaA=parseNum(invVinc.montoIVA||invVinc.iva||0);const totalBsA=parseNum(invVinc.totalBs||0);const tasaA=parseNum(invVinc.tasa||0);detRows+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:16px;color:#4338ca;font-weight:bold">📋 Fac. ${invVinc.nroFiscal||invVinc.documento||'—'}</td><td class="left">${invVinc.fecha||'—'}</td><td class="left" colspan="2">${invVinc.nroControl?'Ctrl. '+invVinc.nroControl:''}</td><td colspan="3"></td><td class="left" style="color:#4338ca">${baseBsA>0?'Base: Bs.'+formatNum(baseBsA):''}${ivaA>0?' IVA: Bs.'+formatNum(ivaA):''}${totalBsA>0?' Tot: Bs.'+formatNum(totalBsA):''}${tasaA>0?' Tasa: '+formatNum(tasaA):''}  </td><td colspan="3"></td></tr>`;}
                   cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">💰 Pago · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}${cb.concepto?' · <i>'+cb.concepto+'</i>':''}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}${parseNum(cb.montoBs||0)>0?' / Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td colspan="3"></td></tr>`;});
-                  retsNE.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const lblX=r.tipoExtra?(r.tipoLabel||r.tipo||'Otra Ret.'):'Ret. IVA';const valX=r._sinTasa?'Sin tasa':'$'+formatNum(r._montoUSD);detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 ${lblX} · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td class="left">${r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}</td><td colspan="6"></td><td class="a">${valX}</td><td></td></tr>`;});
+                  retsNE.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const lblX=r.tipoExtra?(r.tipoLabel||r.tipo||'Otra Ret.'):'Ret. IVA';const valX=r._sinTasa?'Sin tasa':(r._montoUSD<0?'-':'')+'$'+formatNum(Math.abs(r._montoUSD));detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 ${lblX} · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td class="left">${r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}${r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:''}</td><td colspan="6"></td><td class="a">${valX}</td><td></td></tr>`;});
                 });
                 const manualRetsClAg=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclAg=manualRetsClAg.reduce((s,r)=>s+r._montoUSD,0);
-                manualRetsClAg.forEach(r=>{const valXm2=r._sinTasa?'Sin tasa':'$'+formatNum(r._montoUSD);detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 Ret. Manual · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||'—'}</td><td class="left">Fac. N° ${r._manualNroFiscal||'—'}</td><td colspan="6"></td><td class="a">${valXm2}</td><td></td></tr>`;});
+                manualRetsClAg.forEach(r=>{const valXm2=r._sinTasa?'Sin tasa':(r._montoUSD<0?'-':'')+'$'+formatNum(Math.abs(r._montoUSD));detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 Ret. Manual · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||'—'}</td><td class="left">Fac. N° ${r._manualNroFiscal||'—'}</td><td colspan="6"></td><td class="a">${valXm2}</td><td></td></tr>`;});
                 const manualNCClAg=(_manualNCPorCliente.get(cl.clientRif)||[]);
                 const manualNCSignedUSDAg=manualNCClAg.reduce((s,n)=>s+n._signedUSD,0);
                 manualNCClAg.forEach(n=>{const valNm2=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+formatNum(Math.abs(n._signedUSD));detRows+=`<tr class="nc"><td class="left" style="padding-left:16px">${n.tipo||'NC'} · sin NE · ${n.fecha||'—'}</td><td class="left">${n.nroDocumento||'—'}</td><td class="left">${n.descripcion||'Cliente directo'}</td><td colspan="6"></td><td class="b">${valNm2}</td><td></td></tr>`;});
@@ -47290,7 +47297,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   body+=`<tr style="background:#f0fdf4"><td class="left" style="font-weight:bold;color:#15803d">↳ Anticipo</td><td class="left">${a.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#94a3b8">—</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#15803d">-$${formatNum(parseNum(a._saldoAnt||a.monto||0))}</td><td class="left" style="font-style:italic;color:#15803d">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${parseNum(a.montoBs||0)>0?' · Bs.'+formatNum(a.montoBs):''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td></tr>`;
                 });
                 const notaAjustesXls=[
-                  manualRetUSDclXls>0?'Retención -$'+formatNum(manualRetUSDclXls):'',
+                  (manualRetUSDclXls>0||manualRetUSDclXls<0)?'Retención '+(manualRetUSDclXls<0?'+':'-')+'$'+formatNum(Math.abs(manualRetUSDclXls)):'',
                 ].filter(Boolean).join(' · ');
                 body+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="4">SUBTOTAL ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustesXls?' · '+notaAjustesXls:''}</td><td>$${formatNum(clTotUSD)}</td><td style="color:#dc2626">${clSaldo<-0.01?'-$'+formatNum(Math.abs(clSaldo)):'$'+formatNum(clSaldo)}</td><td></td></tr><tr><td colspan="7"></td></tr>`;
               });
@@ -47992,7 +47999,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   {rDet.iva.map((r,ri)=>(
                                     <div key={ri} style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
                                       <span style={{fontSize:8,color:'#92400e',fontWeight:700}}>🧾 Ret.IVA · Comp.{r.nroComprobante||r.nroRetencion||'—'} · Fac.{r._invNroFiscal||r.nroFactura||'—'}</span>
-                                      <span style={{fontSize:8,fontWeight:900,color:'#b45309'}}>-${formatNum(r._montoUSD)}</span>
+                                      <span style={{fontSize:8,fontWeight:900,color:'#b45309'}}>{r._montoUSD<0?'+':'-'}${formatNum(Math.abs(r._montoUSD))}</span>
                                     </div>
                                   ))}
                                   {rDet.otras.map((r,ri)=>(
@@ -48433,7 +48440,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 )}
                 {[
                   {l:'Cartera total',v:`$${formatNum(totalCarteraFilt)}`,s:`Bs. ${formatNum(totalCarteraFilt*tasaBCV)}`,c:'text-gray-800',bg:'bg-gray-50',br:'border-gray-200'},
-                  {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: -$${formatNum(totalRetNEs)}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
+                  {l:`Total facturado · ${clienteActivoData?clienteActivoData.nes.length:nesTotal.length} NEs`,v:`$${formatNum(totalBrutoFilt)}`,s:`NC/ND: -$${formatNum(totalNCNEs)} · Ret: ${totalRetNEs<0?'+':'-'}$${formatNum(Math.abs(totalRetNEs))}`,c:'text-gray-500',bg:'bg-gray-50',br:'border-gray-100'},
                   {l:'Cobrado histórico',v:`$${formatNum(cobradoHistoricoFilt)}`,s:`${(cobrosCxc||[]).length} cobros en total`,c:'text-green-700',bg:'bg-green-50',br:'border-green-200'},
                   {l:'Cobrado este mes',v:`$${formatNum(cobradoMesFilt)}`,s:`Bs. ${formatNum(cobradoMesFilt*tasaBCV)}`,c:'text-blue-700',bg:'bg-blue-50',br:'border-blue-200'},
                 ].map((m,i)=>(
@@ -48576,7 +48583,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   {ncNE>0?<span className="font-black text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded-md text-[9px]">-${formatNum(ncNE)}</span>:<span className="text-gray-300 text-[9px]">—</span>}
                                                 </td>
                                                 <td className="py-2 px-2 text-right" title={retTooltip}>
-                                                  {retNE>0?<span className="font-black text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md text-[9px] cursor-help">${formatNum(retNE)}</span>:<span className="text-gray-300 text-[9px]">—</span>}
+                                                  {(retNE>0||retNE<0)?<span className="font-black text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md text-[9px] cursor-help">{retNE<0?'-':''}${formatNum(Math.abs(retNE))}</span>:<span className="text-gray-300 text-[9px]">—</span>}
                                                   {retDetalle.sinTasa&&<div className="text-[7px] text-red-500 font-black mt-0.5">⚠ Sin tasa</div>}
                                                 </td>
                                                 <td className="py-2 px-2 text-right">
@@ -48660,11 +48667,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-400" colSpan={2}>—</td>
                                                   <td className="py-1.5 px-2 text-[8px]"><span className={'font-black px-1.5 py-0.5 rounded text-[8px] '+rColorTxt+' '+rBadgeBg}>{r.nroRetencion||r.nroComprobante||'—'}</span></td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={3}>—</td>
-                                                  <td className={'py-1.5 px-2 text-right text-[8px] font-black '+(r._sinTasa?'text-red-500':rColorTxt)}>{r._sinTasa?'⚠ Sin tasa':'$'+formatNum(r._montoUSD)}</td>
+                                                  <td className={'py-1.5 px-2 text-right text-[8px] font-black '+(r._sinTasa?'text-red-500':rColorTxt)}>{r._sinTasa?'⚠ Sin tasa':(r._montoUSD<0?'-':'')+'$'+formatNum(Math.abs(r._montoUSD))}</td>
                                                   <td className="py-1.5 px-2 text-right text-[8px] text-gray-400">—</td>
                                                   <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
                                                     {rLabel} {r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}
-                                                    {retBs>0&&<span className="ml-2 text-gray-400">· Bs.{formatNum(retBs)}</span>}
+                                                    {retBs!==0&&<span className="ml-2 text-gray-400">· Bs.{formatNum(retBs)}</span>}
                                                     {r._tasa>1&&<span className="text-gray-400"> / Tasa {formatNum(r._tasa)}</span>}
                                                     <span className="ml-2 text-gray-400">· Fac. {r._invNroFiscal||'—'}</span>
                                                   </td>
@@ -48723,10 +48730,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
                                             <td className="py-2 px-2 text-right text-gray-300 text-[9px]">—</td>
                                             <td className="py-2 px-2 text-right">
-                                              {r._sinTasa?<span className="text-red-500 font-black text-[8px]">⚠ Sin tasa</span>:<span className="font-black text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded-md text-[9px]">${formatNum(r._montoUSD)}</span>}
+                                              {r._sinTasa?<span className="text-red-500 font-black text-[8px]">⚠ Sin tasa</span>:<span className="font-black text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded-md text-[9px]">{r._montoUSD<0?'-':''}${formatNum(Math.abs(r._montoUSD))}</span>}
                                             </td>
                                             <td className="py-2 px-2 text-right">
-                                              <span className="font-black px-2 py-0.5 rounded-md text-[9px] text-teal-700 bg-teal-50">{r._sinTasa?'—':'-$'+formatNum(r._montoUSD)}</span>
+                                              <span className="font-black px-2 py-0.5 rounded-md text-[9px] text-teal-700 bg-teal-50">{r._sinTasa?'—':(r._montoUSD<0?'+$':'-$')+formatNum(Math.abs(r._montoUSD))}</span>
                                             </td>
                                             <td className="py-2 px-2 text-center text-gray-300 text-[9px]">—</td>
                                             <td className="py-2 px-2 text-[9px] text-teal-600 italic">{r.tipoLabel||'Retención manual'} · {r._manualNroFiscal&&r._manualNroFiscal!=='—'?'factura '+r._manualNroFiscal+' no registrada en el sistema':'sin factura asociada'}</td>
@@ -48778,8 +48785,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                           <td className="py-2 px-2 text-right text-gray-300 font-bold">${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</td>
                                           <td className="py-2 px-2 text-right text-green-400 font-black">{cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
-                                          <td className="py-2 px-2 text-right text-amber-400 font-black">{cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0)):'—'}</td>
-                                          <td className="py-2 px-2 text-right text-teal-400 font-black">{(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0))>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)):'—'}</td>
+                                          <td className="py-2 px-2 text-right text-amber-400 font-black">{(()=>{const _tIva=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0);return (_tIva>0||_tIva<0)?(_tIva<0?'-':'')+'$'+formatNum(Math.abs(_tIva)):'—';})()}</td>
+                                          <td className="py-2 px-2 text-right text-teal-400 font-black">{(()=>{const _tOtras=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0);return (_tOtras>0||_tOtras<0)?(_tOtras<0?'-':'')+'$'+formatNum(Math.abs(_tOtras)):'—';})()}</td>
                                           <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sobrepagoCl=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0)+sobrepagoCl;return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
                                           <td colSpan={2}></td>
                                         </tr>
@@ -49102,7 +49109,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const peso=parseNum(neTarget.total||neTarget.totalUSD||0)/totalFacturaPeso;
               const key=neTarget.id;
               if(!_retsPorNEec.has(key)) _retsPorNEec.set(key,[]);
-              _retsPorNEec.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:inv.nroFiscal||inv.documento||'',_peso:peso,_grupo:nesTarget});
+              _retsPorNEec.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:(inv.nroFiscal||inv.documento||'')+(r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:''),_peso:peso,_grupo:nesTarget});
             });
           }
           const getRetsDetalleNEec=(ne)=>{
@@ -49298,7 +49305,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const sinTasaHistEc=!(tasaHistEc>1);
             const montoUSDHistEc=sinTasaHistEc?0:montoBsHistEc/tasaHistEc;
             if(!_manualRetsPorClienteEc.has(rifHistEc)) _manualRetsPorClienteEc.set(rifHistEc,[]);
-            _manualRetsPorClienteEc.get(rifHistEc).push({...r,_montoUSD:montoUSDHistEc,_sinTasa:sinTasaHistEc,_tasa:tasaHistEc,_manualCliente:invHistEc.clientName,_manualNroFiscal:invHistEc.nroFiscal||invHistEc.documento});
+            _manualRetsPorClienteEc.get(rifHistEc).push({...r,_montoUSD:montoUSDHistEc,_sinTasa:sinTasaHistEc,_tasa:tasaHistEc,_manualCliente:invHistEc.clientName,_manualNroFiscal:r.notaNro?((invHistEc.nroFiscal||invHistEc.documento||'')+' · '+(r.notaTipo||'Nota')+' '+r.notaNro):(invHistEc.nroFiscal||invHistEc.documento)});
           }
           // ── NC/ND de Cliente Directo (sin NE) — mismo patrón que retenciones manuales ──
           const _manualNCPorClienteEc = new Map();
@@ -49658,7 +49665,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const tipoLabel=isX?(r.tipoLabel||r.tipo||'Otra Ret.'):'Retención IVA';
                   const pct=r.porcentaje||r.pctRetencion||75;
                   const bgX=isX?'#f0fdfa':'#fffbeb';const bdX=isX?'#99f6e4':'#fde68a';const tcX=isX?'#0f766e':'#b45309';const tc2X=isX?'#0d9488':'#d97706';
-                  const valTxt=r._sinTasa?'⚠ Sin tasa':'-$'+fmtN(r._montoUSD);
+                  const valTxt=r._sinTasa?'⚠ Sin tasa':(r._montoUSD<0?'+$':'-$')+fmtN(Math.abs(r._montoUSD));
                   neRowsHtml+='<tr style="background:'+bgX+';border-bottom:1px solid '+bdX+'">'
                     +'<td style="padding:2px 6px;padding-left:20px;font-size:8px;color:'+tcX+';font-weight:700">↳ '+(r.nroRetencion||r.nroComprobante||'—')+'</td>'
                     +'<td style="padding:2px 6px;font-size:8px;color:'+tc2X+'">'+fD(r.fechaComprobante||r.fecha)+'</td>'
@@ -49692,7 +49699,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 });
               });
               manualRetsCl.forEach(r=>{
-                const valTxtM=r._sinTasa?'⚠ Sin tasa':'-$'+fmtN(r._montoUSD);
+                const valTxtM=r._sinTasa?'⚠ Sin tasa':(r._montoUSD<0?'+$':'-$')+fmtN(Math.abs(r._montoUSD));
                 neRowsHtml+='<tr style="background:#f0fdfa;border-bottom:1px solid #99f6e4">'
                   +'<td style="padding:3px 6px;color:#0f766e;font-weight:900;font-size:9px">↳ '+(r.nroRetencion||'RET-MANUAL')+'</td>'
                   +'<td style="padding:3px 6px;font-size:8px;color:#0d9488">'+fD(r.fechaComprobante||r.fecha)+'</td>'
@@ -49757,7 +49764,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 +'<div style="display:flex;align-items:center;gap:20px;font-size:9px">'
                 +'<div style="text-align:right"><div style="color:#94a3b8">Facturado</div><div style="font-weight:900">$'+fmtN(facturadoCl)+'</div></div>'
                 +'<div style="text-align:right"><div style="color:#6ee7b7">Cobrado</div><div style="font-weight:900;color:#6ee7b7">$'+fmtN(cobradoCl)+'</div></div>'
-                +((retIvaCl+retOtrasCl)>0?'<div style="text-align:right"><div style="color:#5eead4">Retención</div><div style="font-weight:900;color:#5eead4;font-size:9px">$'+fmtN(retIvaCl)+(retOtrasCl>0?' / O $'+fmtN(retOtrasCl):'')+'</div></div>':'')
+                +((Math.abs(retIvaCl)+Math.abs(retOtrasCl))>0?'<div style="text-align:right"><div style="color:#5eead4">Retención</div><div style="font-weight:900;color:#5eead4;font-size:9px">'+(retIvaCl<0?'-':'')+'$'+fmtN(Math.abs(retIvaCl))+((retOtrasCl>0||retOtrasCl<0)?' / O '+(retOtrasCl<0?'-':'')+'$'+fmtN(Math.abs(retOtrasCl)):'')+'</div></div>':'')
                 +'<div style="text-align:right"><div style="color:'+(isEnCredito?'#5eead4':isSaldado?'#6ee7b7':'#fca5a5')+'">Saldo</div><div style="font-weight:900;font-size:12px;color:'+(isEnCredito?'#5eead4':isSaldado?'#6ee7b7':'#f97316')+'">'+(isEnCredito?'-$'+fmtN(Math.abs(saldoCl)):'$'+fmtN(saldoCl))+'</div></div>'
                 +'<div>'+(isEnCredito?badge('A favor','#0f766e','#fff'):badge(isSaldado?'Saldado':'Con saldo',isSaldado?'#16a34a':'#f97316','#fff'))+'</div>'
                 +'</div></div>'
@@ -49777,7 +49784,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 +'<tfoot><tr style="background:#1e293b;color:#fff">'
                 +'<td colspan="4" style="padding:4px 8px;font-size:8px;font-weight:900">SUBTOTAL · '+cl.nes.length+' DOC'+(cl.nes.length>1?'S':'')+(manualNCCl.length>0?' + '+manualNCCl.length+' NC/ND DIRECTA':'')+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px">$'+fmtN(facturadoCl)+'</td>'
-                +'<td style="padding:4px 8px;text-align:right;font-size:9px;color:#5eead4">'+((retIvaCl+retOtrasCl+Math.abs(ncNdTotCl))>0.004?'$'+fmtN(retIvaCl)+(retOtrasCl>0?' / O $'+fmtN(retOtrasCl):'')+(Math.abs(ncNdTotCl)>0.004?' / NC-ND '+(ncNdTotCl<0?'-$'+fmtN(Math.abs(ncNdTotCl)):'+$'+fmtN(ncNdTotCl)):''):'—')+'</td>'
+                +'<td style="padding:4px 8px;text-align:right;font-size:9px;color:#5eead4">'+((Math.abs(retIvaCl)+Math.abs(retOtrasCl)+Math.abs(ncNdTotCl))>0.004?(retIvaCl<0?'-':'')+'$'+fmtN(Math.abs(retIvaCl))+((retOtrasCl>0||retOtrasCl<0)?' / O '+(retOtrasCl<0?'-':'')+'$'+fmtN(Math.abs(retOtrasCl)):'')+(Math.abs(ncNdTotCl)>0.004?' / NC-ND '+(ncNdTotCl<0?'-$'+fmtN(Math.abs(ncNdTotCl)):'+$'+fmtN(ncNdTotCl)):''):'—')+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:#6ee7b7">$'+fmtN(cobradoCl)+'</td>'
                 +'<td style="padding:4px 8px;text-align:right;font-family:monospace;font-weight:900;font-size:10px;color:'+(isEnCredito?'#5eead4':isSaldado?'#6ee7b7':'#f97316')+'">'+(isEnCredito?'-$'+fmtN(Math.abs(saldoCl)):'$'+fmtN(saldoCl))+'</td>'
                 +'<td></td>'
@@ -49843,7 +49850,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     bodyXls+='<tr><td style="padding-left:16px;color:#7c3aed">↳ '+(n.tipo||'NC')+' · '+(n.nroDocumento||'')+'</td><td>'+(n.fecha||'')+'</td><td>'+(esNCx?'Nota Crédito':'Nota Débito')+'</td><td>'+(n.descripcion||'')+(pn<0.9999?' · esta NE: '+fmtN2(pn*100)+' %':'')+'</td><td>'+(uP==null?'Sin tasa':(esNCx?'-$':'+$')+fmtN2(uP))+'</td><td colspan="4"></td></tr>';
                   });
                   retDx.iva.forEach(r=>{
-                    bodyXls+='<tr><td style="padding-left:16px;color:#b45309">\u21b3 '+(r.nroRetencion||r.nroComprobante||'')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>Retenci\u00f3n IVA</td><td>'+(r.porcentaje||75)+'% \u00b7 Bs.'+fmtN2(r.montoRetenido)+'</td><td></td><td>'+(r._sinTasa?'Sin tasa':'$'+fmtN2(r._montoUSD))+'</td><td colspan="3"></td></tr>';
+                    bodyXls+='<tr><td style="padding-left:16px;color:#b45309">\u21b3 '+(r.nroRetencion||r.nroComprobante||'')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>Retenci\u00f3n IVA</td><td>'+(r.porcentaje||75)+'% \u00b7 Bs.'+fmtN2(r.montoRetenido)+(r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:'')+'</td><td></td><td>'+(r._sinTasa?'Sin tasa':(r._montoUSD<0?'-':'')+'$'+fmtN2(Math.abs(r._montoUSD)))+'</td><td colspan="3"></td></tr>';
                   });
                   retDx.otras.forEach(r=>{
                     bodyXls+='<tr><td style="padding-left:16px;color:#0f766e">\u21b3 '+(r.nroRetencion||r.nroComprobante||'')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>'+(r.tipoLabel||r.tipo||'Otra Ret.')+'</td><td>'+(r.porcentaje||'')+'% \u00b7 Bs.'+fmtN2(r.montoRetenido)+'</td><td colspan="2"></td><td>'+(r._sinTasa?'Sin tasa':'$'+fmtN2(r._montoUSD))+'</td><td colspan="2"></td></tr>';
@@ -49854,8 +49861,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   });
                 });
                 manualRetsClX.forEach(r=>{
-                  const valTxtMx=r._sinTasa?'Sin tasa':'$'+fmtN2(r._montoUSD);
-                  bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\u21b3 '+(r.nroRetencion||'RET-MANUAL')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>Ret. Manual</td><td>Factura N\u00b0 '+(r._manualNroFiscal||'')+' \u00b7 no registrada en el sistema</td><td></td><td></td><td>'+valTxtMx+'</td><td></td><td>'+(r._sinTasa?'—':'-$'+fmtN2(r._montoUSD))+'</td></tr>';
+                  const valTxtMx=r._sinTasa?'Sin tasa':(r._montoUSD<0?'-':'')+'$'+fmtN2(Math.abs(r._montoUSD));
+                  bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\u21b3 '+(r.nroRetencion||'RET-MANUAL')+'</td><td>'+(r.fechaComprobante||r.fecha||'')+'</td><td>Ret. Manual</td><td>Factura N\u00b0 '+(r._manualNroFiscal||'')+' \u00b7 no registrada en el sistema</td><td></td><td></td><td>'+valTxtMx+'</td><td></td><td>'+(r._sinTasa?'—':(r._montoUSD<0?'+$':'-$')+fmtN2(Math.abs(r._montoUSD)))+'</td></tr>';
                 });
                 manualNCClX.forEach(n=>{
                   const valTxtNx=n._sinTasa?'Sin tasa':(n._signedUSD<0?'-$':'+$')+fmtN2(Math.abs(n._signedUSD));
@@ -49868,7 +49875,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   const esReintegro=a._montoUSD<0, colorAj=esReintegro?'#0e7490':'#b45309';
                   bodyXls+='<tr><td style="padding-left:16px;color:'+colorAj+';font-weight:bold">'+(esReintegro?'\u21a9\ufe0f REINTEGRO':'\u26a0\ufe0f AJUSTE')+'</td><td>'+(a.fecha||'')+'</td><td>Ajuste CxC</td><td>'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>'+(!esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td colspan="2"></td><td>'+(esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td style="color:'+colorAj+';font-weight:bold">'+(esReintegro?'-':'+')+'$'+fmtN2(Math.abs(a._montoUSD))+'</td></tr>';
                 });
-                bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(Math.abs(ncNdTotClX)>0.004?' / NC-ND '+(ncNdTotClX<0?'-$'+fmtN2(Math.abs(ncNdTotClX)):'+$'+fmtN2(ncNdTotClX)):'')+'</td><td>$'+fmtN2(retIvaClX)+'</td><td>$'+fmtN2(retOtrasClX)+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
+                bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(Math.abs(ncNdTotClX)>0.004?' / NC-ND '+(ncNdTotClX<0?'-$'+fmtN2(Math.abs(ncNdTotClX)):'+$'+fmtN2(ncNdTotClX)):'')+'</td><td>'+(retIvaClX<0?'-':'')+'$'+fmtN2(Math.abs(retIvaClX))+'</td><td>'+(retOtrasClX<0?'-':'')+'$'+fmtN2(Math.abs(retOtrasClX))+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
                 bodyXls+='<tr><td colspan="9"></td></tr>';
               });
               const htmlXls='<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:12pt">'+emp+' \u2014 ESTADO DE CUENTA</h2><table style="border-collapse:collapse;font-family:Arial;font-size:9pt" border="1">'+bodyXls+'</table></body></html>';
@@ -50082,9 +50089,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   <td className={'py-1.5 px-3 text-[8px] '+r2Txt2}>{r.fechaComprobante||r.fecha||'—'}</td>
                                   <td className="py-1.5 px-3"></td>
                                   <td className="py-1.5 px-3"><span className={'px-1.5 py-0.5 rounded text-[8px] font-black '+r2Txt+' '+r2BadgeBg}>{r2Label}</span></td>
-                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">{r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}{rb>0&&<span className="ml-1 text-gray-400">· Bs.{formatNum(rb)}</span>}<span className="ml-1 text-gray-400">· Fac. {r._invNroFiscal||'—'}</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">{r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}{rb!==0&&<span className="ml-1 text-gray-400">· Bs.{formatNum(rb)}</span>}<span className="ml-1 text-gray-400">· Fac. {r._invNroFiscal||'—'}</span></td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
-                                  <td className={'py-1.5 px-3 text-right font-black '+(r._sinTasa?'text-red-500':r2Txt)}>{r._sinTasa?'⚠ Sin tasa':'$'+formatNum(r._montoUSD)}</td>
+                                  <td className={'py-1.5 px-3 text-right font-black '+(r._sinTasa?'text-red-500':r2Txt)}>{r._sinTasa?'⚠ Sin tasa':(r._montoUSD<0?'-':'')+'$'+formatNum(Math.abs(r._montoUSD))}</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
                                   <td className="py-1.5 px-3 text-right text-gray-300">—</td>
                                   <td className="py-1.5 px-3 text-center"><span className={'px-1.5 py-0.5 rounded text-[8px] font-black '+r2Txt+' '+r2BadgeBg}>Ret.</span></td>
@@ -50124,9 +50131,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <td className="py-2 px-3"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">{r.tipoLabel||'Ret. Manual'}</span></td>
                               <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{r._manualNroFiscal&&r._manualNroFiscal!=='—'?'Factura N° '+r._manualNroFiscal+' · no registrada en el sistema':'Sin factura asociada'}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
-                              <td className="py-2 px-3 text-right">{r._sinTasa?<span className="text-red-500 font-black text-[9px]">⚠ Sin tasa</span>:<span className="font-black text-teal-700">${formatNum(r._montoUSD)}</span>}</td>
+                              <td className="py-2 px-3 text-right">{r._sinTasa?<span className="text-red-500 font-black text-[9px]">⚠ Sin tasa</span>:<span className="font-black text-teal-700">{r._montoUSD<0?'-':''}${formatNum(Math.abs(r._montoUSD))}</span>}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
-                              <td className="py-2 px-3 text-right font-black text-teal-700">{r._sinTasa?'—':'-$'+formatNum(r._montoUSD)}</td>
+                              <td className="py-2 px-3 text-right font-black text-teal-700">{r._sinTasa?'—':(r._montoUSD<0?'+$':'-$')+formatNum(Math.abs(r._montoUSD))}</td>
                               <td className="py-2 px-3 text-center"><span className="bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded text-[8px] font-black">Manual</span></td>
                             </tr>
                           ))}
@@ -50197,7 +50204,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <tr style={{background:'#0f172a'}} className="text-[9px]">
                             <td colSpan={5} className="py-2 px-3 text-gray-400 font-black uppercase">Subtotal · {cl.nes.length} doc{cl.nes.length>1?'s':''}{manualNCCli.length>0?' + '+manualNCCli.length+' NC/ND directa':''}{anticiposCli.length>0?' + '+anticiposCli.length+' anticipo(s)':''}{getAjustesCxcClienteEc(cl).length>0?' + '+getAjustesCxcClienteEc(cl).length+' ajuste(s)':''}</td>
                             <td className="py-2 px-3 text-right text-white font-black">${formatNum(facturadoCli)}</td>
-                            <td className="py-2 px-3 text-right text-teal-400 font-black">{(retIvaCli+retOtrasCli+Math.abs(ncNdTotCli))>0.004?'$'+formatNum(retIvaCli)+(retOtrasCli>0?' / O $'+formatNum(retOtrasCli):'')+(Math.abs(ncNdTotCli)>0.004?' / NC-ND '+(ncNdTotCli<0?'-$':'+$')+formatNum(Math.abs(ncNdTotCli)):''):'—'}</td>
+                            <td className="py-2 px-3 text-right text-teal-400 font-black">{(Math.abs(retIvaCli)+Math.abs(retOtrasCli)+Math.abs(ncNdTotCli))>0.004?(retIvaCli<0?'-':'')+'$'+formatNum(Math.abs(retIvaCli))+((retOtrasCli>0||retOtrasCli<0)?' / O '+(retOtrasCli<0?'-':'')+'$'+formatNum(Math.abs(retOtrasCli)):'')+(Math.abs(ncNdTotCli)>0.004?' / NC-ND '+(ncNdTotCli<0?'-$':'+$')+formatNum(Math.abs(ncNdTotCli)):''):'—'}</td>
                             <td className="py-2 px-3 text-right text-green-400 font-black">${formatNum(cobradoCli)}</td>
                             <td className="py-2 px-3 text-right text-orange-400 font-black">{saldoCli<-0.01?'-$'+formatNum(Math.abs(saldoCli)):'$'+formatNum(saldoCli)}</td>
                             <td></td>
@@ -50865,6 +50872,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               tipo:'RETENCION',nroFactura:'',nroControl:'',
               totalVentasBs:0,baseImponibleBs:0,alicuota:esIgtfRow?`${ret.porcentaje||3}%`:`${ret.porcentaje||75}%`,
               ivaBs:0,ivaRetDb:esIgtfRow?0:montoRet,ivaRetCr:0,igtf:esIgtfRow?montoRet:0,nroFactAfecta:padNum(retFiscal,8),
+              // Retención de una ND/NC fiscal: el libro muestra el N° de la nota (Débito/Crédito) y su factura afectada
+              nroDebito:(ret.notaNro&&ret.notaTipo==='ND')?String(ret.notaNro):'',nroCredito:(ret.notaNro&&ret.notaTipo==='NC')?String(ret.notaNro):'',facAfectada:ret.notaNro?padNum(retFiscal,8):'',
               tipoDisplay:esIgtfRow?'IGTF':'RETENCION',
               nroComprobante:ret.nroRetencion||'',retId:ret.id});
           });
@@ -50973,7 +50982,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const _neIdRet=_selInv?.neOrigen||_selInv?.neId||retForm.neId||'';
               const _clientRifRet=_selInv?.clientRif||retForm._manualRif||retForm.clientRif||'';
               // Prioridad: tasa de la factura si existe → tasa ingresada en el formulario (manual) → tasa BCV actual como último respaldo
-              const _tasaRet=parseNum(_selInv?.tasaFactura||_selInv?.tasa||0)||parseNum(retForm.tasa||0)||parseNum(tasaBCV||0)||0;
+              // Retención aplicada a una ND/NC fiscal: queda con la factura de la nota (viaja a CxC, Estado de Cuenta, Libro e Impuestos), con la tasa de la nota y recuerda cuál nota es. La de una NC va en NEGATIVO (revierte la retención recibida); la de una ND, positiva.
+              const _notaSel=retForm.notaId?(notasVentaCD||[]).find(n=>n.id===retForm.notaId):null;
+              const _tasaRet=(_notaSel?parseNum(_notaSel.tasaFactura||0):0)||parseNum(_selInv?.tasaFactura||_selInv?.tasa||0)||parseNum(retForm.tasa||0)||parseNum(tasaBCV||0)||0;
               const retDataToSave={...retForm,
                 _manualCliente:retForm._manualCliente||retClientSearch||'',
                 _manualNroFiscal:retForm._manualNroFiscal||'',
@@ -50983,6 +50994,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 clientRif:_clientRifRet,
                 tasa:_tasaRet,
                 periodoLibroMes:retForm.periodoLibroMes||(retForm.fechaComprobante||'').substring(0,7)||'',
+                ...(_notaSel?{notaId:_notaSel.id,notaTipo:_notaSel.tipo||'',notaNro:_notaSel.nroDocumento||'',notaNroControl:_notaSel.nroControl||'',
+                  montoRetenido:(_notaSel.tipo==='NC'?-1:1)*Math.abs(parseNum(retForm.montoRetenido||0))}:{}),
+                // La nota ya no se encuentra (borrada) pero la retención sigue siendo de una nota: el signo se fuerza con el tipo guardado
+                ...((!_notaSel&&retForm.notaId)?{montoRetenido:(retForm.notaTipo==='NC'?-1:1)*Math.abs(parseNum(retForm.montoRetenido||0))}:{}),
               };
               const {id:_oldId,_fsId:_oldFs,...retDataClean}=retDataToSave;
               if(isEditing){
@@ -51123,9 +51138,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   r.seq||i+1, fechaCell, r.rif||'', r.nombre||'', tipoLab[r.tipo]||r.tipo||'',
                   isFac?padF(r.nroFactura):'',
                   (isFac||isNC||isND)?padC(r.nroControl):'',
-                  isND?(r.nroDebito||''):'',
-                  isNC?(r.nroCredito||''):'',
-                  (isNC||isND)?padF(r.facAfectada):'',
+                  (isND||(isRet&&r.nroDebito))?(r.nroDebito||''):'',
+                  (isNC||(isRet&&r.nroCredito))?(r.nroCredito||''):'',
+                  (isNC||isND||(isRet&&r.facAfectada))?padF(r.facAfectada):'',
                   esDoc(r)?n0(r.totalVentasBs):null,
                   n0(r.igtf)>0?n0(r.igtf):null,
                   esDoc(r)?n0(r.noGravable):null,
@@ -51249,7 +51264,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 <td class="c">${r.seq||i+1}</td><td class="c">${fmtF(r.fecha)}</td><td>${esc(r.rif)}</td><td class="nm">${esc(r.nombre)}</td>
 <td class="c tp">${tipoLab[r.tipo]||esc(r.tipo)}</td>
 <td class="c nf">${isFac?padF(r.nroFactura):''}</td><td class="c">${doc?padC(r.nroControl):''}</td>
-<td class="c">${isND?esc(r.nroDebito||''):''}</td><td class="c">${isNC?esc(r.nroCredito||''):''}</td><td class="c">${(isNC||isND)?padF(r.facAfectada):''}</td>
+<td class="c">${(isND||(isRet&&r.nroDebito))?esc(r.nroDebito||''):''}</td><td class="c">${(isNC||(isRet&&r.nroCredito))?esc(r.nroCredito||''):''}</td><td class="c">${(isNC||isND||(isRet&&r.facAfectada))?padF(r.facAfectada):''}</td>
 <td class="n${neg(r.totalVentasBs)}">${doc?fV(r.totalVentasBs,true):''}</td><td class="n">${fV(r.igtf)}</td><td class="n">${doc?fV(r.noGravable,true):''}</td>
 <td class="n b${neg(r.baseImponibleBs)}">${doc?fV(r.baseImponibleBs,true):''}</td><td class="c">${esc(isRet?(r.alicuota||'75%'):(r.alicuota||'16%'))}</td>
 <td class="n b${neg(r.ivaBs)}">${doc?fV(r.ivaBs,true):''}</td><td class="n b rt">${isRet?fV(r.ivaRetDb,true):''}</td>
@@ -51694,7 +51709,7 @@ ${resumen}
                             <td className={`py-1.5 px-2 text-right font-bold ${r.baseImponibleBs<0?'text-red-600':''}`}>{r.baseImponibleBs!==0?fmtVen(r.baseImponibleBs):'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold">{r.alicuota||'—'}</td>
                             <td className={`py-1.5 px-2 text-right font-bold ${r.ivaBs<0?'text-red-600':''}`}>{r.ivaBs!==0?fmtVen(r.ivaBs):'—'}</td>
-                            <td className="py-1.5 px-2 text-right font-bold text-red-600">{r.ivaRetDb>0?fmtVen(r.ivaRetDb):'—'}</td>
+                            <td className="py-1.5 px-2 text-right font-bold text-red-600">{r.ivaRetDb!==0?fmtVen(r.ivaRetDb):'—'}</td>
                             <td className="py-1.5 px-2 text-center font-bold text-orange-600">{r.nroFactAfecta||'—'}</td>
                             <td className="py-1.5 px-2 font-bold">{r.nroComprobante||'—'}</td>
                           </tr>
@@ -51955,8 +51970,8 @@ ${resumen}
                           return true;
                         }).sort((a,b)=>(b.fechaComprobante||b.fecha||'').localeCompare(a.fechaComprobante||a.fecha||''));
                         const totRet=retFilt.reduce((s,r)=>s+parseNum(r.montoRetenido||0),0);
-                        const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?parseNum(ret.montoRetenido||0)/rt:0;const isM=(ret?.facturaId||'').startsWith('MANUAL-');const neD=isM?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#4338ca;font-weight:700">${neD}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${isM?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualCliente||'—'):(inv?.clientName||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualRif||'—'):(inv?.clientRif||'—')}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#64748b">${rt>1?formatNum(rt):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700;color:#16a34a">${ru>0?'$'+formatNum(ru):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
-                        const h=`<div style="font-family:Arial;padding:16px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:13px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div style="font-size:10px">RIF: ${settings?.empresaRIF||''}</div><div style="font-weight:900;font-size:11px;margin-top:4px">REPORTE DE RETENCIONES DE IVA</div></div><div style="text-align:right;font-size:9px"><div>Período: ${mesLabel.toUpperCase()} ${libroAnio}</div><div>${retFilt.length} registros · Total: ${fmtVen(totRet)} Bs.</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:5px;font-size:8px">Fecha</th><th style="padding:5px;font-size:8px">N° Comp.</th><th style="padding:5px;font-size:8px">NE</th><th style="padding:5px;font-size:8px">N° Factura</th><th style="padding:5px;font-size:8px">Cliente</th><th style="padding:5px;font-size:8px">RIF</th><th style="padding:5px;font-size:8px;text-align:right">Monto Ret. Bs.</th><th style="padding:5px;font-size:8px;text-align:right">Tasa Bs/$</th><th style="padding:5px;font-size:8px;text-align:right">Equiv. USD</th><th style="padding:5px;font-size:8px">Quincena</th></tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="6" style="padding:4px 5px;font-size:8px">TOTAL</td><td style="padding:4px 5px;font-size:8px;text-align:right">${fmtVen(totRet)}</td><td></td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#6ee7b7">$${formatNum(retFilt.reduce((s,r)=>{const i=(invoices||[]).find(j=>j.id===r.facturaId);const t=parseNum(r.tasa||r.tasaFactura||i?.tasa||i?.tasaFactura||0);return s+(t>1?parseNum(r.montoRetenido||0)/t:0);},0))}</td><td></td></tr></tfoot></table></div>`;
+                        const rH=retFilt.map((ret,i)=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?parseNum(ret.montoRetenido||0)/rt:0;const isM=(ret?.facturaId||'').startsWith('MANUAL-');const neD=isM?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return `<tr style="border-bottom:1px solid #eee;${i%2?'background:#f9fafb':''}"><td style="padding:4px 5px;font-size:8px">${ret.fechaComprobante||'—'}</td><td style="padding:4px 5px;font-size:8px;font-weight:700">${ret.nroRetencion||'—'}</td><td style="padding:4px 5px;font-size:8px;color:#4338ca;font-weight:700">${neD}</td><td style="padding:4px 5px;font-size:8px;color:#1d4ed8">${isM?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—')}${ret.notaNro?' · '+(ret.notaTipo||'Nota')+' '+ret.notaNro:''}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualCliente||'—'):(inv?.clientName||'—')}</td><td style="padding:4px 5px;font-size:8px">${isM?(ret._manualRif||'—'):(inv?.clientRif||'—')}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700">${fmtVen(ret.montoRetenido||0)}</td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#64748b">${rt>1?formatNum(rt):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:right;font-weight:700;color:#16a34a">${ru!==0?(ru<0?'-':'')+'$'+formatNum(Math.abs(ru)):'—'}</td><td style="padding:4px 5px;font-size:8px;text-align:center">${getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</td></tr>`;}).join('');
+                        const h=`<div style="font-family:Arial;padding:16px"><div style="display:flex;justify-content:space-between;border-bottom:3px solid #f97316;padding-bottom:8px;margin-bottom:10px"><div><div style="font-weight:900;font-size:13px">${settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.'}</div><div style="font-size:10px">RIF: ${settings?.empresaRIF||''}</div><div style="font-weight:900;font-size:11px;margin-top:4px">REPORTE DE RETENCIONES DE IVA</div></div><div style="text-align:right;font-size:9px"><div>Período: ${mesLabel.toUpperCase()} ${libroAnio}</div><div>${retFilt.length} registros · Total: ${fmtVen(totRet)} Bs.</div></div></div><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#1f2937;color:#fff"><th style="padding:5px;font-size:8px">Fecha</th><th style="padding:5px;font-size:8px">N° Comp.</th><th style="padding:5px;font-size:8px">NE</th><th style="padding:5px;font-size:8px">N° Factura</th><th style="padding:5px;font-size:8px">Cliente</th><th style="padding:5px;font-size:8px">RIF</th><th style="padding:5px;font-size:8px;text-align:right">Monto Ret. Bs.</th><th style="padding:5px;font-size:8px;text-align:right">Tasa Bs/$</th><th style="padding:5px;font-size:8px;text-align:right">Equiv. USD</th><th style="padding:5px;font-size:8px">Quincena</th></tr></thead><tbody>${rH}</tbody><tfoot><tr style="background:#374151;color:#fff;font-weight:900"><td colspan="6" style="padding:4px 5px;font-size:8px">TOTAL</td><td style="padding:4px 5px;font-size:8px;text-align:right">${fmtVen(totRet)}</td><td></td><td style="padding:4px 5px;font-size:8px;text-align:right;color:#6ee7b7">${(()=>{const _tu=retFilt.reduce((s,r)=>{const i=(invoices||[]).find(j=>j.id===r.facturaId);const t=parseNum(r.tasa||r.tasaFactura||i?.tasa||i?.tasaFactura||0);return s+(t>1?parseNum(r.montoRetenido||0)/t:0);},0);return (_tu<0?'-':'')+'$'+formatNum(Math.abs(_tu));})()}</td><td></td></tr></tfoot></table></div>`;
                         handlePDFFromHTML(h,`Retenciones_${libroAnio}_${mes2}`,false);
                       }} className="bg-gray-800 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-black"><Printer size={12}/>PDF</button>
                       <button onClick={()=>{
@@ -51971,7 +51986,7 @@ ${resumen}
                           return true;
                         }).sort((a,b)=>(b.fechaComprobante||b.fecha||'').localeCompare(a.fechaComprobante||a.fecha||''));
                         const ths=['Fecha','N° Comp.','NE','N° Factura','Cliente','RIF','Monto Ret. Bs.','Tasa Bs/$','Equiv. USD','Quincena'];
-                        const rH=retFilt.map(ret=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?(parseNum(ret.montoRetenido||0)/rt).toFixed(2):'';const isM2=(ret?.facturaId||'').startsWith('MANUAL-');const neD2=isM2?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return '<tr>'+[ret.fechaComprobante||'—',ret.nroRetencion||'—',neD2,isM2?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—'),isM2?(ret._manualCliente||'—'):(inv?.clientName||'—'),isM2?(ret._manualRif||'—'):(inv?.clientRif||'—'),fmtVen(ret.montoRetenido||0),rt>1?formatNum(rt):'',ru?'$'+formatNum(ru):'',ret.quincena==='1'?'I Quincena':'II Quincena'].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';}).join('');
+                        const rH=retFilt.map(ret=>{const inv=(invoices||[]).find(j=>j.id===ret.facturaId);const rt=parseNum(ret.tasa||ret.tasaFactura||inv?.tasa||inv?.tasaFactura||0);const ru=rt>1?(parseNum(ret.montoRetenido||0)/rt).toFixed(2):'';const isM2=(ret?.facturaId||'').startsWith('MANUAL-');const neD2=isM2?'—':(()=>{if(!inv)return'—';let _ne=(notasEntrega||[]).find(n=>(n.id===inv.neOrigen||n.documento===inv.neOrigen||n.facturaId===inv.id||n.facturaId===inv.documento)&&(!inv.clientRif||!n.clientRif||(n.clientRif||'').trim().toUpperCase()===(inv.clientRif||'').trim().toUpperCase()));if(!_ne&&inv.neOrigen){const norm=inv.neOrigen.toString().trim().toUpperCase();_ne=(notasEntrega||[]).find(n=>(n.id||'').toString().trim().toUpperCase()===norm||(n.documento||'').toString().trim().toUpperCase()===norm);}return _ne?(_ne.documento||_ne.id):'Sin vincular';})();return '<tr>'+[ret.fechaComprobante||'—',ret.nroRetencion||'—',neD2,(isM2?(ret._manualNroFiscal||'—'):(padNum(inv?.nroFiscal,8)||inv?.documento||'—'))+(ret.notaNro?' · '+(ret.notaTipo||'Nota')+' '+ret.notaNro:''),isM2?(ret._manualCliente||'—'):(inv?.clientName||'—'),isM2?(ret._manualRif||'—'):(inv?.clientRif||'—'),fmtVen(ret.montoRetenido||0),rt>1?formatNum(rt):'',ru?(ru<0?'-':'')+'$'+formatNum(Math.abs(ru)):'',ret.quincena==='1'?'I Quincena':'II Quincena'].map(c=>`<td style="padding:4px 6px;border:1px solid #ccc;font-size:9px">${c}</td>`).join('')+'</tr>';}).join('');
                         const html=`<html><head><meta charset="utf-8"></head><body><h2 style="font-family:Arial;font-size:11px">${settings?.empresaRazonSocial||''} — RETENCIONES DE IVA</h2><table style="border-collapse:collapse;font-family:Arial"><thead><tr>${ths.map(h=>`<th style="background:#1f2937;color:#fff;padding:5px 6px;font-size:9px">${h}</th>`).join('')}</tr></thead><tbody>${rH}</tbody></table></body></html>`;
                         Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([html],{type:'application/vnd.ms-excel'})),download:`Retenciones_${libroAnio}_${mes2}.xls`}).click();
                       }} className="bg-green-600 text-white px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center gap-1 hover:bg-green-700"><Download size={12}/>Excel</button>
@@ -52069,13 +52084,13 @@ ${resumen}
                             <td className="py-2 px-3">{ret.fechaComprobante}</td>
                             <td className={`py-2 px-3 font-bold ${retNeDoc==='⚠️ No vinculada'?'text-red-600 text-[10px]':'text-indigo-600'}`}>{retNeDoc}</td>
                             <td className="py-2 px-3 font-bold text-orange-600 flex items-center gap-1">
-                              {nroFac}
+                              {nroFac}{ret.notaNro&&<span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[8px] font-black">{ret.notaTipo||'Nota'} {ret.notaNro}</span>}
                             </td>
                             <td className="py-2 px-3 uppercase">{cliente}</td>
                             <td className="py-2 px-3 text-[9px] font-mono text-slate-500">{ret.cuentaContableRetNombre||ret.cuentaContableNombre||<span className="text-gray-300">Automática</span>}</td>
                             <td className="py-2 px-3 text-right font-black">{fmtVen(parseNum(ret.montoRetenido||0))}</td>
                             <td className="py-2 px-3 text-right font-mono text-slate-500 text-[10px]">{retTasa>1?formatNum(retTasa):<span className="text-red-400 text-[9px]">Sin tasa</span>}</td>
-                            <td className="py-2 px-3 text-right font-black text-green-700">{retMontoUSD>0?'$'+formatNum(retMontoUSD):<span className="text-red-400 text-[9px]">—</span>}</td>
+                            <td className="py-2 px-3 text-right font-black text-green-700">{retMontoUSD!==0?(retMontoUSD<0?'-':'')+'$'+formatNum(Math.abs(retMontoUSD)):<span className="text-red-400 text-[9px]">—</span>}</td>
                             <td className="py-2 px-3 text-center"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold text-[9px]">{getQuincenaRet(ret)==='1'?'I Quincena':'II Quincena'}</span></td>
                             <td className="py-2 px-3"><div className="flex justify-center gap-1">
                               {ret.tipo==='IGTF'&&(
@@ -52228,6 +52243,10 @@ ${resumen}
               {showRetModal && (()=>{
                 const selFact=(invoices||[]).find(i=>i.id===retForm.facturaId);
                 const factFilt=retBusqFact?(invoices||[]).filter(i=>(i.nroFiscal||i.nroControl)&&((i.nroFiscal||'').toUpperCase().includes(retBusqFact.toUpperCase())||(i.clientName||'').toUpperCase().includes(retBusqFact.toUpperCase())||(i.documento||'').toUpperCase().includes(retBusqFact.toUpperCase()))):(invoices||[]).filter(i=>i.nroFiscal||i.nroControl);
+                // Notas de Débito / Crédito FISCALES (con su factura): también se les puede aplicar retención. La retención queda con la factura de la nota y recuerda de cuál nota es.
+                const _bqNota=(retBusqFact||'').toUpperCase();
+                const notasFilt=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.facturaId&&(n.tipo==='ND'||n.tipo==='NC')).map(n=>({n,inv:(invoices||[]).find(i=>i.id===n.facturaId)})).filter(x=>x.inv&&(!_bqNota||[x.n.nroDocumento,x.n.nroControl,x.inv.nroFiscal,x.inv.documento,x.inv.clientName,x.n.descripcion].some(t=>String(t||'').toUpperCase().includes(_bqNota)))).sort((a,b)=>String(b.n.fecha||'').localeCompare(String(a.n.fecha||'')));
+                const selNota=retForm.notaId?(notasVentaCD||[]).find(n=>n.id===retForm.notaId):null;
                 return(
                   <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4">
@@ -52238,8 +52257,8 @@ ${resumen}
                       <div className="space-y-3">
                         {/* Toggle modo sistema / manual */}
                         <div className="flex gap-2 mb-2">
-                          <button type="button" onClick={()=>{setRetFactManual(false);setRetForm(f=>({...f,facturaId:'',_manualNroFiscal:'',_manualCliente:'',_manualBaseUsd:'',_manualIvaUsd:'',_manualTasa:''}));}} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${!retFactManual?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-600 border-gray-200'}`}>🔍 Buscar en sistema</button>
-                          <button type="button" onClick={()=>setRetFactManual(true)} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${retFactManual?'bg-orange-500 text-white border-orange-500':'bg-white text-gray-600 border-gray-200'}`}>✏️ Ingresar manual</button>
+                          <button type="button" onClick={()=>{setRetFactManual(false);setRetForm(f=>({...f,facturaId:'',_manualNroFiscal:'',_manualCliente:'',_manualBaseUsd:'',_manualIvaUsd:'',_manualTasa:'',...(f.notaId?{notaId:'',notaTipo:'',notaNro:'',notaNroControl:'',montoRetenido:''}:{})}));}} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${!retFactManual?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-600 border-gray-200'}`}>🔍 Buscar en sistema</button>
+                          <button type="button" onClick={()=>{setRetFactManual(true);setRetForm(f=>f.notaId?{...f,notaId:'',notaTipo:'',notaNro:'',notaNroControl:'',montoRetenido:''}:f);}} className={`flex-1 py-1.5 rounded-lg font-black text-[9px] uppercase border-2 transition-all ${retFactManual?'bg-orange-500 text-white border-orange-500':'bg-white text-gray-600 border-gray-200'}`}>✏️ Ingresar manual</button>
                         </div>
 
                         <div>
@@ -52275,11 +52294,22 @@ ${resumen}
                         </div>
 
                         {!retFactManual && <div>
-                          <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Buscar Factura</label>
-                          <input value={retBusqFact} onChange={e=>setRetBusqFact(e.target.value)} placeholder="Nro. fiscal o cliente..." className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold mb-1 outline-none focus:border-blue-400"/>
-                          <select value={retForm.facturaId} onChange={e=>setRetForm(f=>({...f,facturaId:e.target.value}))} size={4} className="w-full border-2 border-blue-200 rounded-xl px-3 py-1 text-xs font-bold outline-none focus:border-blue-500 bg-white">
+                          <label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Buscar Factura o Nota (ND / NC)</label>
+                          <input value={retBusqFact} onChange={e=>setRetBusqFact(e.target.value)} placeholder="Nro. fiscal, nota (ND/NC) o cliente..." className="w-full border-2 border-gray-200 rounded-xl p-2 text-xs font-bold mb-1 outline-none focus:border-blue-400"/>
+                          <select value={retForm.notaId?('NOTA::'+retForm.notaId):retForm.facturaId} onChange={e=>{
+                            const v=e.target.value;
+                            if(v.startsWith('NOTA::')){
+                              const nt=(notasVentaCD||[]).find(n=>n.id===v.slice(6));
+                              if(nt) setRetForm(f=>({...f,facturaId:nt.facturaId,notaId:nt.id,notaTipo:nt.tipo||'',notaNro:nt.nroDocumento||'',notaNroControl:nt.nroControl||'',montoRetenido:(f.notaId===nt.id?f.montoRetenido:'')}));
+                            }else{
+                              setRetForm(f=>f.notaId?{...f,facturaId:v,notaId:'',notaTipo:'',notaNro:'',notaNroControl:'',montoRetenido:''}:{...f,facturaId:v});
+                            }
+                          }} size={4} className="w-full border-2 border-blue-200 rounded-xl px-3 py-1 text-xs font-bold outline-none focus:border-blue-500 bg-white">
                             <option value="">— Seleccionar —</option>
                             {factFilt.slice(0,30).map(inv=>(<option key={inv.id} value={inv.id}>{padNum(inv.nroFiscal,8)} — {inv.clientName} — ${formatNum(inv.montoBase)}</option>))}
+                            {notasFilt.length>0&&<optgroup label="Notas de débito / crédito fiscales">
+                              {notasFilt.slice(0,30).map(({n,inv})=>(<option key={'nota-'+n.id} value={'NOTA::'+n.id}>{n.tipo} {n.nroDocumento||'—'} — {inv.clientName} — Fact. {padNum(inv.nroFiscal,8)||inv.documento||'—'} — IVA Bs. {formatNum(parseNum(n.ivaBs||0)||parseFloat((parseNum(n.monto||0)*0.16).toFixed(2)))}</option>))}
+                            </optgroup>}
                           </select>
                         </div>}
                         {retFactManual && <div className="space-y-2 bg-orange-50 border border-orange-200 rounded-xl p-3">
@@ -52338,23 +52368,30 @@ ${resumen}
                         {selFact&&!retFactManual&&(()=>{
                           const tipoSel=retForm.tipoRetencion||'IVA';
                           const esIVA=tipoSel==='IVA';
-                          const tasaFact=parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-                          const baseUsd=parseNum(selFact.montoBase||0);
-                          const ivaUsd=parseNum(selFact.iva||0)||(selFact.aplicaIva==='SI'?parseFloat((baseUsd*0.16).toFixed(2)):0);
+                          // Si se eligió una ND/NC fiscal, la retención se calcula sobre los montos en Bs. de ESA nota y con la tasa de la nota (NC: en negativo, revierte la retención)
+                          const esNotaRet=!!selNota;
+                          const signoNota=esNotaRet&&selNota.tipo==='NC'?-1:1;
+                          const tasaFact=esNotaRet?(parseNum(selNota.tasaFactura||0)||parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1):(parseNum(selFact.tasa||0)||parseNum(settings?.tasaBCV||0)||1);
+                          const baseNotaBs=esNotaRet?parseNum(selNota.monto||0):0;
+                          const ivaNotaBs=esNotaRet?(parseNum(selNota.ivaBs||0)||parseFloat((baseNotaBs*0.16).toFixed(2))):0;
+                          const baseUsd=esNotaRet?baseNotaBs/tasaFact:parseNum(selFact.montoBase||0);
+                          const ivaUsd=esNotaRet?ivaNotaBs/tasaFact:(parseNum(selFact.iva||0)||(selFact.aplicaIva==='SI'?parseFloat((baseUsd*0.16).toFixed(2)):0));
                           // IVA se retiene sobre el IVA de la factura (75%/100%, agente de retención).
                           // ISLR/Municipal/Otro se retienen sobre la Base Imponible — es un impuesto distinto,
                           // no un porcentaje del IVA, por eso NO puede compartir la misma base de cálculo.
                           const baseCalculoUsd=esIVA?ivaUsd:baseUsd;
                           const pctRet=parseNum(retForm.porcentaje||(esIVA?75:0))/100;
                           const montoRetUsd=parseFloat((baseCalculoUsd*pctRet).toFixed(2));
-                          const montoRetBs=parseFloat((montoRetUsd*tasaFact).toFixed(2));
+                          const montoRetBs=esNotaRet?parseFloat(((esIVA?ivaNotaBs:baseNotaBs)*pctRet).toFixed(2)):parseFloat((montoRetUsd*tasaFact).toFixed(2));
                           return(<>
                           <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs space-y-1">
                             <div><span className="font-black">Cliente:</span> {selFact.clientName} &nbsp;·&nbsp; <span className="font-black">RIF:</span> {selFact.clientRif}</div>
-                            <div><span className="font-black">N° Fiscal:</span> {selFact.nroFiscal||'—'} &nbsp;·&nbsp; <span className="font-black">Control:</span> {selFact.nroControl||'—'}</div>
-                            <div><span className="font-black">{esIVA?'IVA':'Base Imponible'}:</span> ${formatNum(baseCalculoUsd)} USD &nbsp;·&nbsp; <span className="font-black">Tasa BCV:</span> {formatNum(tasaFact)} Bs/$</div>
-                            <div className="border-t border-blue-200 pt-1 font-black text-blue-800">Retención {tipoSel} ({formatNum(pctRet*100)}%): ${formatNum(montoRetUsd)} = <span className="text-orange-600">{formatNum(montoRetBs)} Bs.</span></div>
-                            {!retForm.montoRetenido&&<button type="button" onClick={()=>setRetForm(f=>({...f,montoRetenido:String(montoRetBs)}))} className="mt-1 bg-blue-600 text-white px-3 py-1 rounded-lg font-black text-[9px]">⚡ Usar monto calculado</button>}
+                            <div><span className="font-black">{esNotaRet?'Factura afectada:':'N° Fiscal:'}</span> {selFact.nroFiscal||'—'} &nbsp;·&nbsp; <span className="font-black">Control:</span> {selFact.nroControl||'—'}</div>
+                            {esNotaRet&&<div className="text-purple-700"><span className="font-black">{selNota.tipo==='NC'?'Nota de Crédito':'Nota de Débito'}:</span> {selNota.nroDocumento||'—'} &nbsp;·&nbsp; <span className="font-black">Control:</span> {selNota.nroControl||'—'} &nbsp;·&nbsp; <span className="font-black">Base:</span> Bs. {formatNum(baseNotaBs)} &nbsp;·&nbsp; <span className="font-black">IVA:</span> Bs. {formatNum(ivaNotaBs)}</div>}
+                            <div><span className="font-black">{esIVA?'IVA':'Base Imponible'}:</span> ${formatNum(baseCalculoUsd)} USD &nbsp;·&nbsp; <span className="font-black">{esNotaRet?'Tasa de la nota:':'Tasa BCV:'}</span> {formatNum(tasaFact)} Bs/$</div>
+                            <div className="border-t border-blue-200 pt-1 font-black text-blue-800">Retención {tipoSel} ({formatNum(pctRet*100)}%): {signoNota<0?'-':''}${formatNum(montoRetUsd)} = <span className="text-orange-600">{formatNum(montoRetBs*signoNota)} Bs.</span></div>
+                            {esNotaRet&&selNota.tipo==='NC'&&<p className="text-[9px] text-purple-500">Retención sobre una Nota de Crédito: se registra en negativo y revierte (resta) la retención recibida.</p>}
+                            {!retForm.montoRetenido&&<button type="button" onClick={()=>setRetForm(f=>({...f,montoRetenido:String(montoRetBs*signoNota)}))} className="mt-1 bg-blue-600 text-white px-3 py-1 rounded-lg font-black text-[9px]">⚡ Usar monto calculado</button>}
                             {!esIVA&&<p className="text-[9px] text-blue-400 mt-1">Ajusta el % según la tabla/ordenanza que aplique a este concepto — no se calcula sobre el IVA.</p>}
                           </div>
                           <div className="grid grid-cols-2 gap-3">
@@ -52367,8 +52404,8 @@ ${resumen}
                                 <input type="number" step="0.01" value={retForm.porcentaje||''} onChange={e=>setRetForm(f=>({...f,porcentaje:e.target.value}))} placeholder="Ej. 2" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
                               )}</div>
                             <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Monto Retenido (Bs.)</label>
-                              <input type="number" step="0.01" value={retForm.montoRetenido} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder={String(montoRetBs)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
-                              <span className="text-[9px] text-gray-400">≈ ${formatNum(parseNum(retForm.montoRetenido||0)/Math.max(tasaFact,1))} USD</span>
+                              <input type="number" step="0.01" value={retForm.montoRetenido} onChange={e=>setRetForm(f=>({...f,montoRetenido:e.target.value}))} placeholder={String(montoRetBs*signoNota)} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500"/>
+                              <span className="text-[9px] text-gray-400">≈ {parseNum(retForm.montoRetenido||0)<0?'-':''}${formatNum(Math.abs(parseNum(retForm.montoRetenido||0))/Math.max(tasaFact,1))} USD</span>
                             </div>
                             <div><label className="text-[10px] font-black text-gray-600 uppercase block mb-1">Quincena</label>
                               <select value={retForm.quincena} onChange={e=>setRetForm(f=>({...f,quincena:e.target.value}))} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-blue-500">
