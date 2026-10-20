@@ -7708,6 +7708,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [igtfDeclSaving,setIgtfDeclSaving]=useState(false);
   const [detInvoices,setDetInvoices]=useState([]);
   const [detFacturasCompra,setDetFacturasCompra]=useState([]);
+  const [detNotasCompraCD,setDetNotasCompraCD]=useState([]);
   const [detRetVentas,setDetRetVentas]=useState([]);
   const [detNotasVentaCD,setDetNotasVentaCD]=useState([]);
   const [detLibroVentasCfg,setDetLibroVentasCfg]=useState({retAcum:0,retDesc:0,saldoCierre:null,cfExcedente:0,saldoCierreCF:null,_retAcumManual:false,_cfExcedenteManual:false});
@@ -7796,7 +7797,8 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
     const u2=onSnapshot(getColRef('procura_facturas_compra'),s=>setDetFacturasCompra(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(getColRef('retencionesClientes'),s=>setDetRetVentas(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u4=onSnapshot(getColRef('notasVentaCreditoDebito'),s=>setDetNotasVentaCD(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();u3();u4();};
+    const u5=onSnapshot(getColRef('notasCompraCreditoDebito'),s=>setDetNotasCompraCD(s.docs.map(d=>({...d.data(),id:d.id}))));
+    return()=>{u1();u2();u3();u4();u5();};
   },[fbUser,sec]);
 
   // ── Config guardada por período (retAcum/retDesc de Libro de Ventas, resumen manual de Libro de Compras, y manuales propios) ──
@@ -8052,16 +8054,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       });
       ncndFiscalesDet.forEach(n=>{const baseConSigno=pNum(n.monto||0)*(n.tipo==='NC'?-1:1);ivaDebitosBs+=parseFloat((baseConSigno*0.16).toFixed(2));});
       const retPeriodoVentas=retVentasPeriodo.reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
-      const comprasFact=(detFacturasCompra||[]).filter(f=>{
-        if(f.afectaLibroCompras===false) return false;
-        if(f.periodoLibroMes) return f.periodoLibroMes===`${detAnio}-${detMes}`&&String(f.periodoLibroQ||'1')===String(detQ);
-        const fecha=f.fecha||''; return fecha>=desde&&fecha<=hasta;
-      });
-      let c32=0,c34=0,c34_8=0;
-      comprasFact.forEach(f=>{
-        const tot=f.totales||{}; c34+=pNum(tot.iva16Bs||0); c34_8+=pNum(tot.iva8Bs||0);
-        if(f.esImportacion&&f.importacion){c32+=pNum(f.importacion.iva||0);}
-      });
+      const {c32,c34,c34_8}=calcResumenComprasF30(detFacturasCompra,detNotasCompraCD,detAnio,detMes,detQ);
       const L=detLcRes;
       // Campo 343 (crédito fiscal alícuota reducida 8%) se calcula de las facturas, igual que
       // el 16% (c34) — antes dependía de un campo manual que casi nunca se llenaba, así que este
@@ -8089,7 +8082,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       }
     },1200);
     return()=>clearTimeout(t);
-  },[fbUser,sec,detAnio,detMes,detQ,detInvoices,detFacturasCompra,detRetVentas,detNotasVentaCD,detLcRes,detManual,detLibroVentasCfg,detPrevCfg,settings]);
+  },[fbUser,sec,detAnio,detMes,detQ,detInvoices,detFacturasCompra,detNotasCompraCD,detRetVentas,detNotasVentaCD,detLcRes,detManual,detLibroVentasCfg,detPrevCfg,settings]);
   const setDM=(campo,val)=>setDetManual(m=>({...m,[campo]:pNum(val)||0}));
 
   const guardarUT=async(val)=>{
@@ -9493,18 +9486,10 @@ td,th{border:1px solid #333;padding:5px 7px}
           const retPeriodoVentas=retVentasPeriodo.reduce((s,r)=>s+pNum(r.montoRetenido||0),0);
 
           // ── Compras (Créditos Fiscales) — misma lógica y campos que Libro de Compras ──
-          const comprasFact=(detFacturasCompra||[]).filter(f=>{
-            if(f.afectaLibroCompras===false) return false;
-            if(f.periodoLibroMes) return f.periodoLibroMes===`${detAnio}-${detMes}`&&String(f.periodoLibroQ||'1')===String(detQ);
-            const fecha=f.fecha||''; return fecha>=desde&&fecha<=hasta;
-          });
-          let c30=0,c31=0,c32=0,c33=0,c34=0,c33_8=0,c34_8=0;
-          comprasFact.forEach(f=>{
-            const tot=f.totales||{};
-            c30+=pNum(tot.exentoBs||0); c33+=pNum(tot.base16Bs||0); c34+=pNum(tot.iva16Bs||0);
-            c33_8+=pNum(tot.base8Bs||0); c34_8+=pNum(tot.iva8Bs||0);
-            if(f.esImportacion&&f.importacion){c31+=pNum(f.importacion.baseImponible||0);c32+=pNum(f.importacion.iva||0);}
-          });
+          // Mismas reglas y mismas cifras que el Libro de Compras (importaciones solo por su planilla DUA; NC/ND fiscales incluidas)
+          const _rcCompras=calcResumenComprasF30(detFacturasCompra,detNotasCompraCD,detAnio,detMes,detQ);
+          const comprasFact=_rcCompras.facturas;
+          const {c30,c31,c32,c33,c34,c33_8,c34_8}=_rcCompras;
           const L=detLcRes;
           // Campo 333/343 (alícuota reducida 8%) se calcula de las facturas, igual que el 16%
           // (c33/c34) — antes dependía de un campo manual que casi nunca se llenaba.
@@ -9571,7 +9556,7 @@ td,th{border:1px solid #333;padding:5px 7px}
             [13,'Importaciones Gravadas por Alícuota Reducida','313',pNum(L.c313),'323',pNum(L.c323)],
             [14,'Compras Internas Gravadas por Alícuota General','33',c33,'34',c34],
             [15,'Compras Internas Gravadas por Alícuota General más Alícuota Adicional','332',pNum(L.c332),'342',pNum(L.c342)],
-            [16,'Compras Internas Gravadas por Alícuota Reducida','333',pNum(L.c333),'343',pNum(L.c343)],
+            [16,'Compras Internas Gravadas por Alícuota Reducida','333',c33_8,'343',c34_8],
             [17,'Total Compras y Créditos Fiscales del Período','35',c35,'36',c36,true],
             [18,'Créditos Fiscales Totalmente Deducibles',null,null,'70',item18],
             [19,'Créditos Fiscales producto de la Aplicación del porcentaje de la prorrata',null,null,'37',item19],
@@ -9723,7 +9708,7 @@ table{border-collapse:collapse;width:100%}
                 </div>
                 <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-3">
                   <p className="text-[9px] font-black text-blue-700 uppercase">📘 Libro de Compras — {detQ==='1'?'I':'II'} Quincena {MESES_D[parseInt(detMes,10)-1]} {detAnio}</p>
-                  <p className="text-lg font-black text-blue-800">{comprasFact.length} <span className="text-[10px] font-bold text-blue-600">factura(s)</span></p>
+                  <p className="text-lg font-black text-blue-800">{comprasFact.length} <span className="text-[10px] font-bold text-blue-600">factura(s)</span>{_rcCompras.notas.length>0&&<span className="text-[10px] font-bold text-blue-600"> + {_rcCompras.notas.length} NC/ND</span>}</p>
                   <p className="text-[9px] text-blue-600">Base gravada Bs. {fmtN(c33)} · IVA Bs. {fmtN(c34)} · Sin derecho Bs. {fmtN(c30)}</p>
                 </div>
               </div>
@@ -11250,6 +11235,10 @@ const generarAsientoFC=(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentasAr
   const cuadrado=Math.abs(totDeb-totCred)<0.02;
   return{lineas,totDeb,totCred,cuadrado};
 };
+
+// Renglones del asiento de una factura de compra que quedaron SIN CUENTA CONTABLE (resolverCuentaFC / resolverCuentaManualFC los marcan «⚠️ Sin cuenta asignada (…)»).
+// «Facturas de Compra» lo usa en la lista y en la pestaña «Asiento contable»: un asiento puede cuadrar en montos y aun así estar incompleto.
+const lineasSinCuentaFC=(asiento)=>((asiento&&asiento.lineas)||[]).filter(l=>String((l&&l.cuenta)||'').includes('Sin cuenta'));
 
 // ── Generación de asiento contable para Facturas de Venta (Ventas) ────────
 // Cuenta de ingresos configurable UNA sola vez (con OP / sin OP) — aplica a
@@ -14557,6 +14546,9 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const [factDelPwd,setFactDelPwd]=useState('');
   const [revisarBsOpen,setRevisarBsOpen]=useState(false);
   const [corrigiendoBs,setCorrigiendoBs]=useState(false);
+  const [cuentasCargadas,setCuentasCargadas]=useState({plan:false,srv:false}); // el aviso «cuenta por asignar» espera a que carguen el plan de cuentas y los servicios (si no, saldría un falso aviso mientras cargan)
+  const [soloSinCuenta,setSoloSinCuenta]=useState(false); // filtro «Ver solo estas» del aviso de cuentas por asignar
+  const cuentasListas=cuentasCargadas.plan&&cuentasCargadas.srv;
 
   const facturasBsRevisar = useMemo(()=>{
     return (facturasCompra||[]).map(f=>{
@@ -14580,6 +14572,24 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     }).filter(Boolean);
   },[facturasCompra]);
 
+  // Estado del asiento contable de CADA factura de la lista: el MISMO cálculo que «Editar Factura → Asiento contable» y que usa Contabilidad (generarAsientoFC).
+  // Un asiento puede cuadrar en montos y aun así tener renglones «Sin cuenta asignada»: la lista lo avisa. Las facturas que no afectan contabilidad no generan asiento.
+  const asientoPorFactura = useMemo(()=>{
+    const m = new Map();
+    (facturasCompra||[]).forEach(f=>{
+      if(f.afectaContabilidad===false){ m.set(f,{aplica:false,cuadrado:true,sinCuenta:[]}); return; }
+      try{
+        const tot=calcTotalesFC(f);
+        const retIVA=calcRetIVA(f,tot);
+        const retISLRLista=calcRetISLRLista(f,tot);
+        const neto=calcNeto(tot,retIVA,retISLRLista,f.tasa);
+        const a=generarAsientoFC(f,tot,retIVA,retISLRLista,neto,servicios,planDeCuentas,proveedores,cuentasRetProvCfg);
+        m.set(f,{aplica:true,cuadrado:a.cuadrado,totDeb:a.totDeb,totCred:a.totCred,sinCuenta:cuentasListas?lineasSinCuentaFC(a):[]});
+      }catch(e){ m.set(f,{aplica:true,error:true,cuadrado:true,sinCuenta:[]}); }
+    });
+    return m;
+  },[facturasCompra,servicios,planDeCuentas,proveedores,cuentasRetProvCfg,cuentasListas]);
+
   const corregirFacturasBs = async()=>{
     setCorrigiendoBs(true);
     try{
@@ -14598,8 +14608,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   };
 
   useEffect(()=>{
-    const u1=onSnapshot(getColRef('planDeCuentas'),s=>setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||''))));
-    const u2=onSnapshot(getColRef('procura_servicios'),s=>setServicios(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u1=onSnapshot(getColRef('planDeCuentas'),s=>{setPlanDeCuentas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'')));setCuentasCargadas(x=>x.plan?x:{...x,plan:true});});
+    const u2=onSnapshot(getColRef('procura_servicios'),s=>{setServicios(s.docs.map(d=>({id:d.id,...d.data()})));setCuentasCargadas(x=>x.srv?x:{...x,srv:true});});
     const u3=onSnapshot(doc(db,'settings','cuentasRetencionProveedor'),d=>d.exists()&&setCuentasRetProvCfg(x=>({...x,...d.data()})));
     const u4=onSnapshot(getColRef('procura_categorias_servicio'),s=>setCategoriasSrv(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''))));
     return()=>{u1();u2();u3();u4();};
@@ -15010,12 +15020,16 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
     setDialog({title:'¿Eliminar factura?',text:warnTxt,type:'confirm',onConfirm:ejecutarDelete});
   };
 
-  const filtradas=facturasCompra.filter(f=>{
+  const filtradasBase=facturasCompra.filter(f=>{
     const ms=(f.nroFactura||'').toLowerCase().includes(search.toLowerCase())||(f.proveedor||'').toLowerCase().includes(search.toLowerCase());
     const st=filtStatus==='TODOS'||f.status===filtStatus;
     const mes=!filtMes||(f.fecha||'').startsWith(filtMes);
     return ms&&st&&mes;
   });
+  // Facturas de esta vista con cuentas contables por asignar (aviso y filtro «Ver solo estas»)
+  const _tieneSinCuenta=(f)=>{const ai=asientoPorFactura.get(f);return !!(ai&&ai.aplica&&!ai.error&&ai.sinCuenta.length>0);};
+  const nSinCuenta=filtradasBase.filter(_tieneSinCuenta).length;
+  const filtradas=soloSinCuenta?filtradasBase.filter(_tieneSinCuenta):filtradasBase;
 
   const meses=[];
   for(let i=0;i<12;i++){const d=new Date();d.setMonth(d.getMonth()-i);meses.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);}
@@ -15031,6 +15045,42 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
   const fRetISLRTotalBs=fRetISLRLista.reduce((s,r)=>s+pNum(r.montoBs),0);
   const fNeto=calcNeto(fTot,fRetIVA,fRetISLRLista,form.tasa);
   const fAsiento=modal==='form'?generarAsiento(form,fTot,fRetIVA,fRetISLRLista,fNeto):{lineas:[],totDeb:0,totCred:0,cuadrado:false};
+  // Renglones del asiento en edición que no tienen cuenta contable (el cuadro ya no dice «cuadrado ✓» si falta alguna).
+  // Si la factura NO afecta contabilidad no genera asiento (la lista muestra «—»): no hay nada que avisar.
+  const fAfecta=form.afectaContabilidad!==false;
+  const fSinCuenta=cuentasListas&&fAfecta?lineasSinCuentaFC(fAsiento):[];
+  const _esSinCuenta=(l)=>!!cuentasListas&&fAfecta&&String((l&&l.cuenta)||'').includes('Sin cuenta');
+  // Abre la factura directamente en la pestaña «Asiento contable»
+  const abrirAsientoFactura=(f)=>{setForm({...f,esImportacion:!!f.esImportacion,importacion:f.importacion||null});setTab('asiento');setModal('form');};
+  // Columna «Asiento» de la lista: ✓ completo y cuadrado · ⚠ cuentas contables por asignar · ✗ descuadrado · — no genera asiento (no afecta contabilidad)
+  const badgeAsiento=(f)=>{
+    const ai=asientoPorFactura.get(f);
+    if(!ai) return <span className="text-slate-300">—</span>;
+    if(!ai.aplica) return <span className="text-slate-300" title="No afecta contabilidad: esta factura no genera asiento">—</span>;
+    if(ai.error) return <span className="text-slate-300" title="No se pudo calcular el asiento de esta factura">—</span>;
+    const n=ai.sinCuenta.length;
+    // Mientras cargan el plan de cuentas y los servicios no se puede afirmar nada: estado neutro (nunca «OK» a ciegas)
+    if(!cuentasListas&&ai.cuadrado) return <span data-testid="fc-asiento-calc" className="text-slate-300" title="Verificando las cuentas contables del asiento…">…</span>;
+    if(n===0&&ai.cuadrado) return <span data-testid="fc-asiento-ok" className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 whitespace-nowrap" title="Asiento cuadrado y con todas las cuentas contables asignadas">✓ OK</span>;
+    return(
+      <div className="flex flex-col items-start gap-1">
+        {n>0&&(
+          <button type="button" data-testid="fc-asiento-sin-cuenta" onClick={()=>abrirAsientoFactura(f)}
+            title={`El asiento tiene ${n} cuenta${n>1?'s':''} contable${n>1?'s':''} por asignar:\n${ai.sinCuenta.map(l=>`• ${l.concepto} → ${l.cuenta}`).join('\n')}\nClic para ver el asiento y corregirlo.`}
+            className="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300 hover:bg-amber-200 whitespace-nowrap cursor-pointer">
+            ⚠ {n>1?`${n} cuentas`:'Cuenta'} por asignar
+          </button>
+        )}
+        {!ai.cuadrado&&(
+          <button type="button" data-testid="fc-asiento-descuadrado" onClick={()=>abrirAsientoFactura(f)}
+            title={`Asiento descuadrado: débitos USD ${fmtN(ai.totDeb)} ≠ créditos USD ${fmtN(ai.totCred)}. Clic para ver el asiento.`}
+            className="text-[9px] font-black px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-300 hover:bg-red-200 whitespace-nowrap cursor-pointer">
+            ✗ Descuadrado
+          </button>
+        )}
+      </div>
+    );
+  };
   const hasTasa=pNum(form.tasa||0)>0;
 
   return(
@@ -15050,6 +15100,22 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         </select>
         <PBg onClick={()=>{setForm(initForm());setTab('datos');setModal('form');}}><Plus size={13}/> Registrar factura</PBg>
       </div>
+
+      {/* Aviso: facturas cuyo asiento tiene cuentas contables por asignar */}
+      {(nSinCuenta>0||soloSinCuenta)&&(
+        <div data-testid="fc-aviso-sin-cuenta" className="mb-4 bg-amber-50 border border-amber-300 rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap">
+          <AlertTriangle size={15} className="text-amber-600 flex-shrink-0"/>
+          <p className="text-[11px] text-amber-800 flex-1 min-w-48">
+            {nSinCuenta>0
+              ?<><strong>{nSinCuenta} factura{nSinCuenta>1?'s':''}</strong> de esta lista con cuentas contables por asignar: {nSinCuenta>1?'sus asientos no están completos, aunque cuadren':'su asiento no está completo, aunque cuadre'} en montos.</>
+              :<>Ninguna factura de esta lista tiene cuentas contables por asignar.</>}
+          </p>
+          <button type="button" data-testid="fc-filtro-sin-cuenta" onClick={()=>setSoloSinCuenta(v=>!v)}
+            className="text-[10px] font-black uppercase px-3 py-1 rounded-lg border border-amber-400 text-amber-800 bg-white hover:bg-amber-100">
+            {soloSinCuenta?'Ver todas':'Ver solo estas'}
+          </button>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-3 mb-4">
@@ -15073,10 +15139,10 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
           <table className="w-full text-xs">
             <thead><tr>
               <PTh>N° Factura</PTh><PTh>N° Control</PTh><PTh>Proveedor</PTh><PTh>Fecha</PTh><PTh>Vencimiento</PTh><PTh>OC</PTh>
-              <PTh>Libro</PTh><PTh right>Total USD</PTh><PTh right>Neto Pagar</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
+              <PTh>Libro</PTh><PTh>Asiento</PTh><PTh right>Total USD</PTh><PTh right>Neto Pagar</PTh><PTh>Status</PTh><PTh>Acciones</PTh>
             </tr></thead>
             <tbody>
-              {filtradas.length===0?<tr><td colSpan={11} className="py-10"><PEmpty icon={FileText} title="Sin facturas" desc="Registra tu primera factura de compra"/></td></tr>:
+              {filtradas.length===0?<tr><td colSpan={12} className="py-10"><PEmpty icon={FileText} title={soloSinCuenta?'Sin facturas con cuentas por asignar':'Sin facturas'} desc={soloSinCuenta?'Ninguna factura de esta lista tiene cuentas contables por asignar':'Registra tu primera factura de compra'}/></td></tr>:
               filtradas.map(f=>{
                 const st=statusCxP(f.status);
                 const venc=f.status==='PENDIENTE'&&f.fechaVencimiento&&f.fechaVencimiento<getTodayDate();
@@ -15093,6 +15159,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                         {f.afectaLibroCompras!==false?'Sí':'No'}
                       </span>
                     </PTd>
+                    <PTd>{badgeAsiento(f)}</PTd>
                     <PTd right mono><span className="font-black">{fmtN(f.total)}</span></PTd>
                     <PTd right mono><span className={pNum(f.saldoPendiente)>0?'text-amber-600 font-black':'text-emerald-600'}>{fmtN(f.netoPagar||f.saldoPendiente||0)}</span></PTd>
                     <PTd><PBadge v={st.v}>{st.label}</PBadge></PTd>
@@ -15218,7 +15285,8 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                 <button key={id} onClick={()=>setTab(id)}
                   className={`flex items-center gap-2 px-5 py-2.5 text-[10px] font-black uppercase tracking-wide border-b-2 transition-all ${tab===id?'border-orange-500 text-orange-600 bg-white':'border-transparent text-slate-400 hover:text-slate-600'}`}>
                   <Icon size={12}/> {label}
-                  {id==='asiento'&&fAsiento.cuadrado&&<span className="w-2 h-2 rounded-full bg-emerald-500 ml-1"/>}
+                  {id==='asiento'&&fAsiento.cuadrado&&fSinCuenta.length===0&&<span className="w-2 h-2 rounded-full bg-emerald-500 ml-1"/>}
+                  {id==='asiento'&&fAsiento.cuadrado&&fSinCuenta.length>0&&<span className="w-2 h-2 rounded-full bg-amber-500 ml-1" title="Hay cuentas contables por asignar"/>}
                   {id==='asiento'&&!fAsiento.cuadrado&&fAsiento.lineas.length>0&&<span className="w-2 h-2 rounded-full bg-red-500 ml-1"/>}
                   {id==='importacion'&&form.esImportacion&&<span className="w-2 h-2 rounded-full bg-blue-500 ml-1"/>}
                 </button>
@@ -15760,10 +15828,12 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
               {tab==='asiento'&&(
                 <div>
                   {/* Check cuadre */}
-                  <div className={`flex items-center justify-between p-3 rounded-xl mb-4 ${fAsiento.cuadrado?'bg-emerald-50 border border-emerald-200':'bg-red-50 border border-red-200'}`}>
+                  <div className={`flex items-center justify-between p-3 rounded-xl mb-4 ${fAsiento.cuadrado?(fSinCuenta.length>0?'bg-amber-50 border border-amber-300':'bg-emerald-50 border border-emerald-200'):'bg-red-50 border border-red-200'}`}>
                     <div className="flex items-center gap-2">
                       {fAsiento.cuadrado
-                        ?<><CheckCircle size={16} className="text-emerald-600"/><span className="font-black text-emerald-700 text-xs uppercase">Asiento cuadrado ✓</span></>
+                        ?(fSinCuenta.length>0
+                          ?<><AlertTriangle size={16} className="text-amber-600"/><span data-testid="fc-asiento-banner-incompleto" className="font-black text-amber-700 text-xs uppercase">Asiento incompleto — {fSinCuenta.length} cuenta{fSinCuenta.length>1?'s':''} contable{fSinCuenta.length>1?'s':''} por asignar</span></>
+                          :<><CheckCircle size={16} className="text-emerald-600"/><span className="font-black text-emerald-700 text-xs uppercase">Asiento cuadrado ✓</span></>)
                         :<><AlertTriangle size={16} className="text-red-600"/><span className="font-black text-red-700 text-xs uppercase">Asiento descuadrado — revisa las cuentas contables</span></>
                       }
                     </div>
@@ -15789,11 +15859,13 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                         </tr></thead>
                         <tbody>
                           {fAsiento.lineas.map((l,i)=>(
-                            <tr key={i} className={`${i%2===0?'bg-white':'bg-slate-50'} ${l.tipo==='CREDITO'?'opacity-90':''}`}>
+                            <tr key={i} className={`${_esSinCuenta(l)?'bg-amber-50':(i%2===0?'bg-white':'bg-slate-50')} ${l.tipo==='CREDITO'?'opacity-90':''}`}>
                               <td className="px-3 py-2 text-slate-400">{i+1}</td>
                               <td className="px-3 py-2">
-                                <span className="font-mono text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 block w-fit mb-0.5">{l.cuenta.split(' — ')[0]}</span>
-                                <span className="text-[10px] text-slate-500">{l.cuenta.split(' — ')[1]||l.cuenta}</span>
+                                <span className={`font-mono text-[10px] border px-1.5 py-0.5 rounded block w-fit mb-0.5 ${_esSinCuenta(l)?'bg-amber-100 border-amber-300 text-amber-800 font-black':'bg-slate-100 border-slate-200 text-slate-600'}`}>{l.cuenta.split(' — ')[0]}</span>
+                                {_esSinCuenta(l)
+                                  ?<span className="text-[10px] text-amber-700">Falta asignar la cuenta contable de este renglón</span>
+                                  :<span className="text-[10px] text-slate-500">{l.cuenta.split(' — ')[1]||l.cuenta}</span>}
                               </td>
                               <td className="px-3 py-2 text-[11px]">{l.concepto}</td>
                               <td className="px-3 py-2 text-center">
@@ -15818,10 +15890,12 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
                     </div>
                   )}
 
-                  {!fAsiento.cuadrado&&fAsiento.lineas.some(l=>l.cuenta.includes('Sin cuenta'))&&(
-                    <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
+                  {fSinCuenta.length>0&&(
+                    <div data-testid="fc-asiento-aviso-sin-cuenta" className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
                       <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5"/>
-                      <p className="text-[10px] text-amber-700">Algunos ítems o el proveedor no tienen cuenta contable asignada. Ve a <strong>Catálogo de Prod/Serv</strong> o <strong>Proveedores</strong> para asignarlas.</p>
+                      {(form.itemsOC||[]).length>0
+                        ?<p className="text-[10px] text-amber-700">Algunos ítems no tienen cuenta contable asignada. Ve a <strong>Catálogo de Prod/Serv</strong> para asignársela a su producto o servicio.</p>
+                        :<p className="text-[10px] text-amber-700">Esta factura no tiene ítems: elige {(form.tipoCompra||'PRODUCTO')==='SERVICIO'?<>la <strong>Categoría de Servicio</strong> (la cuenta contable)</>:<>la <strong>Categoría (Producto)</strong></>} en «Clasificación contable» de la pestaña <button type="button" onClick={()=>setTab('datos')} className="underline font-black">Datos fiscales</button> para que el asiento tenga su cuenta.</p>}
                     </div>
                   )}
                 </div>
@@ -20062,6 +20136,46 @@ const NotasCompraNCView = ({
   );
 };
 
+
+// ── Resumen de COMPRAS del período (campos 30 a 36 de la Forma 99030) ─────────────────────────────
+// ÚNICA fuente de esas cifras para «Determinación de IVA» (pantalla, PDF/Excel y cierre automático de la quincena).
+// Aplica las MISMAS reglas que las filas del Libro de Compras (LibroComprasView), para que los dos muestren lo mismo:
+//  · Facturas: no cuentan las que no afectan el Libro; manda el período de aprovechamiento (periodoLibroMes/Q) y, si no lo tienen, la fecha.
+//  · Factura de IMPORTACIÓN: sus montos van SOLO a los campos 31 y 32 (planilla DUA). Lo que traiga en «totales» (p. ej. el valor de la
+//    factura del proveedor del exterior como exento) NO se suma a «sin derecho a crédito fiscal» ni a las compras internas.
+//  · NC / ND fiscales de compras: entran con el mismo criterio de período; la NC resta y la ND suma (exento, base e IVA).
+// OJO: el Libro de Compras conserva su propio cálculo (filas y totales de LibroComprasView); si se cambia una regla allá, hay que cambiarla también aquí.
+const calcResumenComprasF30 = (facturas, notas, anio, mes, q) => {
+  const mm = String(mes).padStart(2, '0');
+  const ultimoDia = new Date(parseInt(anio), parseInt(mm), 0).getDate();
+  const desde = String(q) === '2' ? `${anio}-${mm}-16` : `${anio}-${mm}-01`;
+  const hasta = String(q) === '1' ? `${anio}-${mm}-15` : `${anio}-${mm}-${String(ultimoDia).padStart(2, '0')}`;
+  const enPeriodo = (d) => {
+    if (d.periodoLibroMes) return d.periodoLibroMes === `${anio}-${mm}` && String(d.periodoLibroQ || '1') === String(q);
+    const fecha = d.fecha || '';
+    return fecha >= desde && fecha <= hasta;
+  };
+  const facturasPeriodo = (facturas || []).filter(f => f.afectaLibroCompras !== false && enPeriodo(f));
+  const notasPeriodo = (notas || []).filter(n => n.naturaleza === 'FISCAL' && (n.tipo === 'NC' || n.tipo === 'ND') && enPeriodo(n));
+  const r = { c30: 0, c31: 0, c32: 0, c33: 0, c34: 0, c33_8: 0, c34_8: 0, facturas: facturasPeriodo, notas: notasPeriodo };
+  facturasPeriodo.forEach(f => {
+    if (f.esImportacion) {
+      if (f.importacion) { r.c31 += pNum(f.importacion.baseImponible || 0); r.c32 += pNum(f.importacion.iva || 0); }
+      return;
+    }
+    const tot = f.totales || {};
+    r.c30 += pNum(tot.exentoBs || 0); r.c33 += pNum(tot.base16Bs || 0); r.c34 += pNum(tot.iva16Bs || 0);
+    r.c33_8 += pNum(tot.base8Bs || 0); r.c34_8 += pNum(tot.iva8Bs || 0);
+  });
+  notasPeriodo.forEach(n => {
+    const exeBs = pNum(n.exentoBs || 0);
+    const baseBs = (n.baseGravadaBs != null && n.baseGravadaBs !== '') ? pNum(n.baseGravadaBs) : Math.max(0, pNum(n.monto || 0) - exeBs);
+    const ivaBs = pNum(n.ivaBs || 0) || (n.tieneIva === false ? 0 : baseBs * 0.16);
+    const signo = n.tipo === 'NC' ? -1 : 1;
+    r.c30 += exeBs * signo; r.c33 += baseBs * signo; r.c34 += ivaBs * signo;
+  });
+  return r;
+};
 
 const LibroComprasView = ({facturasCompra, proveedores, retIVACompra, notasCompraCD, dialog, setDialog, settings}) => {
   const anioAct = new Date().getFullYear();
