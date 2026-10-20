@@ -11579,6 +11579,9 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
   const _neTieneOp = new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
   const _neTieneOpDoc = new Map((notasEntrega||[]).map(ne=>[ne.documento, !!(ne.opId||ne.opRelacionada)]));
   const hayInfoPorNE = notasEntrega && (f.neOrigen||(f.nesAdicionales||[]).length>0);
+  // Factura IMPORTADA del histórico (origenImport): sus devoluciones traen precio y costo NEGATIVOS y deben RESTAR costo de venta.
+  // En cualquier otra factura un costo ≤ 0 se sigue ignorando igual que siempre.
+  const esHist = !!f.origenImport;
   // OP por artículo: si la factura trae la marca de cada artículo (tipoVenta), manda esa marca; lo que no la trae es venta sin OP
   const _costoPorLinea = (f.itemsFacturados||[]).some(opaTraeTipo);
   let totalMP=0, totalCons=0, totalTerm=0; // acumulado sin OP (o total, si no hay info por NE)
@@ -11591,8 +11594,9 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
     // el mismo nombre y código distinto, y la venta pudo haber quedado asociada a cualquiera.
     const nombreItemVendido = (it.desc||it.descripcion||'').trim().toUpperCase();
     const costoRealUnit = simulacionCostos && nombreItemVendido ? simulacionCostos[nombreItemVendido] : null;
-    const val = costoRealUnit!=null ? costoRealUnit*Number(it.cantidad||0) : (Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0));
-    if (val<=0) return;
+    const _signoDev = (esHist && (Number(it.costoTotal||0)<0 || Number(it.costoUnit||0)<0)) ? -1 : 1;
+    const val = costoRealUnit!=null ? _signoDev*costoRealUnit*Number(it.cantidad||0) : (Number(it.costoTotal||0) || Number(it.costoUnit||0)*Number(it.cantidad||0));
+    if (esHist ? Math.abs(val)<=0.000001 : val<=0) return;
     const balde = CATEGORIA_A_BALDE_SHARED[invItem?.category] || 'MATERIA_PRIMA';
     // ¿Esta línea específica tiene OP? Se mira la NE de la que vino (_neOrigenItem, ya guardado al
     // armar la factura) — si no hay esa info, se usa el estado de toda la factura como antes.
@@ -11607,9 +11611,10 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
       if (balde==='CONSUMIBLES') totalCons+=val; else if (balde==='TERMINADOS') totalTerm+=val; else totalMP+=val;
     }
   });
-  if (totalMP<=0.005 && totalCons<=0.005 && totalTerm<=0.005 && totalMPop<=0.005 && totalConsOp<=0.005 && totalTermOp<=0.005) return null;
-  const tieneOp = _costoPorLinea ? (totalMPop+totalConsOp+totalTermOp)>0.005 : !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
-  const tasa = (tasasManuales||{})[f.id] || Number(settingsTasa||0) || 1;
+  if (Math.abs(totalMP)<=0.005 && Math.abs(totalCons)<=0.005 && Math.abs(totalTerm)<=0.005 && Math.abs(totalMPop)<=0.005 && Math.abs(totalConsOp)<=0.005 && Math.abs(totalTermOp)<=0.005) return null;
+  const tieneOp = _costoPorLinea ? Math.abs(totalMPop+totalConsOp+totalTermOp)>0.005 : !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
+  // Factura histórica: su costo en Bs. usa la tasa de ESA factura (igual que su ingreso), no la BCV de hoy. Una tasa manual guardada sigue mandando.
+  const tasa = (tasasManuales||{})[f.id] || (esHist ? Number(f.tasa||0) : 0) || Number(settingsTasa||0) || 1;
   const [codDebOp,nomDebOp] = partirCuenta(cfg.costoVentaProduccionNombre);
   const [codDebSin,nomDebSin] = partirCuenta(cfg.costoVentaMercanciaNombre);
   const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
@@ -11624,21 +11629,23 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
   const lineas = [];
   // Bloque CON OP (si esta factura, o parte de ella, viene de una NE con OP)
   const totalValOp = totalMPop+totalConsOp+totalTermOp;
-  if (totalValOp>0.005){
+  // Un total NEGATIVO (devolución histórica) invierte el asiento: Haber costo de venta / Debe inventario. Con totales positivos el resultado es idéntico al de siempre.
+  const _pos = (x) => x>0 ? x : 0, _neg = (x) => x<0 ? -x : 0, _dev = (x) => x<0 ? ' (devolución)' : '';
+  if (Math.abs(totalValOp)>0.005){
     const l=reclas(lineas.length,codDebOp,nomDebOp);
-    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:totalValOp*tasa, haberBs:0, debeUSD:totalValOp, haberUSD:0, detalle:'Costo de venta (con OP)'});
-    if (totalMPop>0.005){ const l2=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalMPop*tasa, debeUSD:0, haberUSD:totalMPop, detalle:'Materia Prima (con OP)'}); }
-    if (totalConsOp>0.005){ const l2=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalConsOp*tasa, debeUSD:0, haberUSD:totalConsOp, detalle:'Consumibles (con OP)'}); }
-    if (totalTermOp>0.005){ const l2=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalTermOp*tasa, debeUSD:0, haberUSD:totalTermOp, detalle:'Productos Terminados (con OP)'}); }
+    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:_pos(totalValOp)*tasa, haberBs:_neg(totalValOp)*tasa, debeUSD:_pos(totalValOp), haberUSD:_neg(totalValOp), detalle:'Costo de venta (con OP)'+_dev(totalValOp)});
+    if (Math.abs(totalMPop)>0.005){ const l2=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalMPop)*tasa, haberBs:_pos(totalMPop)*tasa, debeUSD:_neg(totalMPop), haberUSD:_pos(totalMPop), detalle:'Materia Prima (con OP)'+_dev(totalMPop)}); }
+    if (Math.abs(totalConsOp)>0.005){ const l2=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalConsOp)*tasa, haberBs:_pos(totalConsOp)*tasa, debeUSD:_neg(totalConsOp), haberUSD:_pos(totalConsOp), detalle:'Consumibles (con OP)'+_dev(totalConsOp)}); }
+    if (Math.abs(totalTermOp)>0.005){ const l2=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalTermOp)*tasa, haberBs:_pos(totalTermOp)*tasa, debeUSD:_neg(totalTermOp), haberUSD:_pos(totalTermOp), detalle:'Productos Terminados (con OP)'+_dev(totalTermOp)}); }
   }
   // Bloque SIN OP (si esta factura, o parte de ella, viene de una NE sin OP)
   const totalVal = totalMP+totalCons+totalTerm;
-  if (totalVal>0.005){
+  if (Math.abs(totalVal)>0.005){
     const l=reclas(lineas.length,codDebSin,nomDebSin);
-    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:totalVal*tasa, haberBs:0, debeUSD:totalVal, haberUSD:0, detalle:'Costo de venta (sin OP)'});
-    if (totalMP>0.005){ const l2=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalMP*tasa, debeUSD:0, haberUSD:totalMP, detalle:'Materia Prima'}); }
-    if (totalCons>0.005){ const l2=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalCons*tasa, debeUSD:0, haberUSD:totalCons, detalle:'Consumibles'}); }
-    if (totalTerm>0.005){ const l2=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:0, haberBs:totalTerm*tasa, debeUSD:0, haberUSD:totalTerm, detalle:'Productos Terminados'}); }
+    lineas.push({codigo:l.codigo, cuenta:l.cuenta, debeBs:_pos(totalVal)*tasa, haberBs:_neg(totalVal)*tasa, debeUSD:_pos(totalVal), haberUSD:_neg(totalVal), detalle:'Costo de venta (sin OP)'+_dev(totalVal)});
+    if (Math.abs(totalMP)>0.005){ const l2=reclas(lineas.length,codInvMP,nomInvMP); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalMP)*tasa, haberBs:_pos(totalMP)*tasa, debeUSD:_neg(totalMP), haberUSD:_pos(totalMP), detalle:'Materia Prima'+_dev(totalMP)}); }
+    if (Math.abs(totalCons)>0.005){ const l2=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalCons)*tasa, haberBs:_pos(totalCons)*tasa, debeUSD:_neg(totalCons), haberUSD:_pos(totalCons), detalle:'Consumibles'+_dev(totalCons)}); }
+    if (Math.abs(totalTerm)>0.005){ const l2=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalTerm)*tasa, haberBs:_pos(totalTerm)*tasa, debeUSD:_neg(totalTerm), haberUSD:_pos(totalTerm), detalle:'Productos Terminados'+_dev(totalTerm)}); }
   }
   return {tasa, tieneOp, lineas};
 };
@@ -23970,7 +23977,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
       { const nf=f.nroFiscal||f.documento||''; if(nf && _nfVistoCP.get(nf)?.id!==f.id) return false; }
       if (reclasificacionesC[`EXCL__costos_produccion__${f.id}`]) return false;
       const items = f.itemsFacturados||[];
-      if (!items.some(it=>Number(it.costoTotal||0)>0)) return false;
+      if (!items.some(it=>Number(it.costoTotal||0)>0 || (f.origenImport && Number(it.costoTotal||0)<0))) return false;
       const fecha = f.fecha||'';
       if (filtDesde && fecha < filtDesde) return false;
       if (filtHasta && fecha > filtHasta) return false;
@@ -41906,7 +41913,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               items.forEach(it=>{
                 const qty=parseNum(it.cantidad||1);
                 // precio de venta: from saved precioUnit, or derive from invoice total / items
-                const precioVenta = parseNum(it.precioUnit||0) > 0
+                const precioVenta = (parseNum(it.precioUnit||0) > 0 || (inv.origenImport && parseNum(it.precioUnit||0) < 0))
                   ? parseNum(it.precioUnit)
                   : (inv.itemsFacturados||[]).length > 0
                     ? parseNum(inv.montoBase||0) / (inv.itemsFacturados||[]).length / qty
@@ -42003,6 +42010,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
                 // 4. Fallback: invCode clean if anything
                 if(!codigo) codigo = _cc || getClean(it.fgId||'') || '—';
+                // Factura histórica importada: manda el código que la línea traía en el sistema anterior (solo para mostrarlo).
+                if(inv.origenImport && it.codigoOrigen) codigo = String(it.codigoOrigen).trim();
 
                 // ── COSTO: primero el MISMO dato que ya usa Estado de Resultados/Mayor Analítico
                 // (getAsientosReales, sección "Costo de Producción/Venta"): it.costoTotal, el
@@ -42034,7 +42043,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   if(inv.neOrigen){const _neDirecta=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_neDirecta)return _neDirecta.documento||_neDirecta.id;}
                   const _candidatas=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
                   return _candidatas[0]?.documento||_candidatas[0]?.id||inv.neOrigen||'—';
-                })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:opaFmtOpLinea(it,inv),_opaMarcada:(inv.itemsFacturados||[]).some(opaTraeTipo),_opaEsOp:opaEsLineaOp(it,inv),cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0)});
+                })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:opaFmtOpLinea(it,inv),_opaMarcada:(inv.itemsFacturados||[]).some(opaTraeTipo),_opaEsOp:opaEsLineaOp(it,inv),cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0),_hist:!!inv.origenImport});
               });
             }
           });
@@ -42146,7 +42155,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     ))}
                   </div>
                   <span className="text-[9px] font-black text-gray-400">{allRows.length} reg.</span>
-                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=allRows.map(r=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=allRows.map(r=>{const util=r.total-r.costoTotal;const pct=(r.total>0||(r._hist&&r.total<0))?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
@@ -42208,7 +42217,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 <table className="w-full border-collapse text-[8px]">
                   <thead><tr className="bg-black text-white">{['Fecha','Documento','NE Origen','Nro. Fiscal','OP','Vendedor','Cliente','Código','Producto','Cant.','Precio','Total','Costo U.','T. Costo','Utilidad','%','Tasa'].map(h=><th key={h} className="py-2 px-1.5 text-left font-black uppercase text-[7px] leading-tight">{h}</th>)}</tr></thead>
                   <tbody>
-                    {allRows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=r.total>0?Math.round((util/r.total)*100):0;return(
+                    {allRows.map((r,i)=>{const util=r.total-r.costoTotal;const pct=(r.total>0||(r._hist&&r.total<0))?Math.round((util/r.total)*100):0;return(
                       <tr key={i} className={`border-b border-gray-50 ${r.isNota?(r.tipoNota==='NC'?'bg-red-50 text-red-800':'bg-blue-50 text-blue-800'):(i%2===0?'bg-white':'bg-gray-50')} hover:bg-orange-50`}>
                         <td className="py-1 px-1.5 font-bold text-gray-500 whitespace-nowrap">{r.fecha}</td>
                         <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.doc}</td>
@@ -44300,19 +44309,113 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             } catch(e){ alert('Error al registrar cobros: '+e.message); }
             finally{ setImportandoHist(false); }
           };
-          const importarFacturasHistoricasEneAbr2026 = async () => {
-            const nesHist = (notasEntrega||[]).filter(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX');
-            if(nesHist.length===0){ alert('Primero importa las Notas de Entrega históricas (botón de arriba).'); return; }
-            if(nesHist.some(n=>n.facturaId)){ alert('Ya se crearon las facturas históricas — no se crean de nuevo.'); return; }
-            if(!window.confirm(`Se van a crear ${HIST_NE_ENE_ABR_2026.length} Facturas reales (con su número fiscal original: F00002747, etc.), vinculadas a las Notas de Entrega ya creadas.\n\nEsto hace que el Estado de Resultados calcule Ingresos y Costo de Venta solo — ya no hace falta el ajuste manual (recuerda dejarlo en "solo gastos"). ¿Continuar?`)) return;
+          // ── Facturas históricas, MES A MES (Ene–Abr 2026) ──────────────────────────────────────────────────────────────
+          // Cada documento del histórico (F… venta · D… devolución) tiene su NE importada (origenDoc) y se factura 1 a 1 con su número
+          // fiscal original. Se hace por MES y a pedido: así se revisa el Estado de Resultados de un mes antes de pasar al siguiente
+          // (Febrero–Abril se agregan a esta lista cuando se confirme el mes anterior). Antes un solo botón creaba los 4 meses juntos y
+          // desaparecía en cuanto UNA sola NE tuviera factura, dejando el resto sin poder facturarse.
+          const MESES_FACT_HIST = [{ym:'2026-01', nombre:'Enero 2026', corto:'enero', ajuste:'HIST-ENERO-2026', fin:'31'}];
+          // Código de producto que cada línea traía en el sistema anterior (reporte «General de Ventas» de enero 2026): solo se usa para MOSTRARLO en el Reporte de Ventas.
+          const CODIGOS_ORIGEN_HIST = {
+            'F00002747':['SFM-CLR-4520-4'],
+            'F00002748':['SFM-CLR-4520-4'],
+            'F00002749':['SFM-CLR-4520-4'],
+            'F00002750':['SFM-CLR-4520-4'],
+            'F00002751':['SFM-CLR-4520-4'],
+            'F00002752':['0SFA-CLR-5020-16'],
+            'F00002753':['0SFA-CLR-5020-16'],
+            'F00002754':['SFM-CLR-4520-4'],
+            'F00002755':['PK-6066-10'],
+            'F00002756':['PK-6066-10'],
+            'F00002757':['SFM-CLR-4520-4'],
+            'F00002758':['BOL-PÑL'],
+            'F00002759':['SFM-RED-4520-2.7'],
+            'F00002760':['BOL-PÑL'],
+            'F00002761':['SFM-CLR-4520-4'],
+            'F00002762':['SFM-CLR-4520-4'],
+            'F00002763':['BOL-AVES','BOL-GRIS'],
+            'F00002764':['SFM-GRN-4520-2.7','SFM-BLU-4520-2.7','SFM-CLR-4520-4'],
+            'F00002765':['BOL-EMB'],
+            'F00002766':['0SFA-CLR-5020-16'],
+            'F00002767':['SFM-CLR-4520-4'],
+            'F00002768':['SFM-CLR-4520-4'],
+            'F00002769':['BOL-HUL'],
+            'F00002770':['0SFA-CLR-5020-16'],
+            'F00002771':['0SFA-CLR-5020-16'],
+            'F00002772':['SFM-BLK-4520-2.7','SFM-BLU-4520-2.7','SFM-CLR-1220-MIN'],
+            'F00002773':['0SFA-CLR-5020-16'],
+            'F00002774':['0SFA-CLR-5020-16'],
+            'F00002775':['SFM-BLK-4520-2.7'],
+            'F00002776':['PK-6050-10','TCLR-3100-2','T-2110-1.8-FR','SFM-CLR-4520-4'],
+            'F00002777':['PK-6066-10'],
+            'F00002778':['SFM-CLR-4520-4'],
+            'F00002779':['SFM-CLR-4520-4'],
+            'F00002780':['SFM-CLR-4520-4'],
+            'F00002781':['SFM-CLR-4520-4','TCLR-2100-2'],
+            'F00002782':['BOL-AVES'],
+            'F00002783':['SFM-CLR-4520-4'],
+            'F00002784':['PK-6050-5','TCLR-2100-2'],
+            'F00002785':['PK-6066-10'],
+            'F00002786':['SFM-CLR-4520-4'],
+            'F00002787':['TORG-2100-2'],
+            'F00002788':['T-2110-1.8-FR'],
+            'F00002789':['SFM-CLR-4520-4'],
+            'F00002790':['SFM-CLR-4520-4'],
+            'D00000018':['0SFA-CLR-5020-16'],
+            'D00000019':['BOL-AVES','BOL-GRIS'],
+            'D00000020':['BOL-AVES'],
+          };
+          // Redondeo a centavos «mitad hacia arriba», como el sistema anterior: 1,5 × 77,67 = 116,505 → 116,51 (toFixed daría 116,50).
+          const redond2Hist = (x) => { const sg = x<0 ? -1 : 1; return sg*Math.round((Math.abs(x)+1e-9)*100)/100; };
+          // Líneas de la factura de un documento del histórico: una sola fuente para el panel y para la creación.
+          const itemsFactHist = (f) => f.items.map((it,i)=>({invCode:'', fgId:'', desc:it.desc, cantidad:it.cantidad, unidad:'', precioUnit:it.precioUnit, costoUnit:it.costoUnit, costoTotal:redond2Hist(it.cantidad*it.costoUnit), codigoOrigen:((CODIGOS_ORIGEN_HIST[f.doc]||[])[i]||'')}));
+          const costoDocHist = (f) => itemsFactHist(f).reduce((sm,it)=>sm+it.costoTotal,0);
+          const estadoFactHist = (ym) => {
+            const docs = HIST_NE_ENE_ABR_2026.filter(f=>(f.fecha||'').startsWith(ym));
+            const docsSet = new Set(docs.map(f=>f.doc));
+            const neDoc = new Map(); (notasEntrega||[]).forEach(n=>{ if(n.origenImport==='HIST_ENE_ABR_2026_XLSX') neDoc.set(n.origenDoc, n); });
+            const invId = new Map(), invFisc = new Map();
+            (invoices||[]).forEach(i=>{ invId.set(i.id, i); [i.nroFiscal, i.documento].forEach(k=>{ if(k && !invFisc.has(k)) invFisc.set(k, i); }); });
+            const e = {docs, pendientes:[], facturadas:0, sinNE:[], otraFactura:[]};
+            docs.forEach(f=>{
+              const ne = neDoc.get(f.doc);
+              if(!ne){ e.sinNE.push(f); return; }                                         // el documento no tiene su NE importada
+              if(invId.get(f.doc) || invFisc.get(f.doc)){ e.facturadas++; return; }       // ya existe factura con ese número
+              if(ne.facturaId && invId.has(ne.facturaId)){ e.otraFactura.push({f,ne}); return; } // la NE ya fue facturada con OTRA factura: no se duplica
+              e.pendientes.push({f,ne});
+            });
+            const r2 = (n)=>Math.round(n*100)/100;
+            e.nDev = docs.filter(f=>f.montoBase<0).length;
+            e.ingMes = r2(docs.reduce((s,f)=>s+f.montoBase,0));
+            e.cosMes = r2(docs.reduce((s,f)=>s+costoDocHist(f),0));
+            e.ingPend = r2(e.pendientes.reduce((s,x)=>s+x.f.montoBase,0));
+            e.cosPend = r2(e.pendientes.reduce((s,x)=>s+costoDocHist(x.f),0));
+            e.hechas = (invoices||[]).filter(i=>i.origenImport==='HIST_ENE_ABR_2026_XLSX' && docsSet.has(i.id));
+            return e;
+          };
+          // Si el ajuste manual HIST-<MES>-2026 todavía trae Ingresos / Costo de Venta (no está en «solo gastos»), crear las facturas duplicaría las ventas del mes.
+          const lineasIngresoEnAjuste = (nro) => {
+            const a = (ajustesApp||[]).find(x=>(x.nroComprobante||'').trim().toUpperCase()===nro);
+            return a ? (a.lineas||[]).filter(l=>/^4/.test(String(l.codigo||'')) || String(l.codigo||'')==='5.1.01.01.001').length : 0;
+          };
+          const crearFacturasHistoricasMes = async (m) => {
+            if(importandoHist) return;
+            const e = estadoFactHist(m.ym);
+            if(e.pendientes.length===0){ alert(`No hay facturas por crear en ${m.nombre}.`); return; }
+            const nIng = lineasIngresoEnAjuste(m.ajuste);
+            if(nIng>0){ alert(`El ajuste "${m.ajuste}" todavía trae ${nIng} línea(s) de Ingresos / Costo de Venta: si se crean las facturas, las ventas de ${m.corto} se contarían dos veces.\n\nPrimero usa "Revertir a Solo-Gastos Ene-Abr" en Contabilidad → Comprobantes Contables → Ajustes.`); return; }
+            const faltan = [];
+            if(!cuentasProduccionCfg?.costoVentaMercanciaNombre) faltan.push('Costo de venta (mercancía)');
+            if(!cuentasProduccionCfg?.invMateriaPrimaNombre) faltan.push('Inventario de materia prima');
+            if(faltan.length && !window.confirm(`Falta configurar en Contabilidad → Configuración de cuentas: ${faltan.join(' y ')}. Sin eso el costo de venta de ${m.corto} saldría como "⚠️ Sin configurar".\n\n¿Crear las facturas de todos modos?`)) return;
+            const nDev = e.pendientes.filter(x=>x.f.montoBase<0).length, nVta = e.pendientes.length - nDev;
+            const primero = e.pendientes[0].f.doc, ultimo = e.pendientes[e.pendientes.length-1].f.doc;
+            if(!window.confirm(`Se van a crear ${e.pendientes.length} factura(s) de ${m.nombre} (${nVta} venta(s)${nDev?` y ${nDev} devolución(es)`:''}), con su número fiscal original (${primero} … ${ultimo}), vinculadas a sus Notas de Entrega históricas.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos netos $${formatNum(e.ingPend)} · Costo de venta neto $${formatNum(e.cosPend)}.\n\nNo se tocan otros meses, los ajustes contables ni los cobros. ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const batch = writeBatch(db);
-              let creadas = 0, sinNE = 0;
-              HIST_NE_ENE_ABR_2026.forEach(f=>{
-                const ne = nesHist.find(n=>n.origenDoc===f.doc);
-                if(!ne){ sinNE++; return; }
-                const items = f.items.map(it=>({invCode:'', fgId:'', desc:it.desc, cantidad:it.cantidad, unidad:'', precioUnit:it.precioUnit, costoUnit:it.costoUnit, costoTotal:parseFloat((it.cantidad*it.costoUnit).toFixed(2))}));
+              e.pendientes.forEach(({f,ne})=>{
+                const items = itemsFactHist(f);
                 batch.set(getDocRef('maquilaInvoices', f.doc), {
                   id:f.doc, documento:f.doc, nroFiscal:f.doc,
                   clientRif:'', clientName:f.clientName, fecha:f.fecha, tasa:f.tasa,
@@ -44324,11 +44427,33 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   timestamp:Date.now(), user:'Importación Histórica (Excel)',
                 });
                 batch.update(getDocRef('notasEntrega', ne.id), {facturaId:f.doc, updatedAt:Date.now()});
-                creadas++;
               });
               await batch.commit();
-              alert(`Se crearon ${creadas} factura(s).${sinNE?` (${sinNE} sin NE correspondiente — revisar)`:''}`);
-            } catch(e){ alert('Error al crear facturas: '+e.message); }
+              logAuditoria(appUser,'Ventas','CREACIÓN',`Facturas históricas de ${m.nombre}: ${e.pendientes.length} creada(s) · Ingresos netos $${formatNum(e.ingPend)} · Costo neto $${formatNum(e.cosPend)}`);
+              alert(`Se crearon ${e.pendientes.length} factura(s) de ${m.nombre}. Ya salen en Contabilidad → Estado de Resultados (del 01 al ${m.fin} de ${m.corto} de 2026).`);
+            } catch(err){ alert('Error al crear facturas: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
+          const deshacerFacturasHistoricasMes = async (m) => {
+            if(importandoHist) return;
+            const e = estadoFactHist(m.ym);
+            if(e.hechas.length===0){ alert(`No hay facturas históricas de ${m.nombre} para deshacer.`); return; }
+            if(!window.confirm(`Se van a quitar ${e.hechas.length} factura(s) histórica(s) de ${m.nombre}. Se archivan en la Papelera (recuperables) y cada NE queda sin factura; ${m.nombre} vuelve a salir sin ventas en el Estado de Resultados.\n\nNo toca otros meses, facturas normales, ajustes ni cobros. ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+              e.hechas.forEach(inv=>{
+                const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+                batch.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'maquilaInvoices', docId:String(inv.id), datos:inv, resumen:`Factura histórica ${inv.documento||inv.id} — ${inv.clientName||''}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:Date.now()});
+                batch.delete(getDocRef('maquilaInvoices', inv.id));
+                const ne = (notasEntrega||[]).find(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX' && n.origenDoc===inv.id && n.facturaId===inv.id);
+                if(ne) batch.update(getDocRef('notasEntrega', ne.id), {facturaId:'', updatedAt:Date.now()});
+              });
+              await batch.commit();
+              logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Facturas históricas de ${m.nombre} DESHECHAS: ${e.hechas.length} archivada(s) en la Papelera`);
+              alert(`Listo — se quitaron ${e.hechas.length} factura(s) de ${m.nombre} (quedan en la Papelera).`);
+            } catch(err){ alert('Error al deshacer: '+err.message); }
             finally{ setImportandoHist(false); }
           };
           const exportarNEExcel=()=>{
@@ -44345,11 +44470,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   {!(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX') && (
                     <button onClick={importarNEsHistoricasEneAbr2026} disabled={importandoHist} className="bg-slate-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-slate-800 disabled:opacity-50">
                       <Upload size={14}/> {importandoHist?'Importando...':'Importar histórico Ene-Abr 2026'}
-                    </button>
-                  )}
-                  {(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX') && !(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX'&&n.facturaId) && (
-                    <button onClick={importarFacturasHistoricasEneAbr2026} disabled={importandoHist} className="bg-indigo-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-indigo-800 disabled:opacity-50">
-                      <FileCheck size={14}/> {importandoHist?'Creando...':'Crear Facturas Históricas'}
                     </button>
                   )}
                   {(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX') && !(cobrosCxc||[]).some(c=>c.origenImport==='HIST_ENE_ABR_2026_XLSX') && (
@@ -44382,6 +44502,38 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       {nesOtrasEneAbr.slice(0,10).map(n=>(<div key={n.id}>{n.id} · {n.fecha} · {n.clientName||'—'} · ${formatNum(n.montoBase||n.total||0)} · vend: {n.vendedor||'—'}</div>))}
                       {nesOtrasEneAbr.length>10 && <div>...y {nesOtrasEneAbr.length-10} más</div>}
                     </div>
+                  </div>
+                );
+              })()}
+              {(() => {
+                if (!(notasEntrega||[]).some(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX')) return null;
+                return (
+                  <div data-testid="fact-hist-panel" className="bg-indigo-50 border-2 border-indigo-200 rounded-2xl px-4 py-3 text-xs space-y-2">
+                    <div className="font-black text-indigo-800 uppercase text-[10px] tracking-wide">🧾 Facturas históricas → Estado de Resultados (se activan mes a mes)</div>
+                    {MESES_FACT_HIST.map(m=>{
+                      const e = estadoFactHist(m.ym);
+                      const completo = e.pendientes.length===0 && e.facturadas>0 && e.sinNE.length===0;
+                      return (
+                        <div key={m.ym} data-testid={'fact-hist-'+m.ym} className="flex items-center gap-3 flex-wrap">
+                          <div className="font-bold text-indigo-900 flex-1 min-w-[320px]">
+                            <span className="font-black">{m.nombre}</span> · {e.docs.length} NE ({e.docs.length-e.nDev} venta(s){e.nDev>0?` + ${e.nDev} devolución(es)`:''}) · {e.facturadas} facturada(s) · {e.pendientes.length} por facturar · Ingresos netos ${formatNum(e.ingMes)} · Costo neto ${formatNum(e.cosMes)}
+                            {completo && <span className="text-emerald-700"> · ✅ ya sale en el Estado de Resultados</span>}
+                            {e.sinNE.length>0 && <div className="text-red-600 font-bold">⚠️ {e.sinNE.length} documento(s) del histórico no tienen su NE importada — no se facturan.</div>}
+                            {e.otraFactura.length>0 && <div className="text-amber-700 font-bold">ℹ️ {e.otraFactura.length} NE ya tienen otra factura — no se duplican.</div>}
+                          </div>
+                          {e.pendientes.length>0 && (
+                            <button data-testid={'fact-hist-crear-'+m.ym} onClick={()=>crearFacturasHistoricasMes(m)} disabled={importandoHist} className="bg-indigo-700 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-indigo-800 disabled:opacity-50">
+                              <FileCheck size={14}/> {importandoHist?'Creando...':`Crear facturas de ${m.corto} (${e.pendientes.length})`}
+                            </button>
+                          )}
+                          {e.hechas.length>0 && (
+                            <button data-testid={'fact-hist-deshacer-'+m.ym} onClick={()=>deshacerFacturasHistoricasMes(m)} disabled={importandoHist} className="bg-white border-2 border-indigo-300 text-indigo-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase hover:bg-indigo-100 disabled:opacity-50">
+                              Deshacer {m.corto}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })()}
