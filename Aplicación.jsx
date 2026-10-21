@@ -42029,6 +42029,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 // 5) costo desde finishedGoodsInventory por fgId
                 let costoTotal = parseNum(it.costoTotal||0);
                 let costo = costoTotal>0 ? costoTotal/qty : parseNum(it.costoUnit||0);
+                // Factura histórica importada: el costo unitario del sistema anterior se muestra tal cual cuando explica el costo total (solo difiere por el redondeo del total a centavos; p. ej. 0,12 × 97,81 = 11,7372 → 11,74).
+                if(inv.origenImport && costoTotal>0 && parseNum(it.costoUnit||0)>0 && Math.abs(costoTotal-qty*parseNum(it.costoUnit))<=0.0051) costo = parseNum(it.costoUnit);
                 if(!costo && codigo && codigo!=='—') {
                   const invDocByCodigo=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===codigo);
                   if(invDocByCodigo) costo=parseNum(invDocByCodigo.cost||0);
@@ -44317,7 +44319,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // fiscal original. Se hace por MES y a pedido: así se revisa el Estado de Resultados de un mes antes de pasar al siguiente
           // (Febrero–Abril se agregan a esta lista cuando se confirme el mes anterior). Antes un solo botón creaba los 4 meses juntos y
           // desaparecía en cuanto UNA sola NE tuviera factura, dejando el resto sin poder facturarse.
-          const MESES_FACT_HIST = [{ym:'2026-01', nombre:'Enero 2026', corto:'enero', ajuste:'HIST-ENERO-2026', fin:'31'}];
+          const MESES_FACT_HIST = [{ym:'2026-01', nombre:'Enero 2026', corto:'enero', ajuste:'HIST-ENERO-2026', fin:'31'}, {ym:'2026-02', nombre:'Febrero 2026', corto:'febrero', ajuste:'HIST-FEBRERO-2026', fin:'28'}];
           // Código de producto que cada línea traía en el sistema anterior (reporte «General de Ventas» de enero 2026): solo se usa para MOSTRARLO en el Reporte de Ventas.
           const CODIGOS_ORIGEN_HIST = {
             'F00002747':['SFM-CLR-4520-4'],
@@ -44367,6 +44369,56 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             'D00000018':['0SFA-CLR-5020-16'],
             'D00000019':['BOL-AVES','BOL-GRIS'],
             'D00000020':['BOL-AVES'],
+            // Febrero 2026 (reporte «General de Ventas» del 01/02 al 28/02/2026)
+            'F00002791':['SFM-CLR-4520-4'],
+            'F00002792':['SFM-CLR-4520-4'],
+            'F00002793':['SFM-CLR-4520-4'],
+            'F00002794':['SFM-CLR-4520-4'],
+            'F00002795':['SFM-CLR-1220-MIN'],
+            'F00002796':['SFM-CLR-4520-4'],
+            'F00002797':['BOL-AVES','BOL-GRIS'],
+            'F00002798':['BOL-AVES'],
+            'F00002799':['SFM-CLR-4520-4'],
+            'F00002800':['0SFA-CLR-5020-16','SFM-CLR-4520-4'],
+            'F00002801':['SFM-CLR-4520-4'],
+            'F00002802':['SFM-CLR-4520-4','TCLR-21000-2'],
+            'F00002803':['SFM-CLR-4520-4'],
+            'F00002804':['SFM-CLR-4520-4'],
+            'F00002805':['0SFA-CLR-5020-16'],
+            'F00002806':['0SFA-CLR-5020-16'],
+            'F00002807':['SFM-BLK-4520-2.7'],
+            'F00002808':['0SFA-CLR-5020-16'],
+            'F00002809':['TCLR-2100-2'],
+            'F00002810':['SFM-CLR-4520-4'],
+            'F00002811':['0SFA-CLR-5020-16'],
+            'F00002812':['SFM-CLR-4520-4'],
+            'F00002813':['TCLR-2100-2','T-2110-2-STOP'],
+            'F00002814':['BOL-EMB'],
+            'F00002815':['SFM-CLR-4520-4'],
+            'F00002816':['SFM-BLK-4520-2.7'],
+            'F00002817':['SFM-CLR-4520-4'],
+            'F00002818':['BOL-PÑL'],
+            'F00002819':['TCLR-21000-2'],
+            'F00002820':['BOL-PÑL'],
+            'F00002821':['0SFA-CLR-5020-16'],
+            'F00002822':['SFM-WHT-4520-2.7','T-2110-1.8-FR'],
+            'F00002823':['SFM-SHW-4510-2.7'],
+            'F00002824':['PK-6066-10'],
+            'F00002825':['SFM-CLR-4520-4'],
+            'F00002826':['BOL-EMB'],
+            'F00002827':['0SFA-CLR-5020-16'],
+            'F00002828':['SFM-CLR-4520-4'],
+            'F00002829':['SFA-KG'],
+            'F00002830':['SFM-CLR-4520-4'],
+            'F00002831':['SFM-CLR-4520-4'],
+            'F00002832':['TCLR-2100-2'],
+            'F00002833':['PK-6082-10'],
+            'F00002834':['0SFA-CLR-5020-16','TCLR-2100-2'],
+            'F00002835':['SFM-CLR-4520-4'],
+            'F00002836':['SFM-CLR-4520-4'],
+            'F00002837':['0SFA-WHT-7525-29'],
+            'F00002838':['SFM-CLR-4520-4'],
+            'F00002839':['TCLR-2100-2'],
           };
           // Redondeo a centavos «mitad hacia arriba», como el sistema anterior: 1,5 × 77,67 = 116,505 → 116,51 (toFixed daría 116,50).
           const redond2Hist = (x) => { const sg = x<0 ? -1 : 1; return sg*Math.round((Math.abs(x)+1e-9)*100)/100; };
@@ -44401,6 +44453,89 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const a = (ajustesApp||[]).find(x=>(x.nroComprobante||'').trim().toUpperCase()===nro);
             return a ? (a.lineas||[]).filter(l=>/^4/.test(String(l.codigo||'')) || String(l.codigo||'')==='5.1.01.01.001').length : 0;
           };
+          // Retenciones o NC/ND que YA están registradas con el número de una de estas facturas (p. ej. F00002791). Mientras la factura no existe, Cuentas por Cobrar las ignora; al crearla pasan a aplicarse
+          // a su NE y cambian el saldo del cliente. Se usan las mismas claves que Cuentas por Cobrar (retención: nroFactura / nroControl / facturaId · nota: neId / neOrigen / facturaId). Solo informa: no modifica nada.
+          const efectoCxCFactHist = (pend) => {
+            const docs = new Set(pend.map(x=>x.f.doc));
+            const rets = (retenciones||[]).filter(r=>!String(r.facturaId||'').startsWith('MANUAL-')).map(r=>({r, doc:[r.nroFactura,r.nroControl,r.facturaId].find(k=>k && docs.has(k))})).filter(x=>x.doc);
+            const notas = (notasVentaCD||[]).map(n=>({n, doc:[n.neId,n.neOrigen,n.facturaId].find(k=>k && docs.has(k))})).filter(x=>x.doc);
+            return {rets, notas, n:rets.length+notas.length};
+          };
+          const detalleEfectoCxC = (ef) => {
+            const l = [
+              ...ef.rets.map(x=>`• Retención ${x.r.nroRetencion||x.r.nroComprobante||x.r.id} · factura ${x.doc} · Bs ${formatNum(x.r.montoRetenido||0)}`),
+              ...ef.notas.map(x=>`• ${x.n.tipo||'Nota'} ${x.n.nroDocumento||x.n.id} · factura ${x.doc}`),
+            ];
+            return l.slice(0,10).join('\n') + (l.length>10 ? `\n• …y ${l.length-10} más` : '');
+          };
+          // Otras NE del mes que NO vienen de la importación (creadas en el sistema, normalmente con IVA): explican por qué la lista de NE de ese mes suma más que el reporte antiguo.
+          const otrasNEMesHist = (ym) => {
+            const r2h = (n)=>Math.round((n+(n<0?-1e-9:1e-9))*100)/100;
+            const delMes = (notasEntrega||[]).filter(n=>(n.fecha||'').startsWith(ym));
+            const imp = delMes.filter(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX');
+            const otras = delMes.filter(n=>n.origenImport!=='HIST_ENE_ABR_2026_XLSX').sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+            const vivas = (arr)=>arr.filter(n=>n.status!=='ANULADA');
+            const suma = (arr,k)=>r2h(arr.reduce((sm,n)=>sm+parseNum(n[k]||0),0));
+            return {total:delMes.length, nImp:imp.length, otras, base:suma(vivas(delMes),'montoBase'), iva:suma(vivas(delMes),'ivaAmt'), baseImp:suma(vivas(imp),'montoBase'), baseOtras:suma(vivas(otras),'montoBase'), ivaOtras:suma(vivas(otras),'ivaAmt')};
+          };
+          // Notas de débito del reporte «General de Ventas» del sistema anterior que no son una NE: salen como una línea más de ventas (Febrero 2026: ND00000064 «Diferencial Cambiario»).
+          // Se registran como UN comprobante manual por mes (id HIST-ND-<mes>, con su propio botón y reversible): el ingreso va a la misma cuenta que las facturas históricas y se cierra
+          // contra utilidad acumulada, como los demás ajustes históricos. No toca Cuentas por Cobrar, IVA ni Bancos.
+          const HIST_ND_ENE_ABR_2026 = [{doc:'ND00000064', fecha:'2026-02-24', clientName:'VIDRIOS DOMESTICOS MAV C.C.S', tasa:407.3786, montoBase:76.16, concepto:'Diferencial Cambiario'}];
+          const idAjusteNDHist = (ym) => `HIST-ND-${ym}`;
+          const estadoNDHist = (ym) => {
+            const nds = HIST_ND_ENE_ABR_2026.filter(n=>(n.fecha||'').startsWith(ym));
+            const aj = (ajustesApp||[]).find(a=>a.id===idAjusteNDHist(ym)) || null;
+            const digitos = (t) => String(t||'').replace(/\D/g,'').replace(/^0+/,'');
+            const yaNota = nds.filter(n=>(notasVentaCD||[]).some(x=>x.tipo==='ND' && digitos(x.nroDocumento)!=='' && digitos(x.nroDocumento)===digitos(n.doc)));
+            return {nds, aj, yaNota, base:Math.round(nds.reduce((sm,n)=>sm+n.montoBase,0)*100)/100};
+          };
+          const registrarNDHistoricasMes = async (m) => {
+            if(importandoHist) return;
+            const s0 = estadoNDHist(m.ym);
+            if(s0.nds.length===0) return;
+            if(s0.aj){ alert(`Las notas de débito de ${m.nombre} ya están registradas — no se crean de nuevo.`); return; }
+            if(s0.yaNota.length>0){ alert(`${s0.yaNota.map(n=>n.doc).join(', ')} ya está registrada como nota de débito en Ventas → NC/ND. No se crea de nuevo para no contar el ingreso dos veces.`); return; }
+            const r2n = (n)=>Math.round((n+(n<0?-1e-9:1e-9))*100)/100;
+            const cfgIng = cuentasIngresoCfg?.sinOpNombre || '4.1.01.02.001 — Ingresos por Ventas (Sin OP)';
+            const [codIng,...restIng] = cfgIng.split('—');
+            const nomIng = restIng.join('—').trim() || 'Ingresos por Ventas (Sin OP)';
+            const lineas = s0.nds.map(n=>({codigo:codIng.trim(), cuenta:nomIng, tipo:'H', montoUSD:n.montoBase, montoBs:r2n(n.montoBase*n.tasa), detalle:`${n.doc} · ${n.concepto} · ${n.clientName}`}));
+            const totUSD = r2n(lineas.reduce((sm,l)=>sm+l.montoUSD,0)), totBs = r2n(lineas.reduce((sm,l)=>sm+l.montoBs,0));
+            lineas.push({codigo:'3.3.01.01.002', cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA', tipo:'D', montoUSD:totUSD, montoBs:totBs, detalle:`Cierre del ingreso de ${s0.nds.map(n=>n.doc).join(' + ')} contra utilidad acumulada (como los demás ajustes históricos)`});
+            const nro = `HIST-ND-${m.corto.toUpperCase()}-2026`;
+            const totVentas = r2n(estadoFactHist(m.ym).ingMes + s0.base);
+            if(!window.confirm(`Se va a registrar ${s0.nds.map(n=>`${n.doc} (${n.concepto} · ${n.clientName} · $${formatNum(n.montoBase)})`).join(' y ')} de tu reporte antiguo de ${m.nombre} como el comprobante manual «${nro}»: ingreso en «${codIng.trim()} — ${nomIng}» por $${formatNum(totUSD)} (Bs ${formatNum(totBs)}), cerrado contra (UTILIDAD) PÉRDIDA ACUMULADA, igual que los demás ajustes históricos.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos +$${formatNum(totUSD)} (con las facturas suman $${formatNum(totVentas)}, el total de tu reporte antiguo).\n\nNo toca Cuentas por Cobrar, IVA, Bancos ni las facturas. ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const fechaAj = s0.nds.map(n=>n.fecha).sort().slice(-1)[0];
+              const batch = writeBatch(db);
+              const id = idAjusteNDHist(m.ym);
+              batch.set(getDocRef('comprobantes_ajustes', id), {id, fecha:fechaAj, nroComprobante:nro, concepto:`${m.nombre} — ${s0.nds.map(n=>`${n.doc} ${n.concepto} (${n.clientName})`).join(' · ')} — nota(s) de débito del reporte General de Ventas del sistema anterior`, tasa:s0.nds[0].tasa, lineas, createdAt:Date.now(), user:'Importación Histórica (Excel)', origen:'historico_nd'});
+              await batch.commit();
+              logAuditoria(appUser,'Ventas','CREACIÓN',`ND históricas de ${m.nombre} registradas como ingreso (${nro}): $${formatNum(totUSD)}`);
+              alert(`Listo — se registró «${nro}» con ${s0.nds.map(n=>n.doc).join(' + ')} ($${formatNum(totUSD)}). Las ventas de ${m.nombre} en el Estado de Resultados suman $${formatNum(totVentas)} cuando también estén creadas las facturas del mes.`);
+            } catch(err){ alert('Error al registrar la ND: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
+          const quitarNDHistoricasMes = async (m) => {
+            if(importandoHist) return;
+            const s0 = estadoNDHist(m.ym);
+            if(!s0.aj){ alert(`No hay notas de débito históricas de ${m.nombre} para quitar.`); return; }
+            if(!window.confirm(`Se va a quitar el comprobante «${s0.aj.nroComprobante||s0.aj.id}» (ND histórica de ${m.nombre}). Se archiva en la Papelera (recuperable); ${m.nombre} vuelve a salir sin ese ingreso.\n\nNo toca facturas, otros ajustes ni cobros. ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+              const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+              batch.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'comprobantes_ajustes', docId:String(s0.aj.id), datos:s0.aj, resumen:`Ajuste — ${s0.aj.concepto||s0.aj.id}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:Date.now()});
+              batch.delete(getDocRef('comprobantes_ajustes', s0.aj.id));
+              await batch.commit();
+              logAuditoria(appUser,'Ventas','ELIMINACIÓN',`ND históricas de ${m.nombre} quitadas (${s0.aj.nroComprobante||s0.aj.id}) — archivadas en la Papelera`);
+              alert(`Listo — se quitó «${s0.aj.nroComprobante||s0.aj.id}» (queda en la Papelera).`);
+            } catch(err){ alert('Error al quitar la ND: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
           const crearFacturasHistoricasMes = async (m) => {
             if(importandoHist) return;
             const e = estadoFactHist(m.ym);
@@ -44413,7 +44548,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             if(faltan.length && !window.confirm(`Falta configurar en Contabilidad → Configuración de cuentas: ${faltan.join(' y ')}. Sin eso el costo de venta de ${m.corto} saldría como "⚠️ Sin configurar".\n\n¿Crear las facturas de todos modos?`)) return;
             const nDev = e.pendientes.filter(x=>x.f.montoBase<0).length, nVta = e.pendientes.length - nDev;
             const primero = e.pendientes[0].f.doc, ultimo = e.pendientes[e.pendientes.length-1].f.doc;
-            if(!window.confirm(`Se van a crear ${e.pendientes.length} factura(s) de ${m.nombre} (${nVta} venta(s)${nDev?` y ${nDev} devolución(es)`:''}), con su número fiscal original (${primero} … ${ultimo}), vinculadas a sus Notas de Entrega históricas.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos netos $${formatNum(e.ingPend)} · Costo de venta neto $${formatNum(e.cosPend)}.\n\nNo se tocan otros meses, los ajustes contables ni los cobros. ¿Continuar?`)) return;
+            const efCxC = efectoCxCFactHist(e.pendientes);
+            if(!window.confirm(`Se van a crear ${e.pendientes.length} factura(s) de ${m.nombre} (${nVta} venta(s)${nDev?` y ${nDev} devolución(es)`:''}), con su número fiscal original (${primero} … ${ultimo}), vinculadas a sus Notas de Entrega históricas.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos netos $${formatNum(e.ingPend)} · Costo de venta neto $${formatNum(e.cosPend)}.\n\n${efCxC.n===0 ? 'Cuentas por Cobrar: los saldos en USD no cambian (no hay retenciones ni NC/ND registradas con el número de estas facturas).' : `⚠️ CUENTAS POR COBRAR SÍ CAMBIARÍA: hay ${efCxC.rets.length} retención(es) y ${efCxC.notas.length} NC/ND registradas con el número de estas facturas. Hoy Cuentas por Cobrar las ignora; al crear las facturas se aplicarían a su NE y moverían el saldo del cliente:\n${detalleEfectoCxC(efCxC)}\n\nSi tu Cuentas por Cobrar ya está cuadrada, cancela y revisa esos registros primero.`}\n\nNo se tocan otros meses, los ajustes contables ni los cobros. ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const batch = writeBatch(db);
@@ -44513,11 +44649,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 return (
                   <div data-testid="fact-hist-panel" className="bg-indigo-50 border-2 border-indigo-200 rounded-2xl px-4 py-3 text-xs space-y-2">
                     <div className="font-black text-indigo-800 uppercase text-[10px] tracking-wide">🧾 Facturas históricas → Estado de Resultados (se activan mes a mes)</div>
+                    <div className="text-[10px] font-semibold text-indigo-700">Se crean sin IVA (solo la base, igual que tu reporte antiguo): no mueven el IVA.</div>
                     {MESES_FACT_HIST.map(m=>{
                       const e = estadoFactHist(m.ym);
                       const completo = e.pendientes.length===0 && e.facturadas>0 && e.sinNE.length===0;
+                      const nd = estadoNDHist(m.ym);
+                      const ot = otrasNEMesHist(m.ym);
                       return (
-                        <div key={m.ym} data-testid={'fact-hist-'+m.ym} className="flex items-center gap-3 flex-wrap">
+                        <div key={m.ym} className="space-y-1">
+                        <div data-testid={'fact-hist-'+m.ym} className="flex items-center gap-3 flex-wrap">
                           <div className="font-bold text-indigo-900 flex-1 min-w-[320px]">
                             <span className="font-black">{m.nombre}</span> · {e.docs.length} NE ({e.docs.length-e.nDev} venta(s){e.nDev>0?` + ${e.nDev} devolución(es)`:''}) · {e.facturadas} facturada(s) · {e.pendientes.length} por facturar · Ingresos netos ${formatNum(e.ingMes)} · Costo neto ${formatNum(e.cosMes)}
                             {completo && <span className="text-emerald-700"> · ✅ ya sale en el Estado de Resultados</span>}
@@ -44534,6 +44674,47 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               Deshacer {m.corto}
                             </button>
                           )}
+                        </div>
+                        {e.pendientes.length>0 && (() => {
+                          const ef = efectoCxCFactHist(e.pendientes);
+                          return ef.n===0 ? (
+                            <div data-testid={'fact-hist-cxc-'+m.ym} className="pl-3 border-l-4 border-emerald-300 text-[10px] font-semibold text-emerald-800">
+                              ✅ Cuentas por Cobrar: los saldos en USD no cambian al crear estas facturas (no hay retenciones ni NC/ND registradas con su número). En el Estado de Cuenta estas NE pasan de «CxC sin factura» a «CxC fiscal».
+                            </div>
+                          ) : (
+                            <div data-testid={'fact-hist-cxc-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700">
+                              ⚠️ Cuentas por Cobrar sí cambiaría: hay {ef.rets.length} retención(es) y {ef.notas.length} NC/ND registradas con el número de estas facturas. Hoy Cuentas por Cobrar las ignora; al crear las facturas se aplicarían a su NE y moverían el saldo del cliente. El detalle sale al pulsar «Crear».
+                            </div>
+                          );
+                        })()}
+                        {nd.nds.length>0 && (
+                          <div data-testid={'fact-hist-nd-'+m.ym} className="flex items-center gap-3 flex-wrap pl-3 border-l-4 border-indigo-300">
+                            <div className="font-semibold text-indigo-900 flex-1 min-w-[320px]">
+                              + Nota(s) de débito de tu reporte antiguo (no son NE): {nd.nds.map(n=>`${n.doc} · ${n.concepto} · ${n.clientName} · $${formatNum(n.montoBase)}`).join(' | ')}. Con ella(s), las ventas de {m.corto} de tu reporte antiguo suman <span className="font-black">${formatNum(Math.round((e.ingMes+nd.base)*100)/100)}</span> (facturas ${formatNum(e.ingMes)} + ND ${formatNum(nd.base)}).
+                              {nd.aj ? <span className="text-emerald-700 font-bold"> · ✅ registrada como ingreso (comprobante {nd.aj.nroComprobante})</span> : <span className="text-amber-700 font-bold"> · por registrar</span>}
+                              {!nd.aj && nd.yaNota.length>0 && <div className="text-amber-700 font-bold">ℹ️ {nd.yaNota.map(n=>n.doc).join(', ')} ya está registrada como nota de débito en Ventas → NC/ND — no se crea de nuevo.</div>}
+                            </div>
+                            {!nd.aj && nd.yaNota.length===0 && (
+                              <button data-testid={'fact-hist-nd-registrar-'+m.ym} onClick={()=>registrarNDHistoricasMes(m)} disabled={importandoHist} className="bg-indigo-700 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-indigo-800 disabled:opacity-50">
+                                <FileCheck size={14}/> {importandoHist?'Registrando...':`Registrar ${nd.nds.map(n=>n.doc).join(' + ')} ($${formatNum(nd.base)})`}
+                              </button>
+                            )}
+                            {nd.aj && (
+                              <button data-testid={'fact-hist-nd-quitar-'+m.ym} onClick={()=>quitarNDHistoricasMes(m)} disabled={importandoHist} className="bg-white border-2 border-indigo-300 text-indigo-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase hover:bg-indigo-100 disabled:opacity-50">
+                                Quitar ND
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {ot.otras.length>0 && (
+                          <div data-testid={'fact-hist-otras-'+m.ym} className="pl-3 border-l-4 border-amber-300 text-[10px] font-semibold text-slate-700">
+                            ℹ️ En el sistema hay <span className="font-black">{ot.total} NE · ${formatNum(ot.base)}</span> (+IVA ${formatNum(ot.iva)}) con fecha de {m.corto} — es lo que suma la lista de abajo al filtrar {m.corto}: {ot.nImp} son tu importación (${formatNum(ot.baseImp)}, sin IVA) y <span className="font-black">{ot.otras.length}</span> {ot.otras.length===1?'es una NE creada':'son NE creadas'} en el sistema que NO {ot.otras.length===1?'está':'están'} en tu reporte antiguo (${formatNum(ot.baseOtras)} + IVA ${formatNum(ot.ivaOtras)}). {ot.otras.length===1?'Esa NE no es parte':`Esas ${ot.otras.length} NE no son parte`} de los ${formatNum(e.ingMes)} del reporte antiguo:
+                            <div className="font-normal text-slate-600 max-h-24 overflow-y-auto">
+                              {ot.otras.slice(0,12).map(n=>(<div key={n.id}>{n.id} · {n.fecha} · {n.clientName||'—'} · ${formatNum(n.montoBase||n.total||0)}{parseNum(n.ivaAmt||0)>0?` + IVA $${formatNum(n.ivaAmt)}`:''} · {n.status==='ANULADA'?'ANULADA':(n.facturaId?`factura ${n.facturaId}`:'sin factura')}</div>))}
+                              {ot.otras.length>12 && <div>...y {ot.otras.length-12} más</div>}
+                            </div>
+                          </div>
+                        )}
                         </div>
                       );
                     })}
