@@ -11940,6 +11940,8 @@ const _cuentaRelVigente = (cod, nom, planCuentas) => {
   return {cod, nom};
 };
 const _esAnclaSaldos = (a) => String(a?.nroComprobante||'').trim().toUpperCase()==='SALDOS AGOSTO-2026';
+// Facturas históricas importadas (Ventas → NE → «Facturas históricas»): su asiento de venta y el de costo cuentan aunque estén antes de «Inicio de Contabilidad Real» (reemplazan al ajuste manual de ventas de los meses históricos).
+const _esFacturaHistImport = (f) => String(f?.origenImport||'').startsWith('HIST_');
 const _resolverMovRelacionada = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
   const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId) && (!(Math.abs(Number(p.monto||0))>0) || Math.abs(Math.abs(Number(m.montoUSD||0))-Math.abs(Number(p.monto||0)))<0.01);
@@ -29647,7 +29649,7 @@ function App() {
           nesRef.length ? `NE: ${nesRef.join(', ')}` : '',
           opsRef.length ? `OP: ${opsRef.join(', ')}` : '',
         ].filter(Boolean).join(' · ');
-        out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas,'ventas',f.id)});
+        out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Ventas', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${refExtra?' · '+refExtra:''}`, lineas:mapLineas(asiento.lineas,'ventas',f.id), _hist:_esFacturaHistImport(f)});
       }catch(e){}
     });
     // 2b) Notas de Crédito/Débito de Ventas FISCALES (naturaleza==='FISCAL'), sin contar las que
@@ -29840,7 +29842,7 @@ function App() {
       if (reclasificacionesApp[`EXCL__costos_produccion__${f.id}`]) return;
       const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea, simulacionCostos, notasEntrega});
       if(!r) return;
-      out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas});
+      out.push({fecha:f.fechaFactura||f.fecha||'', comprobante:f.nroFiscal||f.documento||f.id, modulo:'Producción', concepto:`Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?'':' · Sin OP'}`, lineas:r.lineas, _hist:_esFacturaHistImport(f)});
     });
     // 9b) Consumos Internos / Muestras Clientes — Autoconsumo, Avería (combinados), Muestra y
     // Pérdida/Merma, desde Control de Inventario. Misma tasa manual editable que en 9a.
@@ -29940,7 +29942,8 @@ function App() {
     // iniciales (ej. "Saldos Junio"), que nunca se filtra. Sin fecha configurada, no cambia nada.
     const fechaInicioCont = settings?.fechaInicioContabilidad || '';
     if (!fechaInicioCont) return out;
-    return out.filter(a => a.modulo==='Ajustes' || (a.fecha||'') >= fechaInicioCont);
+    // Excepción: las facturas históricas importadas (venta y costo) no se descartan — son las que reemplazan al ajuste manual de ventas de los meses históricos.
+    return out.filter(a => a.modulo==='Ajustes' || a._hist || (a.fecha||'') >= fechaInicioCont);
   };
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
@@ -62122,7 +62125,7 @@ ${resumen}
                   <input type="date" className="flex-1 border-2 border-amber-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none bg-white" value={fechaInicioContForm} onChange={e=>setFechaInicioContForm(e.target.value)}/>
                   <button onClick={guardarFechaInicioContabilidad} title="Guardar" className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[9px] font-black">✓</button>
                 </div>
-                <p className="text-[8px] text-amber-700 leading-tight">Ignora en TODOS los reportes de Contabilidad los movimientos de Procura/Ventas/Banco/Caja/Nómina/etc. anteriores a esta fecha. Los Ajustes manuales (ej. "Saldos Junio") nunca se ignoran.{settings?.fechaInicioContabilidad?` Activo: ${contDd(settings.fechaInicioContabilidad)}.`:''}</p>
+                <p className="text-[8px] text-amber-700 leading-tight">Ignora en TODOS los reportes de Contabilidad los movimientos de Procura/Ventas/Banco/Caja/Nómina/etc. anteriores a esta fecha. Los Ajustes manuales (ej. "Saldos Junio") nunca se ignoran, ni tampoco las facturas históricas importadas (Ventas → NE).{settings?.fechaInicioContabilidad?` Activo: ${contDd(settings.fechaInicioContabilidad)}.`:''}</p>
               </div>
               <div className="max-h-[55vh] overflow-y-auto space-y-0.5">
                 {treeMayor.length===0 && <p className="text-[10px] text-gray-400 text-center py-4">Sin cuentas con movimiento en el rango elegido.</p>}
