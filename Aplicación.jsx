@@ -27723,6 +27723,9 @@ ${valoresHtml}
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               <FileText size={36} className="mx-auto mb-2 opacity-40"/>
               <p className="text-xs font-black uppercase">Sin facturas ni notas para este período</p>
+              {(filtDesde||'')<='2026-04-30' && (
+                <p data-testid="cc-ventas-vacio-hist" className="text-[10px] font-semibold text-gray-500 mt-2 max-w-xl mx-auto leading-snug">Si esperabas las ventas históricas de enero a abril 2026 (vienen de las Notas de Entrega importadas): primero hay que crear sus facturas en Ventas → Notas de Entrega → «Facturas históricas» → «Crear facturas de …». Hasta entonces no hay ventas de esos meses en Contabilidad.</p>
+              )}
             </div>
           ):(
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -29881,6 +29884,8 @@ function App() {
       const ymAdd = (ym,n)=>{ const [y,m]=ym.split('-').map(Number); const t=(y*12+(m-1))+n; return `${String(Math.floor(t/12)).padStart(4,'0')}-${String((t%12)+1).padStart(2,'0')}`; };
       const ymDiff = (a,b)=>{ const [ya,ma]=a.split('-').map(Number); const [yb,mb]=b.split('-').map(Number); return (yb*12+mb)-(ya*12+ma); };
       const hoyYM = getTodayDate().substring(0,7);
+      // «Inicio de Contabilidad Real» (settings.fechaInicioContabilidad): ver el filtro final de esta función.
+      const fechaCorteDep = settings?.fechaInicioContabilidad || '';
       // Misma tasa única "del día" que usa la pestaña Depreciaciones (settings/general.tasaDeprecUltima,
       // ver tasaDeprec en ComprobantesContablesApp) — antes cada activo usaba su propia tasaCambio,
       // así que el mismo mes podía salir con montos en Bs. distintos entre Comprobantes Contables y
@@ -29907,10 +29912,21 @@ function App() {
           if(r){
             const [yy,mm]=cur.split('-');
             const ultimoDia=new Date(Number(yy),Number(mm),0).getDate();
-            out.push({
-              fecha:`${cur}-${String(ultimoDia).padStart(2,'0')}`, comprobante:compId, modulo:'Depreciación',
+            const fechaDep=`${cur}-${String(ultimoDia).padStart(2,'0')}`;
+            // La depreciación sale de Activos Fijos (no es un movimiento operativo que ya esté resumido en un saldo inicial): con «Inicio de Contabilidad Real» activo, los meses anteriores al corte
+            // salían en Comprobantes Contables → Depreciaciones pero se descartaban en TODOS los reportes. Ahora cuentan (_exentoCorte) — salvo que ese mismo mes ya tenga un Ajuste manual que cargue
+            // gasto de depreciación (mismas cuentas del asiento o cualquier 5.2.08 / 6.2.08): entonces no se agrega, para no duplicarla. El saldo inicial «SALDOS AGOSTO-2026» no se mira.
+            const antesDelCorte = !!fechaCorteDep && fechaDep < fechaCorteDep;
+            let yaManual = false;
+            if(antesDelCorte){
+              const codsGasto = new Set((r.lineas||[]).filter(l=>Number(l.debeUSD||0)>0.005 || Number(l.debeBs||0)>0.005).map(l=>String(l.codigo||'')).filter(Boolean));
+              yaManual = out.some(a=>a.modulo==='Ajustes' && !_esAnclaSaldos({nroComprobante:a.comprobante}) && String(a.fecha||'').substring(0,7)===cur
+                && (a.lineas||[]).some(l=>(Number(l.debeUSD||0)>0.005 || Number(l.debeBs||0)>0.005) && (/^[56]\.2\.08\./.test(String(l.codigo||'')) || codsGasto.has(String(l.codigo||'')))));
+            }
+            if(!yaManual) out.push({
+              fecha:fechaDep, comprobante:compId, modulo:'Depreciación',
               concepto:`Depreciación mensual — ${r.nActivos} activo(s) · $${r.totalUSD.toFixed(2)}`,
-              lineas:r.lineas,
+              lineas:r.lineas, _exentoCorte:antesDelCorte,
             });
           }
           n++; cur=ymAdd(cur,1);
@@ -29942,8 +29958,8 @@ function App() {
     // iniciales (ej. "Saldos Junio"), que nunca se filtra. Sin fecha configurada, no cambia nada.
     const fechaInicioCont = settings?.fechaInicioContabilidad || '';
     if (!fechaInicioCont) return out;
-    // Excepción: las facturas históricas importadas (venta y costo) no se descartan — son las que reemplazan al ajuste manual de ventas de los meses históricos.
-    return out.filter(a => a.modulo==='Ajustes' || a._hist || (a.fecha||'') >= fechaInicioCont);
+    // Excepciones: las facturas históricas importadas (venta y costo) no se descartan — son las que reemplazan al ajuste manual de ventas de los meses históricos — ni la depreciación de Activos Fijos (_exentoCorte).
+    return out.filter(a => a.modulo==='Ajustes' || a._hist || a._exentoCorte || (a.fecha||'') >= fechaInicioCont);
   };
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
@@ -29996,7 +30012,7 @@ function App() {
   const guardarFechaInicioContabilidad = async () => {
     try{
       await setDoc(getDocRef('settings','general'),{fechaInicioContabilidad:fechaInicioContForm||''},{merge:true});
-      setDialog({title:'✅ Guardado',text:fechaInicioContForm?`Desde ahora, todos los reportes de Contabilidad ignoran movimientos operativos (Procura, Ventas, Banco, Caja, etc.) anteriores al ${contDd(fechaInicioContForm)}. Los Ajustes manuales nunca se ignoran.`:'Fecha de inicio quitada — los reportes vuelven a incluir todo el historial.',type:'alert'});
+      setDialog({title:'✅ Guardado',text:fechaInicioContForm?`Desde ahora, todos los reportes de Contabilidad ignoran movimientos operativos (Procura, Ventas, Banco, Caja, etc.) anteriores al ${contDd(fechaInicioContForm)}. Los Ajustes manuales, las facturas históricas importadas y la depreciación de Activos Fijos nunca se ignoran.`:'Fecha de inicio quitada — los reportes vuelven a incluir todo el historial.',type:'alert'});
     }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
   };
   const [finanzasPDFs, setFinanzasPDFs] = useState({});
@@ -44317,10 +44333,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Facturas históricas, MES A MES (Ene–Abr 2026) ──────────────────────────────────────────────────────────────
           // Cada documento del histórico (F… venta · D… devolución) tiene su NE importada (origenDoc) y se factura 1 a 1 con su número
           // fiscal original. Se hace por MES y a pedido: así se revisa el Estado de Resultados de un mes antes de pasar al siguiente
-          // (Febrero–Abril se agregan a esta lista cuando se confirme el mes anterior). Antes un solo botón creaba los 4 meses juntos y
+          // (Abril se agrega a esta lista cuando se confirme el mes anterior). Antes un solo botón creaba los 4 meses juntos y
           // desaparecía en cuanto UNA sola NE tuviera factura, dejando el resto sin poder facturarse.
-          const MESES_FACT_HIST = [{ym:'2026-01', nombre:'Enero 2026', corto:'enero', ajuste:'HIST-ENERO-2026', fin:'31'}, {ym:'2026-02', nombre:'Febrero 2026', corto:'febrero', ajuste:'HIST-FEBRERO-2026', fin:'28'}];
-          // Código de producto que cada línea traía en el sistema anterior (reporte «General de Ventas» de enero 2026): solo se usa para MOSTRARLO en el Reporte de Ventas.
+          const MESES_FACT_HIST = [{ym:'2026-01', nombre:'Enero 2026', corto:'enero', ajuste:'HIST-ENERO-2026', fin:'31'}, {ym:'2026-02', nombre:'Febrero 2026', corto:'febrero', ajuste:'HIST-FEBRERO-2026', fin:'28'}, {ym:'2026-03', nombre:'Marzo 2026', corto:'marzo', ajuste:'HIST-MARZO-2026', fin:'31'}];
+          // Código de producto que cada línea traía en el sistema anterior (reportes «General de Ventas» de enero, febrero y marzo 2026): solo se usa para MOSTRARLO en el Reporte de Ventas.
           const CODIGOS_ORIGEN_HIST = {
             'F00002747':['SFM-CLR-4520-4'],
             'F00002748':['SFM-CLR-4520-4'],
@@ -44419,6 +44435,73 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             'F00002837':['0SFA-WHT-7525-29'],
             'F00002838':['SFM-CLR-4520-4'],
             'F00002839':['TCLR-2100-2'],
+            'F00002840':['SP-2110-1.8BLU'],
+            'F00002841':['0SFA-CLR-5020-16'],
+            'F00002842':['SFM-CLR-4520-4'],
+            'F00002843':['PK-6082-10'],
+            'F00002844':['SFM-CLR-4520-4'],
+            'F00002845':['TCLR-21000-2'],
+            'F00002847':['0SFA-CLR-5020-16'],
+            'F00002848':['SFM-CLR-4520-4'],
+            'F00002849':['SFM-CLR-4520-4'],
+            'F00002850':['SFM-CLR-4520-4'],
+            'F00002851':['BOL-GRIS'],
+            'F00002852':['SFM-CLR-4520-4'],
+            'F00002853':['T-2110-1.8-FR','SFM-BLU-4520-2.7'],
+            'F00002854':['PK-6066-10'],
+            'F00002855':['TRED-2100-2'],
+            'F00002856':['SFM-KG'],
+            'F00002857':['SFM-CLR-4520-4'],
+            'F00002858':['PK-6050-10'],
+            'F00002859':['PK-6066-10'],
+            'F00002860':['SFM-CLR-4520-4','TCLR-2100-2'],
+            'F00002861':['TRED-2100-2','SP-2110-1.8GRN','TORG-2100-2','SP-2110-1.8BLU','SP-2110-1.8YLW'],
+            'F00002862':['0SFA-CLR-5020-16'],
+            'F00002863':['0SFA-CLR-5020-16'],
+            'F00002864':['SFM-BLK-4520-2.7'],
+            'F00002866':['SFM-CLR-4520-4'],
+            'F00002867':['PK-6066-10'],
+            'F00002868':['PK-6066-10'],
+            'F00002869':['SFM-CLR-4520-4'],
+            'F00002870':['SFM-CLR-4520-4'],
+            'F00002871':['SFM-CLR-4520-4'],
+            'F00002872':['SFM-CLR-4520-4'],
+            'F00002873':['SFM-CLR-4520-4'],
+            'F00002874':['PK-6050-10'],
+            'F00002875':['SFM-CLR-4520-4'],
+            'F00002876':['SFM-CLR-4520-4','DISPENSER-SF'],
+            'F00002877':['SFM-CLR-4520-4'],
+            'F00002878':['SFM-CLR-4520-4'],
+            'F00002879':['SFM-CLR-4520-4'],
+            'F00002880':['PK-6066-10'],
+            'F00002881':['SFM-GRN-4520-2.7','SFM-WHT-4520-2.7','SP-2110-1.8GRN','TRED-2100-2','SP-2110-1.8BLU','TWHT-2100-2','SFM-BLK-4520-2.7'],
+            'F00002882':['0SFA-CLR-5020-16'],
+            'F00002883':['SFM-CLR-4520-4','SFM-BLK-4520-2.7'],
+            'F00002884':['SFM-CLR-4520-4'],
+            'F00002885':['PK-6082-10'],
+            'F00002886':['SFM-CLR-4520-4'],
+            'F00002888':['SFM-RED-4520-2.7'],
+            'F00002889':['0SFA-CLR-5020-16'],
+            'F00002890':['SFM-CLR-4520-4'],
+            'F00002891':['BOL-EMB'],
+            'F00002893':['PK-6066-10','PK-6066-10'],
+            'F00002894':['0SFA-CLR-5020-16'],
+            'F00002895':['SFM-CLR-4520-4'],
+            'F00002896':['TCLR-21000-2'],
+            'F00002897':['SFM-CLR-4520-4','TCLR-2100-2'],
+            'F00002898':['SFM-CLR-4520-4'],
+            'F00002899':['SFM-CLR-4520-4'],
+            'F00002900':['BOL-PÑL','BOL-EMB'],
+            'F00002901':['0SFA-CLR-5020-16'],
+            'F00002902':['SFM-CLR-4520-4'],
+            'F00002903':['SFM-BLK-4520-2.7'],
+            'F00002904':['SFM-CLR-4520-4'],
+            'F00002905':['PK-6050-5'],
+            'F00002906':['SFM-CLR-4520-4','TCLR-2100-2','T-2110-1.8-FR'],
+            'F00002907':['BOL-EMB'],
+            'F00002908':['SFM-CLR-4520-4'],
+            'F00002909':['SFM-CLR-4520-4','TCLR-2100-2'],
+            'F00002910':['0SFA-CLR-5020-16'],
           };
           // Redondeo a centavos «mitad hacia arriba», como el sistema anterior: 1,5 × 77,67 = 116,505 → 116,51 (toFixed daría 116,50).
           const redond2Hist = (x) => { const sg = x<0 ? -1 : 1; return sg*Math.round((Math.abs(x)+1e-9)*100)/100; };
@@ -44478,7 +44561,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const suma = (arr,k)=>r2h(arr.reduce((sm,n)=>sm+parseNum(n[k]||0),0));
             return {total:delMes.length, nImp:imp.length, otras, base:suma(vivas(delMes),'montoBase'), iva:suma(vivas(delMes),'ivaAmt'), baseImp:suma(vivas(imp),'montoBase'), baseOtras:suma(vivas(otras),'montoBase'), ivaOtras:suma(vivas(otras),'ivaAmt')};
           };
-          // Notas de débito del reporte «General de Ventas» del sistema anterior que no son una NE: salen como una línea más de ventas (Febrero 2026: ND00000064 «Diferencial Cambiario»).
+          // Notas de débito del reporte «General de Ventas» del sistema anterior que no son una NE: salen como una línea más de ventas (Febrero 2026: ND00000064 «Diferencial Cambiario»; la ND00000065 de marzo viene en cero y no se registra).
           // Se registran como UN comprobante manual por mes (id HIST-ND-<mes>, con su propio botón y reversible): el ingreso va a la misma cuenta que las facturas históricas y se cierra
           // contra utilidad acumulada, como los demás ajustes históricos. No toca Cuentas por Cobrar, IVA ni Bancos.
           const HIST_ND_ENE_ABR_2026 = [{doc:'ND00000064', fecha:'2026-02-24', clientName:'VIDRIOS DOMESTICOS MAV C.C.S', tasa:407.3786, montoBase:76.16, concepto:'Diferencial Cambiario'}];
@@ -62306,7 +62389,7 @@ ${resumen}
                   <input type="date" className="flex-1 border-2 border-amber-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none bg-white" value={fechaInicioContForm} onChange={e=>setFechaInicioContForm(e.target.value)}/>
                   <button onClick={guardarFechaInicioContabilidad} title="Guardar" className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[9px] font-black">✓</button>
                 </div>
-                <p className="text-[8px] text-amber-700 leading-tight">Ignora en TODOS los reportes de Contabilidad los movimientos de Procura/Ventas/Banco/Caja/Nómina/etc. anteriores a esta fecha. Los Ajustes manuales (ej. "Saldos Junio") nunca se ignoran, ni tampoco las facturas históricas importadas (Ventas → NE).{settings?.fechaInicioContabilidad?` Activo: ${contDd(settings.fechaInicioContabilidad)}.`:''}</p>
+                <p className="text-[8px] text-amber-700 leading-tight">Ignora en TODOS los reportes de Contabilidad los movimientos de Procura/Ventas/Banco/Caja/Nómina/etc. anteriores a esta fecha. Los Ajustes manuales (ej. "Saldos Junio") nunca se ignoran, ni tampoco las facturas históricas importadas (Ventas → NE) ni la depreciación de Activos Fijos.{settings?.fechaInicioContabilidad?` Activo: ${contDd(settings.fechaInicioContabilidad)}.`:''}</p>
               </div>
               <div className="max-h-[55vh] overflow-y-auto space-y-0.5">
                 {treeMayor.length===0 && <p className="text-[10px] text-gray-400 text-center py-4">Sin cuentas con movimiento en el rango elegido.</p>}
