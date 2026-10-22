@@ -1405,6 +1405,69 @@ const rhBsAsignacion = (a, tasa) => {
   return parseFloat((benNum(a && a.montoUSD) * benNum(tasa)).toFixed(2));
 };
 
+// == RRHH - Cambiar la fecha o las tasas de un pago ya registrado ==
+// «Editar fecha y tasas» (detalle del pago, abierto o cerrado): fecha de pago y tasas de la nómina, del HCM y de la Bolsa. Cambiar solo la fecha no toca a los trabajadores.
+// Al cambiar una tasa se vuelve a calcular cada trabajador YA cargado con la tasa nueva (la «vieja» es la que tiene guardada cada trabajador); cada fila conserva lo que la define y cambia lo que depende de la tasa:
+//   · calculadas en $ (Días Trabajados, descanso y demás conceptos con fórmula, monto del tabulador ÷ 30 × días, HCM y Bolsa sin editar a mano): el $ no cambia y el Bs. = $ × tasa nueva
+//   · escritas en Bs. (Diferencia de Sueldo, bonos y descuentos a mano, filas editadas a mano): el Bs. escrito no cambia y el $ = Bs. ÷ tasa nueva
+//   · IVSS, RPE, FAOV e INCES: las vuelve a calcular el cálculo de siempre con la tasa nueva y las asignaciones nuevas (la fila quitada sigue quitada; la editada a mano conserva su Bs. y su aporte patronal sigue a las asignaciones); no cambian ni su cuenta ni su nombre
+//   · HCM y Bolsa usan SU tasa (benTasaDe: la propia del pago o, si no tiene, la de la nómina); lo demás, la de la nómina
+// Los totales (neto, aporte patronal) se arman igual que al guardar al trabajador (guardarDetalleNomina). Función pura: legalesFrescas(asignaciones) es el cálculo de IVSS / RPE / FAOV / INCES de la pantalla del pago, con la tasa nueva.
+// Monto mensual del tabulador con que se calculó una asignación ya guardada («monto del tabulador ÷ 30 × días»: lo guardado no lo marca): sale del Bs. y de los días guardados y vale solo si, con ese monto, la misma cuenta devuelve EXACTO el $ y el Bs. guardados; si no (fila escrita a mano en Bs.) → null
+const rhBaseTabuladorExacta = (a, tasa) => {
+  const dias = benNum(a && a.cantidad), usd = benNum(a && a.montoUSD), bs = rhBsFila(a, 'montoBs', 'montoUSD', tasa);
+  if (!(dias > 0) || !(usd > 0) || !(bs > 0) || !(tasa > 0)) return null;
+  const base = Math.round(bs * 30 / (tasa * dias) * 100) / 100;
+  const m = rhMontoTabulador(base, dias, tasa);
+  return (m.montoUSD === benR2(usd) && m.montoBs === benR2(bs)) ? base : null;
+};
+// → { doc: lo que se escribe en el trabajador, antes:{netoUSD, netoBs}, despues:{netoUSD, netoBs} }
+const rhRecalcularDetalleTasa = (d, nominaNueva, legalesFrescas) => {
+  const tN = benNum(nominaNueva && nominaNueva.tasa);
+  const tV = benNum(d && d.tasa) > 0 ? benNum(d.tasa) : tN; // la tasa con que se guardó este trabajador
+  const enUSD = (f) => !!f && (f.cantidadDias !== undefined || !!f.token);
+  const sinTexto = (f) => { const { montoBsTexto, ...resto } = f; return resto; };
+  const bsDe = (f) => benR2(rhBsFila(f, 'montoBs', 'montoUSD', tV)); // el Bs. guardado, a centavos
+  const enBs = (f) => ({ ...f, montoUSD:benR2(bsDe(f) / tN), montoBs:bsDe(f) }); // fila escrita en Bs.: el Bs. no cambia, el $ sale de la tasa nueva
+  const asignaciones = ((d && d.asignaciones) || []).map(a => {
+    if (enUSD(a)) return { ...sinTexto(a), montoBs:benR2(benNum(a.montoUSD) * tN) };
+    const base = rhBaseTabuladorExacta(a, tV);
+    if (base !== null) return { ...sinTexto(a), montoBs:rhMontoTabulador(base, a.cantidad, tN).montoBs };
+    return enBs(a);
+  });
+  const legales = legalesFrescas ? (legalesFrescas(asignaciones.map(a => ({ ...a, incluida:true }))) || []) : [];
+  const esBen = (x) => !!x && (x.esBeneficio === true || !!x.tipoBeneficio);
+  const deducciones = ((d && d.deducciones) || []).map(x => {
+    if (x.esLegal) {
+      const f = legales.find(y => y.concepto === x.concepto);
+      if (x.editadoManual) return { ...enBs(x), ...(f ? { montoPatronalUSD:f.montoPatronalUSD, montoPatronalBs:f.montoPatronalBs } : {}) };
+      if (f) return { ...x, montoUSD:f.montoUSD, montoBs:f.montoBs, montoPatronalUSD:f.montoPatronalUSD, montoPatronalBs:f.montoPatronalBs };
+      return enBs(x);
+    }
+    if (esBen(x)) {
+      const tb = benTasaDe(nominaNueva, x.tipoBeneficio);
+      const patronalBs = benR2(benNum(x.montoPatronalUSD) * tb);
+      if (x.editadoManual === true) return { ...x, montoUSD:benR2(bsDe(x) / tb), montoBs:bsDe(x), montoPatronalBs:patronalBs, tasaCambio:tb };
+      return { ...x, montoBs:benR2(benNum(x.montoUSD) * tb), montoPatronalBs:patronalBs, tasaCambio:tb };
+    }
+    return enUSD(x) ? { ...sinTexto(x), montoBs:benR2(benNum(x.montoUSD) * tN) } : enBs(x);
+  });
+  const legalesF = deducciones.filter(x => x.esLegal), benF = deducciones.filter(esBen);
+  const suma = (xs, campo) => xs.reduce((s, x) => s + benNum(x[campo]), 0);
+  const totAsig = suma(asignaciones, 'montoUSD'), totDed = suma(deducciones, 'montoUSD');
+  const totPat = suma(legalesF, 'montoPatronalUSD'), totPatBen = suma(benF, 'montoPatronalUSD');
+  const netoBs = benR2(asignaciones.reduce((s, a) => s + rhBsFila(a, 'montoBs', 'montoUSD', tN), 0) - deducciones.reduce((s, x) => s + rhBsFila(x, 'montoBs', 'montoUSD', tN), 0));
+  const doc = {
+    asignaciones:asignaciones.map(benSinUndefined), deducciones:deducciones.map(benSinUndefined),
+    totalAsignacionesUSD:parseFloat(totAsig.toFixed(2)), totalDeduccionesUSD:parseFloat(totDed.toFixed(2)),
+    totalPatronalUSD:parseFloat(totPat.toFixed(2)), totalPatronalBs:parseFloat((totPat * tN).toFixed(2)),
+    totalPatronalBenUSD:parseFloat(totPatBen.toFixed(2)), totalPatronalBenBs:parseFloat((totPatBen * tN + benAjusteBs(benF, tN, 'montoPatronalBs', 'montoPatronalUSD')).toFixed(2)),
+    netoUSD:parseFloat((totAsig - totDed).toFixed(2)), netoBs, tasa:tN,
+  };
+  const antes = rhMontosDetalle(d, tV);
+  return { doc, antes:{ netoUSD:antes.netoUSD, netoBs:antes.netoBs }, despues:{ netoUSD:doc.netoUSD, netoBs:doc.netoBs } };
+};
+
 // Cantidad (días u horas) que se paga en una fila del recibo:
 //   · Días Trabajados: cantidadDias · conceptos con fórmula (descanso, horas extras...): la cantidad escrita; se muestra aunque sea 0
 //   · conceptos escritos en Bs. (cesta ticket, bonos): la cantidad opcional que puso el usuario, solo si es mayor que 0
@@ -3144,6 +3207,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const puedeSalariosFicha = !appUser || appUser.role==='Master' || !Object.keys(_pmCfg).some(k=>k.startsWith('rrhh_')&&_pmCfg[k]) || !!_pmCfg.rrhh_trabajadores; // cambiar el salario de las fichas (Trabajadores)
   const [tasaBenKey,setTasaBenKey]=useState(0); // repinta los campos de tasa HCM/Bolsa del pago abierto cuando lo escrito no es valido
   const [nominaActiva,setNominaActiva]=useState(null);
+  const [nominaEditar,setNominaEditar]=useState(null); // «Editar fecha y tasas» del pago abierto: {id, fechaPago, tasa, tasaHCM, tasaBolsa} (lo escrito en los campos) o null
   const [repModo,setRepModo]=useState('nomina'); // 'nomina' | 'trabajador' | 'informes'
   const [repAnio,setRepAnio]=useState(String(new Date().getFullYear()));
   const [repMes,setRepMes]=useState('TODOS');
@@ -3213,6 +3277,52 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if(!window.confirm(`¿Reabrir "${n.concepto}"? Podrás cargar y editar trabajadores en este pago y volver a cerrarlo cuando termines.`)) return;
     try{ await updateDoc(getDocRef('rrhh_nominas',n.id),{estado:'abierta'}); if(nominaActiva?.id===n.id) setNominaActiva(v=>v?({...v,estado:'abierta'}):v); }
     catch(e){ alert('Error: '+e.message); }
+  };
+  // Editar los datos de un pago ya registrado, abierto o cerrado: fecha de pago y tasas (nómina, HCM, Bolsa). El mes, el período y el tipo de nómina no se cambian.
+  // Solo la fecha: se guarda en el pago. Con una tasa distinta, se recalculan los Bs. de TODOS los trabajadores ya cargados (rhRecalcularDetalleTasa) y se guardan junto con el pago (todo o nada).
+  const abrirEditarNomina = () => {
+    if(!nominaActiva) return;
+    setNominaEditar(e=>(e && e.id===nominaActiva.id) ? null : {id:nominaActiva.id, fechaPago:nominaActiva.fechaPago||'', tasa:String(nominaActiva.tasa==null?'':nominaActiva.tasa), tasaHCM:benNum(nominaActiva.tasaHCM)>0?String(nominaActiva.tasaHCM):'', tasaBolsa:benNum(nominaActiva.tasaBolsa)>0?String(nominaActiva.tasaBolsa):''});
+  };
+  const guardarEdicionNomina = async () => {
+    const n = nominaActiva, f = nominaEditar;
+    if(!n || !f || f.id!==n.id) return;
+    const fecha = String(f.fechaPago||'').trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return alert('Elige la fecha de pago');
+    const tasaN = benNum(f.tasa);
+    if(!(tasaN>0)) return alert('La tasa de la nómina debe ser mayor que 0');
+    const tH = benTasaEscrita(f.tasaHCM), tB = benTasaEscrita(f.tasaBolsa);
+    if(tH.invalida) return alert('La tasa de HCM debe ser mayor que 0 (o déjala vacía para usar la tasa de la nómina)');
+    if(tB.invalida) return alert('La tasa de la Bolsa de alimentos debe ser mayor que 0 (o déjala vacía para usar la tasa de la nómina)');
+    const hcmN = tH.valor||null, bolsaN = tB.valor||null;
+    const hcmV = benNum(n.tasaHCM)>0 ? benNum(n.tasaHCM) : null, bolsaV = benNum(n.tasaBolsa)>0 ? benNum(n.tasaBolsa) : null;
+    const cambiaFecha = fecha!==String(n.fechaPago||'');
+    const cambiaTasa = tasaN!==benNum(n.tasa), cambiaHCM = hcmN!==hcmV, cambiaBolsa = bolsaN!==bolsaV;
+    if(!cambiaFecha && !cambiaTasa && !cambiaHCM && !cambiaBolsa){ setNominaEditar(null); return; }
+    const nueva = {...n, fechaPago:fecha, tasa:tasaN, tasaHCM:hcmN, tasaBolsa:bolsaN};
+    const detalles = (cambiaTasa || cambiaHCM || cambiaBolsa) ? nominaDetalles.filter(d=>d.nominaId===n.id) : [];
+    const calc = detalles.map(d=>({d, r:rhRecalcularDetalleTasa(d, nueva, (asigs)=>recalcularDeduccionesLegales(asigs, d.centroCostoId, tasaN))}));
+    const tasaTxt = (v) => v ? String(v) : 'la de la nómina';
+    const cambios = [];
+    if(cambiaFecha) cambios.push(`Fecha de pago: ${contDd(n.fechaPago)} → ${contDd(fecha)}`);
+    if(cambiaTasa) cambios.push(`Tasa de la nómina: ${n.tasa} → ${tasaN}`);
+    if(cambiaHCM) cambios.push(`Tasa HCM: ${tasaTxt(hcmV)} → ${tasaTxt(hcmN)}`);
+    if(cambiaBolsa) cambios.push(`Tasa Bolsa: ${tasaTxt(bolsaV)} → ${tasaTxt(bolsaN)}`);
+    if(calc.length>0){
+      const tot = calc.reduce((s,x)=>({aU:s.aU+x.r.antes.netoUSD, aB:s.aB+x.r.antes.netoBs, dU:s.dU+x.r.despues.netoUSD, dB:s.dB+x.r.despues.netoBs}),{aU:0,aB:0,dU:0,dB:0});
+      const nota = cierres.some(c=>c.id===n.mes) ? `\n\nEl Cierre de Mes de ${rhEtiquetaMes(n.mes)} ya está generado: quedará marcado como desactualizado y habrá que volver a generarlo.` : '';
+      if(!window.confirm(`¿Guardar los cambios de "${n.concepto}" (${n.mes} · ${n.quincena})?\n\n${cambios.map(c=>'• '+c).join('\n')}\n\nSe recalculan los Bs. de los ${calc.length} trabajador(es) ya cargados con las tasas nuevas.\nNeto total: $${formatNum(tot.aU)} → $${formatNum(tot.dU)} · Bs. ${formatNum(tot.aB)} → Bs. ${formatNum(tot.dB)}${nota}`)) return;
+    }
+    setBusyNomina(true);
+    try{
+      const ahora = Date.now();
+      const ops = [[getDocRef('rrhh_nominas',n.id), {fechaPago:fecha, tasa:tasaN, tasaHCM:hcmN, tasaBolsa:bolsaN, updatedAt:ahora}], ...calc.map(({d,r})=>[getDocRef('rrhh_nomina_detalles',d.id), {...r.doc, updatedAt:ahora}])];
+      for(let i=0;i<ops.length;i+=400){ const lote = writeBatch(db); ops.slice(i,i+400).forEach(([ref,patch])=>lote.update(ref,patch)); await lote.commit(); }
+      setNominaActiva(v=>(v && v.id===n.id) ? {...v, fechaPago:fecha, tasa:tasaN, tasaHCM:hcmN, tasaBolsa:bolsaN} : v);
+      setNominaEditar(null);
+      logAuditoria(appUser,'RRHH','EDICIÓN',`Pago "${n.concepto}" (${n.mes} · ${n.quincena}) editado: ${cambios.join(' · ')}${calc.length?` · ${calc.length} trabajador(es) recalculado(s)`:''}`);
+    } catch(e){ alert('Error al guardar los cambios del pago: '+e.message); }
+    finally{ setBusyNomina(false); }
   };
   // Editar un trabajador ya cargado: abre la misma pantalla completa de cuando se crea, con lo guardado. Si el pago está cerrado hay que reabrirlo primero.
   const editarDetalleNomina = async (d) => {
@@ -3384,8 +3494,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // trabajador, y también desde el botón "Recalcular" si cambia el Sueldo después.
   // En un pago de Utilidades (o de un tipo que lista el concepto INCES) agrega el INCES del trabajador: % de Parafiscales sobre las utilidades; con la cuenta que el tipo le asignó, si le asignó una.
   // En un pago de Utilidades (o de un tipo que lista el concepto FAOV / BANAVIH como deducción) el FAOV también se calcula solo aunque no haya «Días Trabajados»: % de Parafiscales sobre todas las asignaciones, con su aporte de la empresa; IVSS y RPE no aplican a las utilidades.
-  const recalcularDeduccionesLegales = (asignaciones, centroCostoId) => {
-    const tasa = Number(nominaActiva?.tasa||0);
+  const recalcularDeduccionesLegales = (asignaciones, centroCostoId, tasaX) => {
+    const tasa = Number(tasaX>0 ? tasaX : (nominaActiva?.tasa||0)); // tasaX: la tasa nueva al editar las tasas de un pago ya registrado (rhRecalcularDetalleTasa)
     const conceptosActivos = conceptos.filter(c=>c.activo!==false && c.tipo==='D');
     const cIVSSc = conceptosActivos.find(conceptoEsIVSS), cRPEc = conceptosActivos.find(conceptoEsRPE), cFAOVc = conceptosActivos.find(conceptoEsFAOV);
     const aCuenta = (c) => { const cu=c?cuentaDeConcepto(c,centroCostoId):null; return {codigoCuenta:cu?.codigo||'', nombreCuenta:cu?.nombre||''}; };
@@ -6776,12 +6886,13 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
           return (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <button onClick={()=>setNominaActiva(null)} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a Pagos</button>
+              <button onClick={()=>{setNominaActiva(null);setNominaEditar(null);}} className="flex items-center gap-1.5 text-gray-500 hover:text-gray-700 text-xs font-black uppercase"><ArrowLeft size={14}/> Volver a Pagos</button>
               <div className="flex flex-wrap items-center gap-2">
                 {selMoneda()}
                 <button onClick={()=>exportarReporteNominaPDF(nominaActiva, repMoneda)} className="bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-orange-100 flex items-center gap-1.5"><FileText size={13}/> Reporte de Nómina</button>
                 {nominaActiva.estado==='abierta' && <button onClick={()=>cerrarNomina(nominaActiva)} className="bg-amber-50 text-amber-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-amber-100">Cerrar Pago</button>}
                 {nominaActiva.estado==='cerrada' && <button onClick={()=>reabrirNomina(nominaActiva)} className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-emerald-100">Reabrir Pago</button>}
+                <button data-testid="nomina-editar-datos" onClick={abrirEditarNomina} title="Cambiar la fecha de pago y las tasas (nómina, HCM, Bolsa) de este pago, también si está cerrado" className="bg-cyan-50 text-cyan-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-cyan-100 flex items-center gap-1.5"><Edit size={12}/> Editar fecha y tasas</button>
               </div>
             </div>
 
@@ -6792,6 +6903,21 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               </div>
               <p className="text-xs text-gray-500">{nominaActiva.mes} · {nominaActiva.quincena} · Fecha de pago {contDd(nominaActiva.fechaPago)} · {benTasasTexto(nominaActiva)}</p>
             </div>
+
+            {nominaEditar && nominaEditar.id===nominaActiva.id && (
+              <div data-testid="nomina-editar-panel" className="bg-white rounded-2xl border-2 border-cyan-200 p-4 space-y-3">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase">Editar fecha y tasas de este pago</h3>
+                <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+                  <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Fecha de pago</span><input data-testid="nomina-edit-fecha" type="date" value={nominaEditar.fechaPago} onChange={e=>setNominaEditar(f=>({...f,fechaPago:e.target.value}))} className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500"/></div>
+                  <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tasa de la nómina (Bs. por $)</span><input data-testid="nomina-edit-tasa" type="number" step="0.01" value={nominaEditar.tasa} onChange={e=>setNominaEditar(f=>({...f,tasa:e.target.value}))} className="w-44 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tasa HCM</span><input data-testid="nomina-edit-tasahcm" type="number" step="0.01" value={nominaEditar.tasaHCM} onChange={e=>setNominaEditar(f=>({...f,tasaHCM:e.target.value}))} placeholder={nominaEditar.tasa?('nómina '+nominaEditar.tasa):'Tasa HCM'} title="Tasa del HCM en este pago. Vacía = usa la tasa de la nómina" className="w-32 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <div><span className="block text-[9px] font-black text-gray-400 uppercase mb-0.5">Tasa Bolsa</span><input data-testid="nomina-edit-tasabolsa" type="number" step="0.01" value={nominaEditar.tasaBolsa} onChange={e=>setNominaEditar(f=>({...f,tasaBolsa:e.target.value}))} placeholder={nominaEditar.tasa?('nómina '+nominaEditar.tasa):'Tasa Bolsa'} title="Tasa de la Bolsa de alimentos en este pago. Vacía = usa la tasa de la nómina" className="w-32 border-2 border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
+                  <button data-testid="nomina-edit-guardar" onClick={guardarEdicionNomina} disabled={busyNomina} className="bg-cyan-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyNomina?'Guardando...':'Guardar cambios'}</button>
+                  <button data-testid="nomina-edit-cancelar" onClick={()=>setNominaEditar(null)} className="bg-gray-100 text-gray-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase hover:bg-gray-200">Cancelar</button>
+                </div>
+                <p className="text-[10px] text-gray-500">{detalles.length>0 ? `Si cambias una tasa se recalculan los Bs. de los ${detalles.length} trabajador(es) ya cargados: lo calculado en $ (días trabajados, conceptos con fórmula, monto del tabulador, HCM y Bolsa) mantiene su $ y cambia su Bs.; lo escrito en Bs. mantiene su Bs. y cambia su $; IVSS, RPE y FAOV se calculan de nuevo. Cambiar solo la fecha no toca a los trabajadores.` : 'Este pago todavía no tiene trabajadores cargados: solo cambian los datos del pago.'} El mes, el período y el tipo de nómina no se pueden cambiar.</p>
+              </div>
+            )}
 
             {nominaActiva.estado==='abierta' && (
               <div className="bg-white rounded-2xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -44574,18 +44700,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const ajReal = (ajustesApp||[]).find(a=>a.id===`HIST-REAL-${ym}`) || null;
             const docsAjReal = new Set(Array.isArray(ajReal?.docsHist) ? ajReal.docsHist : []);
             const gemMap = new Map(duplicadasSistemaHist(ym).claras.map(x=>[x.f.doc, x]));
+            // Factura NORMAL (hecha en Facturación, no importada) de ANTES de «Inicio de Contabilidad Real»: no entra sola al Estado de Resultados. Si es la factura de la NE importada de un documento del reporte
+            // (NE.facturaId) o ya existe con el mismo número del documento, el documento no se vuelve a crear pero su ingreso y costo (según el reporte antiguo) tienen que ir por el comprobante «HIST-REAL-…»,
+            // igual que una gemela; sin eso el mes queda por debajo del reporte (abril 2026: F00002937 y F00002939 de PAPELES VENEZOLANOS, facturadas desde su NE). Si la factura es de la fecha de inicio en adelante
+            // (o no hay fecha de inicio) entra sola al Estado de Resultados y NO se agrega (se contaría dos veces).
+            const corteLig = String(settings?.fechaInicioContabilidad||'');
+            const realAntesCorte = (i) => { if(!i || i.origenImport || i.esAnulacionFiscal || !corteLig || !(parseNum(i.montoBase||0)>0.005)) return null; const d = String(i.fechaFactura||i.fecha||'').substring(0,10); return d && d<corteLig ? i : null; };
             const e = {docs, pendientes:[], facturadas:0, sinNE:[], otraFactura:[], gemelas:[], ajReal};
             docs.forEach(f=>{
               const ne = neDoc.get(f.doc);
               const gm = gemMap.get(f.doc);
               const yaFact = invId.get(f.doc) || invFisc.get(f.doc);                      // ya existe una factura con ese número
+              const ligada = realAntesCorte(yaFact || (ne && ne.facturaId ? invId.get(ne.facturaId) : null));   // …y es una factura normal de antes del corte (por su número o por la factura de su NE)
               if(!ne){                                                                    // el documento no tiene su NE importada…
                 if(!yaFact && (gm || docsAjReal.has(f.doc))) e.gemelas.push({f, ne:null, inv:gm?gm.inv:null});   // …pero su factura normal sí existe (o ya va en el comprobante): su ingreso y costo van por el comprobante, que no necesita la NE
+                else if(ligada) e.gemelas.push({f, ne:null, inv:ligada});
                 else e.sinNE.push(f);
                 return;
               }
-              if(yaFact){ e.facturadas++; return; }
-              if(ne.facturaId && invId.has(ne.facturaId)){ e.otraFactura.push({f,ne}); return; } // la NE ya fue facturada con OTRA factura: no se duplica
+              if(yaFact){ if(ligada) e.gemelas.push({f, ne, inv:ligada}); else e.facturadas++; return; }
+              if(ne.facturaId && invId.has(ne.facturaId)){ if(ligada) e.gemelas.push({f, ne, inv:ligada}); else e.otraFactura.push({f,ne}); return; } // la NE ya fue facturada con OTRA factura: no se duplica (si esa factura es de antes del corte, su ingreso y costo van por el comprobante)
               if(gm || docsAjReal.has(f.doc)){ e.gemelas.push({f, ne, inv:gm?gm.inv:null}); return; }   // ya existe como factura normal del sistema (o ya va en el comprobante): no se crea
               e.pendientes.push({f,ne});
             });
@@ -44760,7 +44894,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ingPorCubrir:suma(porCubrir,f=>f.montoBase), cosPorCubrir:suma(porCubrir,f=>costoDocHist(f)),
               ingAj:sumaAj(/^4/,'H'), cosAj:sumaAj(/^5/,'D')};
           };
-          const detalleGemHist = (g) => g.inv ? detalleFacDupHist(g) : `${g.f.doc} · ${g.f.clientName||'—'} · ${fechaCortaDupHist(g.f)} · base $${formatNum(g.f.montoBase)} (ya va en el comprobante; su factura normal ya no se detecta)`;
+          const detalleGemHist = (g) => g.inv ? detalleFacDupHist(g) + (g.ne && g.ne.facturaId && g.ne.facturaId===g.inv.id ? ' · facturada desde su NE' : '') : `${g.f.doc} · ${g.f.clientName||'—'} · ${fechaCortaDupHist(g.f)} · base $${formatNum(g.f.montoBase)} (ya va en el comprobante; su factura normal ya no se detecta)`;
           const crearFacturasHistoricasMes = async (m) => {
             if(importandoHist) return;
             const e = estadoFactHist(m.ym);
@@ -44784,7 +44918,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               : rlCrear.porCubrir.length===0
                 ? `Su ingreso y costo ya entran por el comprobante «${nroCompCrear}».`
                 : rlCrear.aj
-                  ? `⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} de ellos (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): su ingreso y costo (Ingresos $${formatNum(rlCrear.ingPorCubrir)} · Costo de venta $${formatNum(rlCrear.cosPorCubrir)}) NO saldrán en el Estado de Resultados hasta que lo quites (botón «Quitar comprobante» del panel) y lo registres de nuevo.`
+                  ? `⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} de ellos (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): su ingreso y costo (Ingresos $${formatNum(rlCrear.ingPorCubrir)} · Costo de venta $${formatNum(rlCrear.cosPorCubrir)}) NO saldrán en el Estado de Resultados hasta que pulses «Actualizar comprobante» en el panel (los agrega; el comprobante actual queda en la Papelera).`
                   : `⚠️ Su ingreso y costo (Ingresos $${formatNum(rlCrear.ingPorCubrir)} · Costo de venta $${formatNum(rlCrear.cosPorCubrir)}) NO saldrán en el Estado de Resultados hasta que registres el comprobante «${nroAjusteRealHist(m)}» (botón «Registrar ingreso y costo» del panel, después de crear).`;
             const avisoDupCrear = nGemCrear>0 ? `ℹ️ NO se crean ${nGemCrear} documento(s) de ${m.corto} porque ya existen como factura normal del sistema (${rlCrear.gem.map(g=>`${g.inv?nombreFacDupHist(g.inv):'factura normal'} = ${g.f.doc}`).join(', ')}); esas facturas no se tocan.\n${textoIngCosGem}\n\n` : '';
             const avisoAmbCrear = rlCrear.ambiguas.length>0 ? `ℹ️ ${rlCrear.ambiguas.length} factura(s) del sistema (${rlCrear.ambiguas.map(x=>nombreFacDupHist(x.inv)).join(', ')}) podrían ser la misma venta que algún documento del reporte, pero no se pueden emparejar con certeza: esos documentos SÍ se crean y esas ventas podrían salir dos veces (revísalas en Comprobantes → Ventas).\n\n` : '';
@@ -44792,7 +44926,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ? `\n\n⚠️ Revisa «Inicio de Contabilidad Real» (está ${fechaCorteTxt}): ${rlCrear.enER.length} factura(s) normales de ${m.corto} YA entran al Estado de Resultados por sí solas; el comprobante las sumaría dos veces.`
               : rlCrear.porCubrir.length===0 ? ''
               : rlCrear.aj
-                ? `\n\n⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} factura(s) normales de tu reporte (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): quítalo (botón «Quitar comprobante» del panel) y regístralo de nuevo; si no, ${m.nombre} queda $${formatNum(rlCrear.ingPorCubrir)} por debajo de tu reporte en ventas.`
+                ? `\n\n⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} factura(s) normales de tu reporte (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): pulsa «Actualizar comprobante» en el panel (los agrega; el actual queda en la Papelera); si no, ${m.nombre} queda $${formatNum(rlCrear.ingPorCubrir)} por debajo de tu reporte en ventas.`
                 : `\n\nFalta registrar el comprobante «${nroAjusteRealHist(m)}» con el ingreso y costo de las ${rlCrear.porCubrir.length} factura(s) normales que ya estaban en tu reporte (botón «Registrar ingreso y costo» del panel): sin él, ${m.nombre} queda $${formatNum(rlCrear.ingPorCubrir)} por debajo de tu reporte en ventas.`;
             if(!window.confirm(`Se van a crear ${e.pendientes.length} factura(s) de ${m.nombre} (${nVta} venta(s)${nDev?` y ${nDev} devolución(es)`:''}), con su número fiscal original (${primero} … ${ultimo}), vinculadas a sus Notas de Entrega históricas.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos netos $${formatNum(e.ingPend)} · Costo de venta neto $${formatNum(e.cosPend)}.${e.nOpPend>0?` De ellas, ${e.nOpPend} factura(s) de bolsas de producción van como «Con OP» (Ingresos $${formatNum(e.ingOpPend)} · Costo de venta $${formatNum(e.cosOpPend)}); el resto va como «Sin OP». Es la misma separación de tu reporte antiguo.`:''}\n\n${efCxC.n===0 ? 'Cuentas por Cobrar: los saldos en USD no cambian (no hay retenciones ni NC/ND registradas con el número de estas facturas).' : `⚠️ CUENTAS POR COBRAR SÍ CAMBIARÍA: hay ${efCxC.rets.length} retención(es) y ${efCxC.notas.length} NC/ND registradas con el número de estas facturas. Hoy Cuentas por Cobrar las ignora; al crear las facturas se aplicarían a su NE y moverían el saldo del cliente:\n${detalleEfectoCxC(efCxC)}\n\nSi tu Cuentas por Cobrar ya está cuadrada, cancela y revisa esos registros primero.`}\n\n${avisoDupCrear}${avisoAmbCrear}No se tocan otros meses, los ajustes contables ni los cobros. ¿Continuar?`)) return;
             setImportandoHist(true);
@@ -44843,7 +44977,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const registrarRealesHistoricasMes = async (m) => {
             if(importandoHist) return;
             const rl = estadoRealHist(m.ym);
-            if(rl.aj){ alert(`El comprobante de las facturas normales de ${m.nombre} ya está registrado (${rl.aj.nroComprobante||rl.aj.id}) — no se crea de nuevo.`); return; }
+            if(rl.aj && rl.porCubrir.length===0){ alert(`El comprobante de las facturas normales de ${m.nombre} ya está registrado (${rl.aj.nroComprobante||rl.aj.id}) — no se crea de nuevo.`); return; }
+            const act = !!rl.aj;                                                        // ya hay comprobante pero le faltan documentos: se ACTUALIZA agregándolos (la versión actual queda en la Papelera)
+            const aAgregar = act ? rl.porCubrir : rl.gem;
+            if(act && !(Array.isArray(rl.aj.docsHist) && rl.aj.docsHist.length>0)){ alert(`El comprobante «${rl.aj.nroComprobante||rl.aj.id}» no trae la lista de documentos que cubre, así que no se puede actualizar sin repetir líneas: pulsa «Quitar comprobante» y regístralo de nuevo.`); return; }
             if(rl.gem.length===0){ alert(`No hay facturas normales de ${m.nombre} que ya estén en tu reporte antiguo: no hay nada que registrar.`); return; }
             if(rl.enER.length>0){ alert(`«Inicio de Contabilidad Real» está ${rl.corteCont?`en ${fechaLargaDupHist(rl.corteCont)}`:'sin definir'} y ${rl.enER.length} de las facturas normales de ${m.nombre} (${rl.enER.map(g=>nombreFacDupHist(g.inv)).join(', ')}) YA entran al Estado de Resultados por sí solas: el comprobante las sumaría dos veces, por eso no se registra.\n\nRevisa esa fecha en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al ${m.fin} de ${m.corto} de 2026) y vuelve a intentar.`); return; }
             const nIng = lineasIngresoEnAjuste(m.ajuste);
@@ -44851,15 +44988,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const r2n = (n)=>Math.round((n+(n<0?-1e-9:1e-9))*100)/100;
             const esOp = (g)=>OP_ORIGEN_HIST.has(g.f.doc);
             const faltan = [];
-            if(rl.gem.some(g=>!esOp(g) && costoDocHist(g.f)>0.004) && !cuentasProduccionCfg?.costoVentaMercanciaNombre) faltan.push('Costo de venta (mercancía)');
-            if(rl.gem.some(g=>esOp(g) && costoDocHist(g.f)>0.004) && !cuentasProduccionCfg?.costoVentaProduccionNombre) faltan.push('Costo de venta (producción / con OP)');
+            if(aAgregar.some(g=>!esOp(g) && costoDocHist(g.f)>0.004) && !cuentasProduccionCfg?.costoVentaMercanciaNombre) faltan.push('Costo de venta (mercancía)');
+            if(aAgregar.some(g=>esOp(g) && costoDocHist(g.f)>0.004) && !cuentasProduccionCfg?.costoVentaProduccionNombre) faltan.push('Costo de venta (producción / con OP)');
             if(faltan.length){ alert(`Falta configurar en Contabilidad → Configuración de cuentas: ${faltan.join(' y ')}. Sin eso no se puede registrar el costo de venta de estas facturas.`); return; }
             const partir = (cfg, codDef, nomDef) => { const p = String(cfg||'').split('—'); return {codigo:(p[0]||'').trim()||codDef, cuenta:p.slice(1).join('—').trim()||nomDef}; };
             const ctaIngSin = partir(cuentasIngresoCfg?.sinOpNombre || '4.1.01.02.001 — Ingresos por Ventas (Sin OP)', '4.1.01.02.001', 'Ingresos por Ventas (Sin OP)');
             const ctaIngCon = partir(cuentasIngresoCfg?.conOpNombre || '4.1.01.01.001 — Ingresos por Ventas (Con OP)', '4.1.01.01.001', 'Ingresos por Ventas (Con OP)');
             const ctaCosSin = partir(cuentasProduccionCfg?.costoVentaMercanciaNombre, '', 'Costo de venta (mercancía)');
             const ctaCosCon = partir(cuentasProduccionCfg?.costoVentaProduccionNombre, '', 'Costo de venta (producción)');
-            const gems = [...rl.gem].sort((a,b)=>String(a.f.fecha).localeCompare(String(b.f.fecha)) || String(a.f.doc).localeCompare(String(b.f.doc)));
+            const gems = [...aAgregar].sort((a,b)=>String(a.f.fecha).localeCompare(String(b.f.fecha)) || String(a.f.doc).localeCompare(String(b.f.doc)));
             const lineas = [];
             gems.forEach(g=>{
               const f = g.f, op = esOp(g), tasa = Number(f.tasa)||0;
@@ -44873,19 +45010,32 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               if(Math.abs(netU)>0.004 || Math.abs(netB)>0.004) lineas.push({codigo:'3.3.01.01.002', cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA', tipo:netU>=0?'D':'H', montoUSD:Math.abs(netU), montoBs:Math.abs(netB), fecha:f.fecha, detalle:`Cierre del ingreso y costo de ${f.doc} contra utilidad acumulada (como los demás ajustes históricos)`});
             });
             const totIng = r2n(gems.reduce((sm,g)=>sm+r2n(g.f.montoBase),0)), totCos = r2n(gems.reduce((sm,g)=>sm+r2n(costoDocHist(g.f)),0));
-            const nro = nroAjusteRealHist(m);
+            const nro = act ? (rl.aj.nroComprobante||nroAjusteRealHist(m)) : nroAjusteRealHist(m);
             const totMes = r2n(rl.e.ingMes);
             const lista = gems.map(g=>`• ${g.inv?nombreFacDupHist(g.inv):'factura normal'} = ${g.f.doc} · ${g.f.clientName||'—'} · ${fechaCortaDupHist(g.f)} · ingreso $${formatNum(r2n(g.f.montoBase))} · costo $${formatNum(r2n(costoDocHist(g.f)))}${esOp(g)?' · Con OP':''}`).join('\n');
-            if(!window.confirm(`Se va a registrar el comprobante manual «${nro}» con el ingreso y el costo de venta de ${gems.length} documento(s) de tu reporte antiguo de ${m.nombre} que YA existen como factura normal del sistema:\n\n${lista}\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos +$${formatNum(totIng)} · Costo de venta +$${formatNum(totCos)} (con las demás facturas del mes, ${m.nombre} suma $${formatNum(totMes)} de ingresos netos, el total de tu reporte antiguo).\nCada documento va en su fecha, en la cuenta de ingreso y de costo «Con OP» o «Sin OP» como en tu reporte, y se cierra contra (UTILIDAD) PÉRDIDA ACUMULADA, igual que los demás ajustes históricos.\n\nNo toca Cuentas por Cobrar, IVA, Bancos ni las facturas normales (siguen exactamente como están). Se puede quitar después (queda en la Papelera). ¿Continuar?`)) return;
+            if(!window.confirm(act ? `Se va a ACTUALIZAR el comprobante «${nro}» de ${m.nombre}: hoy cubre ${(rl.aj.docsHist||[]).length} documento(s) y se le agregan ${gems.length} más de tu reporte antiguo que YA existen como factura normal del sistema:\n\n${lista}\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos +$${formatNum(totIng)} · Costo de venta +$${formatNum(totCos)} (con las demás facturas del mes, ${m.nombre} suma $${formatNum(totMes)} de ingresos netos, el total de tu reporte antiguo).\nCada documento va en su fecha, en la cuenta de ingreso y de costo «Con OP» o «Sin OP» como en tu reporte, y se cierra contra (UTILIDAD) PÉRDIDA ACUMULADA, igual que los demás.\n\nLas líneas que el comprobante ya tiene NO cambian: solo se agregan las de estos documentos. Antes de cambiarlo, la versión actual se guarda en la Papelera (recuperable). No toca Cuentas por Cobrar, IVA, Bancos ni las facturas normales. ¿Continuar?` : `Se va a registrar el comprobante manual «${nro}» con el ingreso y el costo de venta de ${gems.length} documento(s) de tu reporte antiguo de ${m.nombre} que YA existen como factura normal del sistema:\n\n${lista}\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos +$${formatNum(totIng)} · Costo de venta +$${formatNum(totCos)} (con las demás facturas del mes, ${m.nombre} suma $${formatNum(totMes)} de ingresos netos, el total de tu reporte antiguo).\nCada documento va en su fecha, en la cuenta de ingreso y de costo «Con OP» o «Sin OP» como en tu reporte, y se cierra contra (UTILIDAD) PÉRDIDA ACUMULADA, igual que los demás ajustes históricos.\n\nNo toca Cuentas por Cobrar, IVA, Bancos ni las facturas normales (siguen exactamente como están). Se puede quitar después (queda en la Papelera). ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const fechaAj = gems.map(g=>g.f.fecha).sort().slice(-1)[0];
               const batch = writeBatch(db);
               const id = idAjusteRealHist(m.ym);
-              batch.set(getDocRef('comprobantes_ajustes', id), {id, fecha:fechaAj, nroComprobante:nro, concepto:`${m.nombre} — ingreso y costo de ${gems.length} factura(s) normal(es) del sistema que ya están en el reporte antiguo (${gems.map(g=>g.f.doc).join(', ')}) — se registra aquí para que el Estado de Resultados cuadre con ese reporte; las facturas normales no se tocan`, tasa:Number(gems[0].f.tasa)||0, lineas, docsHist:gems.map(g=>g.f.doc), createdAt:Date.now(), user:'Importación Histórica (Excel)', origen:'historico_real'});
-              await batch.commit();
-              logAuditoria(appUser,'Ventas','CREACIÓN',`Ingreso y costo de ${gems.length} factura(s) normales de ${m.nombre} registrados (${nro}): Ingresos $${formatNum(totIng)} · Costo de venta $${formatNum(totCos)}`);
-              alert(`Listo — se registró «${nro}» con ${gems.length} documento(s) (Ingresos $${formatNum(totIng)} · Costo de venta $${formatNum(totCos)}). Con las demás facturas de ${m.nombre} creadas, el Estado de Resultados suma $${formatNum(totMes)} de ingresos netos, como tu reporte antiguo.`);
+              const conceptoReal = (docs) => `${m.nombre} — ingreso y costo de ${docs.length} factura(s) normal(es) del sistema que ya están en el reporte antiguo (${docs.join(', ')}) — se registra aquí para que el Estado de Resultados cuadre con ese reporte; las facturas normales no se tocan`;
+              if(act){
+                // El comprobante ya existe: se le AGREGAN las líneas de los documentos que faltan (las que ya tiene no cambian) y la versión actual queda en la Papelera.
+                const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+                const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+                batch.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'comprobantes_ajustes', docId:String(rl.aj.id), datos:rl.aj, resumen:`Ajuste (versión anterior, antes de actualizarlo) — ${rl.aj.concepto||rl.aj.id}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:Date.now()});
+                const docsTodos = [...(Array.isArray(rl.aj.docsHist) ? rl.aj.docsHist : []), ...gems.map(g=>g.f.doc)];
+                batch.set(getDocRef('comprobantes_ajustes', id), {...rl.aj, fecha:[rl.aj.fecha, fechaAj].filter(Boolean).sort().slice(-1)[0], concepto:conceptoReal(docsTodos), lineas:[...(Array.isArray(rl.aj.lineas) ? rl.aj.lineas : []), ...lineas], docsHist:docsTodos, updatedAt:Date.now()});
+                await batch.commit();
+                logAuditoria(appUser,'Ventas','EDICIÓN',`Comprobante ${nro} de ${m.nombre} ACTUALIZADO: +${gems.length} documento(s) (${gems.map(g=>g.f.doc).join(', ')}) · Ingresos +$${formatNum(totIng)} · Costo de venta +$${formatNum(totCos)} — la versión anterior quedó en la Papelera`);
+                alert(`Listo — se actualizó «${nro}»: ahora cubre ${docsTodos.length} documento(s) (Ingresos $${formatNum(r2n(rl.ingAj+totIng))} · Costo de venta $${formatNum(r2n(rl.cosAj+totCos))}); la versión anterior quedó en la Papelera. Con las demás facturas de ${m.nombre} creadas, el Estado de Resultados suma $${formatNum(totMes)} de ingresos netos, como tu reporte antiguo.`);
+              } else {
+                batch.set(getDocRef('comprobantes_ajustes', id), {id, fecha:fechaAj, nroComprobante:nro, concepto:conceptoReal(gems.map(g=>g.f.doc)), tasa:Number(gems[0].f.tasa)||0, lineas, docsHist:gems.map(g=>g.f.doc), createdAt:Date.now(), user:'Importación Histórica (Excel)', origen:'historico_real'});
+                await batch.commit();
+                logAuditoria(appUser,'Ventas','CREACIÓN',`Ingreso y costo de ${gems.length} factura(s) normales de ${m.nombre} registrados (${nro}): Ingresos $${formatNum(totIng)} · Costo de venta $${formatNum(totCos)}`);
+                alert(`Listo — se registró «${nro}» con ${gems.length} documento(s) (Ingresos $${formatNum(totIng)} · Costo de venta $${formatNum(totCos)}). Con las demás facturas de ${m.nombre} creadas, el Estado de Resultados suma $${formatNum(totMes)} de ingresos netos, como tu reporte antiguo.`);
+              }
             } catch(err){ alert('Error al registrar el comprobante: '+err.message); }
             finally{ setImportandoHist(false); }
           };
@@ -45022,7 +45172,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               <div className="flex-1 min-w-[320px] space-y-1">
                                 {rl.gem.length>0 && (
                                   <div data-testid={'fact-hist-real-lista-'+m.ym} className="font-bold">
-                                    ℹ️ {rl.gem.length} documento(s) de {m.corto} de tu reporte YA existen como factura normal del sistema (mismo cliente, fecha y monto base), por eso NO se crean: {rl.gem.map(g=>detalleGemHist(g)).join(' | ')}. Esas facturas normales no se tocan: siguen con su IVA, NE, cobros y OP.
+                                    ℹ️ {rl.gem.length} documento(s) de {m.corto} de tu reporte YA existen como factura normal del sistema (mismo cliente, fecha y monto base, o la factura se hizo desde su NE), por eso NO se crean: {rl.gem.map(g=>detalleGemHist(g)).join(' | ')}. Esas facturas normales no se tocan: siguen con su IVA, NE, cobros y OP.
                                   </div>
                                 )}
                                 {rl.gem.length>0 && !rl.aj && (
@@ -45042,7 +45192,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                 )}
                                 {rl.aj && rl.porCubrir.length>0 && (
                                   <div data-testid={'fact-hist-real-sincub-'+m.ym} className="font-bold text-red-700">
-                                    ⚠️ {rl.porCubrir.length} documento(s) más ya existen como factura normal y NO están en el comprobante «{nroAj}»: {rl.porCubrir.map(g=>g.f.doc).join(', ')}. Pulsa «Quitar comprobante» y regístralo de nuevo.
+                                    ⚠️ {rl.porCubrir.length} documento(s) más ya existen como factura normal y NO están en el comprobante «{nroAj}»: {rl.porCubrir.map(g=>g.f.doc).join(', ')}. Pulsa «Actualizar comprobante (+{rl.porCubrir.length})» para agregarlos (las líneas que ya tiene no cambian y la versión actual queda en la Papelera).
                                   </div>
                                 )}
                                 {rl.huerfanas.length>0 && (
@@ -45064,6 +45214,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                               {rl.gem.length>0 && !rl.aj && (
                                 <button data-testid={'fact-hist-real-registrar-'+m.ym} onClick={()=>registrarRealesHistoricasMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
                                   <FileCheck size={14}/> {importandoHist?'Registrando...':`Registrar ingreso y costo (${rl.gem.length})`}
+                                </button>
+                              )}
+                              {rl.aj && rl.porCubrir.length>0 && (
+                                <button data-testid={'fact-hist-real-actualizar-'+m.ym} onClick={()=>registrarRealesHistoricasMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
+                                  <FileCheck size={14}/> {importandoHist?'Actualizando...':`Actualizar comprobante (+${rl.porCubrir.length})`}
                                 </button>
                               )}
                               {rl.aj && (
