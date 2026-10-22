@@ -21493,6 +21493,34 @@ const dejarAjustesHistSoloGastosTodos = async (ajustes, appUser) => {
     return true;
   }catch(e){ alert('Error: '+e.message); return false; }
 };
+// ── Meses SIN reporte antiguo (mayo en adelante): el ajuste «HIST-<MES>-2026» del sistema anterior trae Ventas, Costo de venta y Gastos; las Ventas y el Costo de venta salen de las FACTURAS REALES del sistema (comprobante «HIST-REAL-<mes>»),
+// así que ese ajuste debe quedar SOLO con los Gastos. A diferencia de enero-abril (lista fija) las líneas que quedan se calculan del propio ajuste: se quitan Ingresos (4.x) y Costo de venta (5.1.01.01.001 / 002) y la línea de cierre
+// contra utilidad acumulada (3.3.01.01.002) se recalcula con lo que queda, para que el ajuste siga cuadrado en USD y en Bs. ──
+const lineasAjusteSoloGastosDin = (aj) => {
+  const ls = Array.isArray(aj?.lineas) ? aj.lineas : [];
+  const cod = (l) => String(l?.codigo||'');
+  const esQuitar = (l) => /^4/.test(cod(l)) || cod(l)==='5.1.01.01.001' || cod(l)==='5.1.01.01.002';
+  const esCierre = (l) => cod(l)==='3.3.01.01.002';
+  const r2 = (n) => Math.round((n+(n<0?-1e-9:1e-9))*100)/100;
+  const quedan = ls.filter(l=>!esQuitar(l) && !esCierre(l)).map(l=>({...l}));
+  const cierre = ls.find(esCierre);
+  const dif = (k) => r2(quedan.reduce((sm,l)=>sm+(Number(l[k])||0)*(l.tipo==='D'?1:-1),0));   // Debe − Haber de lo que queda
+  const dU = dif('montoUSD'), dB = dif('montoBs');
+  const sU = Math.abs(dU)>0.004 ? (dU>0?1:-1) : 0, sB = Math.abs(dB)>0.004 ? (dB>0?1:-1) : 0;
+  const linCierre = (usd, bs, tipo) => ({codigo:'3.3.01.01.002', cuenta:cierre?.cuenta||'(UTILIDAD) PÉRDIDA ACUMULADA', tipo, montoUSD:Math.abs(usd), montoBs:Math.abs(bs), detalle:'Cierre de Gastos del mes (Ingresos y Costo de Venta salen de las facturas reales del sistema)'});
+  if(sU!==0 || sB!==0){
+    if(sU*sB>=0) quedan.push(linCierre(dU, dB, (sU||sB)>0 ? 'H' : 'D'));          // Debe > Haber → el cierre va al Haber (igual que en enero-abril)
+    else { quedan.push(linCierre(dU, 0, sU>0?'H':'D')); quedan.push(linCierre(0, dB, sB>0?'H':'D')); }   // signos distintos: una línea por moneda
+  }
+  return quedan;
+};
+// Agrega a un lote: el ajuste actual a la Papelera (recuperable) + sus líneas reemplazadas por las de «solo Gastos». Solo toca ese ajuste.
+const agregarSoloGastosAlLote = (batch, a, nuevas, appUser) => {
+  const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+  const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  batch.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'comprobantes_ajustes', docId:String(a.id), datos:a, resumen:`Ajuste antes de dejarlo solo con Gastos — ${a.concepto||a.id}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:Date.now()});
+  batch.update(getDocRef('comprobantes_ajustes', a.id), {lineas:nuevas, updatedAt:Date.now()});
+};
 // Tasa de cambio: hasta 4 decimales (mínimo 2)
 const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4, useGrouping: 'always' }).format(num || 0);
 
@@ -45057,6 +45085,219 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             } catch(err){ alert('Error al quitar el comprobante: '+err.message); }
             finally{ setImportandoHist(false); }
           };
+          // ═══ MESES ANTERIORES AL «INICIO DE CONTABILIDAD REAL» CON FACTURAS REALES DEL SISTEMA (mayo, junio, julio) ═══
+          // Estos meses no tienen reporte antiguo que importar: el sistema anterior dejó su ingreso y costo de venta en el ajuste «HIST-<MES>-2026». Para que el Estado de Resultados salga IGUAL que el Reporte General de Ventas y Costos y
+          // que el Libro de Ventas, el ingreso y el costo salen de las FACTURAS REALES de cada mes (por la fecha de su Nro. Fiscal, como esos dos reportes) y el ajuste se deja solo con los Gastos. Como el mes es anterior a la fecha de inicio
+          // las facturas no entran solas al Estado de Resultados: se registran como UN comprobante manual «HIST-REAL-<mes>» (cada factura en su fecha, con las mismas cuentas de ingreso y de costo que usaría el sistema y contra utilidad acumulada,
+          // como los demás ajustes históricos); no toca Cuentas por Cobrar, IVA, Bancos ni las facturas. Los Bs. son los propios de cada factura (los mismos del Libro de Ventas).
+          const MESES_REAL_PREV = [{ym:'2026-05', nombre:'Mayo 2026', corto:'mayo', ajuste:'HIST-MAYO-2026', fin:'31'}, {ym:'2026-06', nombre:'Junio 2026', corto:'junio', ajuste:'HIST-JUNIO-2026', fin:'30'}, {ym:'2026-07', nombre:'Julio 2026', corto:'julio', ajuste:'HIST-JULIO-2026', fin:'31'}];
+          const idAjusteRealMes = (ym) => `HIST-REAL-${ym}`;
+          const nroAjusteRealMes = (m) => `HIST-REAL-${m.corto.toUpperCase()}-2026`;
+          const r2rm = (n) => Math.round((n+(n<0?-1e-9:1e-9))*100)/100;
+          const nfRealMes = (f) => { const x = String(f?.nroFiscal||'').trim(); return x==='—' ? '' : x; };
+          const fechaRealMes = (f) => String(f?.fechaFactura||f?.fecha||'').substring(0,10);
+          // Facturas reales de un mes: por la fecha de su Nro. Fiscal, solo las que tienen Nro. Fiscal y sin duplicados por número fiscal (queda la más reciente) — el mismo criterio del Reporte General de Ventas y Costos.
+          const facturasRealesMes = (ym) => {
+            const visto = new Map();
+            (invoices||[]).forEach(f=>{
+              if(!f || f.esAnulacionFiscal) return;
+              const nf = f.nroFiscal || f.documento || '';
+              if(!nf) return;
+              const p = visto.get(nf);
+              if(!p || (f.timestamp||0) >= (p.timestamp||0)) visto.set(nf, f);
+            });
+            return (invoices||[]).filter(f=>{
+              if(!f || f.esAnulacionFiscal || _esFacturaHistImport(f)) return false;
+              if(!nfRealMes(f)) return false;
+              if(visto.get(f.nroFiscal || f.documento || '')?.id !== f.id) return false;
+              return fechaRealMes(f).startsWith(ym);
+            }).sort((a,b)=>fechaRealMes(a).localeCompare(fechaRealMes(b)) || nfRealMes(a).localeCompare(nfRealMes(b)));
+          };
+          // Líneas del comprobante de un mes: por cada factura su ingreso (mismo asiento de venta que usa el sistema: cuenta Con/Sin OP, Bs. propios de la factura = los del Libro de Ventas), su costo de venta (mismo cálculo del sistema,
+          // con la tasa de la factura) y el cierre contra utilidad acumulada; lo mismo con las notas de crédito/débito FISCALES del mes. Devuelve también los avisos (datos de las facturas que explican diferencias contra tus reportes).
+          const calcRealMes = (m) => {
+            const facts = facturasRealesMes(m.ym);
+            const lineas = [], docs = {}, faltanCfg = new Set(), sinCosto = [], baseDist = [], bsDist = [], errores = [];
+            const codDe = (c) => String(c||'').split('—')[0].trim();
+            const nomDe = (c) => String(c||'').split('—').slice(1).join('—').trim() || String(c||'').trim();
+            const emitir = (clave, fecha, quien, ingL, cosL) => {
+              let ing=0, ingBs=0, cos=0, cosBs=0;
+              ingL.forEach(l=>{
+                if(Math.abs(l.usd)<=0.004 && Math.abs(l.bs)<=0.004) return;
+                lineas.push({codigo:l.codigo, cuenta:l.cuenta, tipo:l.tipo, montoUSD:l.usd, montoBs:l.bs, fecha, detalle:`${quien} · ${l.det}`});
+                const sg = l.tipo==='H' ? 1 : -1; ing += sg*l.usd; ingBs += sg*l.bs;
+              });
+              cosL.forEach(l=>{
+                if(Math.abs(l.usd)<=0.004 && Math.abs(l.bs)<=0.004) return;
+                lineas.push({codigo:l.codigo, cuenta:l.cuenta, tipo:l.tipo, montoUSD:l.usd, montoBs:l.bs, fecha, detalle:`${quien} · ${l.det}`});
+                const sg = l.tipo==='D' ? 1 : -1; cos += sg*l.usd; cosBs += sg*l.bs;
+              });
+              ing = r2rm(ing); ingBs = r2rm(ingBs); cos = r2rm(cos); cosBs = r2rm(cosBs);
+              const netU = r2rm(ing-cos), netB = r2rm(ingBs-cosBs);
+              const sU = Math.abs(netU)>0.004 ? (netU>0?1:-1) : 0, sB = Math.abs(netB)>0.004 ? (netB>0?1:-1) : 0;
+              const lcierre = (usd, bs, tipo) => ({codigo:'3.3.01.01.002', cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA', tipo, montoUSD:Math.abs(usd), montoBs:Math.abs(bs), fecha, detalle:`Cierre del ingreso y costo de ${quien} contra utilidad acumulada (como los demás ajustes históricos)`});
+              if(sU!==0 || sB!==0){
+                if(sU*sB>=0) lineas.push(lcierre(netU, netB, (sU||sB)>0 ? 'D' : 'H'));      // ingreso (Haber) − costo (Debe) positivo → el cierre va al Debe (igual que abril)
+                else { lineas.push(lcierre(netU, 0, sU>0?'D':'H')); lineas.push(lcierre(0, netB, sB>0?'D':'H')); }   // signos distintos: una línea por moneda
+              }
+              docs[clave] = [ing, ingBs, cos, cosBs];
+            };
+            facts.forEach(f=>{
+              try{
+                const nf = nfRealMes(f), fecha = fechaRealMes(f), cli = f.clientName||f.client||'—', quien = `${nf} · ${cli}`;
+                const tasaEf = parseNum(f.tasa||0) || parseNum(settings?.tasaBCV||0) || 1;
+                const baseUsd = parseNum(f.montoBase||0);
+                const baseBsEf = parseNum(f.baseGravableBs||0) || baseUsd*tasaEf;      // igual que el Libro de Ventas y el Reporte: el Bs. propio de la factura; si no tiene, USD × tasa
+                const as = generarAsientoVenta({...f, tasa:tasaEf, baseGravableBs:baseBsEf}, cuentasIngresoCfg, planDeCuentas, clients, notasEntrega);
+                const ingL = (as.lineas||[]).filter(l=>l.tipo==='CREDITO' && /^4/.test(codDe(l.cuenta))).map(l=>({codigo:codDe(l.cuenta), cuenta:nomDe(l.cuenta), tipo:'H', usd:r2rm(l.montoUSD||0), bs:r2rm(l.montoBs||0), det:`factura ${f.documento||f.id} · venta ${/^Venta con OP/.test(l.concepto||'')?'con':'sin'} OP`}));
+                const rc = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg||{}, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:tasaEf, tabId:null, aplicarReclas:null, simulacionCostos:null, notasEntrega});
+                const cosL = [];
+                (rc?.lineas||[]).forEach(l=>{
+                  const cod = String(l.codigo||'');
+                  const esCosto = /^Costo de venta/.test(l.detalle||'');
+                  if(esCosto && cod===''){ faltanCfg.add(/con OP/.test(l.detalle||'') ? 'Costo de venta (producción / con OP)' : 'Costo de venta (mercancía)'); return; }
+                  if(!/^5/.test(cod)) return;                                           // solo la cuenta de costo de venta: el inventario es de balance y no entra
+                  const u = (l.debeUSD||0)-(l.haberUSD||0), b = (l.debeBs||0)-(l.haberBs||0);
+                  const esD = Math.abs(u)>0.004 ? u>0 : b>=0;                          // normal: Debe; una devolución histórica (Haber) resta costo
+                  cosL.push({codigo:cod, cuenta:l.cuenta, tipo:esD?'D':'H', usd:r2rm(Math.abs(u)), bs:r2rm(Math.abs(b)), det:`costo de venta${/con OP/.test(l.detalle||'')?' (con OP)':' (sin OP)'}`});
+                });
+                emitir(nf, fecha, quien, ingL, cosL);
+                const its = f.itemsFacturados||[];
+                if(its.some(it=>parseNum(it.cantidad||0)>0 && !(parseNum(it.costoTotal||0) || parseNum(it.costoUnit||0)))) sinCosto.push(nf);
+                const sumIt = its.length===0 ? baseUsd : its.reduce((sm,it)=>{ const q = parseNum(it.cantidad||1), pu = parseNum(it.precioUnit||0); return sm + (pu>0 ? pu*q : baseUsd/its.length); }, 0);
+                if(Math.abs(sumIt-baseUsd)>0.015) baseDist.push({nf, cli, base:baseUsd, items:r2rm(sumIt)});
+                const bsImp = baseUsd*tasaEf;
+                if(Math.abs(baseBsEf-bsImp) > Math.max(10, 0.005*Math.abs(baseBsEf))) bsDist.push({nf, cli, baseBs:r2rm(baseBsEf), usdBs:r2rm(bsImp), usd:baseUsd, tasa:tasaEf});
+              }catch(e){ errores.push(`${nfRealMes(f)}: ${e.message}`); }
+            });
+            // Notas de crédito/débito FISCALES del mes (no las de anulación fiscal): reparten el ingreso igual que la factura que corrigen (mismas reglas del Estado de Resultados)
+            const notas = (notasVentaCD||[]).filter(n=>n && n.naturaleza==='FISCAL' && !n.esAnulacionFiscal).map(n=>({n, fRef:n.facturaId?(invoices||[]).find(f=>f.id===n.facturaId):null})).filter(x=>String(x.fRef?.fechaFactura||x.n.fecha||'').substring(0,10).startsWith(m.ym));
+            notas.forEach(({n, fRef})=>{
+              try{
+                const fecha = String(fRef?.fechaFactura||n.fecha||'').substring(0,10);
+                const tasa = Number(n.tasaFactura||n.tasa||0) || Number(settings?.tasaBCV||0) || 1;
+                const montoBs = Number(n.monto||0), montoUSD = tasa ? montoBs/tasa : 0;
+                const esNC = n.tipo==='NC';
+                const fr = opaFraccionOpFactura(fRef);
+                const tieneOp = fr!==null ? fr>=0.999 : !!(fRef?.opAsignada||(fRef?.opsAsignadas&&fRef.opsAsignadas.length>0));
+                const mixta = fr!==null && fr>0.001 && fr<0.999;
+                const cfgIng = (op) => (op ? cuentasIngresoCfg?.conOpNombre : cuentasIngresoCfg?.sinOpNombre) || (op ? '4.1.01.01.001 — Ingresos por Ventas (Con OP)' : '4.1.01.02.001 — Ingresos por Ventas (Sin OP)');
+                const partes = mixta
+                  ? (()=>{ const bO = r2rm(montoBs*fr), uO = montoUSD*fr; return [{op:true, usd:uO, bs:bO}, {op:false, usd:montoUSD-uO, bs:r2rm(montoBs-bO)}]; })()
+                  : [{op:tieneOp, usd:montoUSD, bs:montoBs}];
+                const ingL = partes.map(p=>({codigo:codDe(cfgIng(p.op)), cuenta:nomDe(cfgIng(p.op)), tipo:esNC?'D':'H', usd:r2rm(p.usd), bs:r2rm(p.bs), det:`${n.tipo} ${n.nroDocumento||n.id}${fRef?` sobre factura ${nfRealMes(fRef)||fRef.documento||fRef.id}`:''} · ${p.op?'con':'sin'} OP`}));
+                emitir(`${n.tipo}:${n.nroDocumento||n.id}`, fecha, `${n.tipo} ${n.nroDocumento||n.id} · ${n.clientName||fRef?.clientName||'—'}`, ingL, []);
+              }catch(e){ errores.push(`${n.tipo} ${n.nroDocumento||n.id}: ${e.message}`); }
+            });
+            const suma = (re, pos, k) => r2rm(lineas.filter(l=>re.test(l.codigo)).reduce((sm,l)=>sm+(l[k]||0)*(l.tipo===pos?1:-1),0));
+            const tot = {ing:suma(/^4/,'H','montoUSD'), ingBs:suma(/^4/,'H','montoBs'), cos:suma(/^5/,'D','montoUSD'), cosBs:suma(/^5/,'D','montoBs')};
+            const sinFiscal = (invoices||[]).filter(f=>f && !f.esAnulacionFiscal && !_esFacturaHistImport(f) && !nfRealMes(f) && fechaRealMes(f).startsWith(m.ym));
+            const divergentes = (invoices||[]).filter(f=>f && !f.esAnulacionFiscal && !_esFacturaHistImport(f) && nfRealMes(f) && f.fechaFactura && String(f.fecha||'').substring(0,7)===m.ym && String(f.fechaFactura).substring(0,7)!==m.ym);
+            return {facts, notas, lineas, docs, tot, faltanCfg:[...faltanCfg], sinCosto, baseDist, bsDist, errores, sinFiscal, divergentes};
+          };
+          // Estado de un mes: lo que saldría de las facturas hoy, lo que ya tiene registrado el comprobante «HIST-REAL-<mes>» y lo que todavía trae el ajuste del sistema anterior.
+          const estadoRealMes = (m) => {
+            const c = calcRealMes(m);
+            const aj = (ajustesApp||[]).find(a=>a.id===idAjusteRealMes(m.ym)) || null;
+            const corte = String(settings?.fechaInicioContabilidad||'');
+            // «Inicio de Contabilidad Real»: una factura con fecha igual o posterior ENTRA SOLA al Estado de Resultados (sin fecha de inicio entra todo): el comprobante la sumaría otra vez.
+            const enER = c.facts.filter(f=>!corte || fechaRealMes(f)>=corte);
+            const lAj = Array.isArray(aj?.lineas) ? aj.lineas : [];
+            const sAj = (re, pos, k) => r2rm(lAj.filter(l=>re.test(String(l.codigo||''))).reduce((sm,l)=>sm+(Number(l[k])||0)*(l.tipo===pos?1:-1),0));
+            const ajTot = {ing:sAj(/^4/,'H','montoUSD'), ingBs:sAj(/^4/,'H','montoBs'), cos:sAj(/^5/,'D','montoUSD'), cosBs:sAj(/^5/,'D','montoBs')};
+            const nuevos = [], quitados = [], cambiados = [];
+            let desact = false;
+            if(aj){
+              const g = (aj.resumenDocs && typeof aj.resumenDocs==='object') ? aj.resumenDocs : null;
+              if(g){
+                Object.keys(c.docs).forEach(k=>{ if(!(k in g)) nuevos.push(k); else if(c.docs[k].some((v,i)=>Math.abs(v-(Number((g[k]||[])[i])||0))>0.009)) cambiados.push(k); });
+                Object.keys(g).forEach(k=>{ if(!(k in c.docs)) quitados.push(k); });
+                desact = nuevos.length+quitados.length+cambiados.length>0;
+              }
+              if(!desact) desact = ['ing','ingBs','cos','cosBs'].some(k=>Math.abs(ajTot[k]-c.tot[k])>0.009);
+            }
+            const ajM = ajusteMesHist(m.ajuste);
+            return {...c, aj, ajTot, desact, nuevos, quitados, cambiados, corte, enER, ajM, resAj:ajM ? resumenIngCostoAjHist(ajM) : null};
+          };
+          const textoDifRealMes = (s) => {
+            const nom = (k) => /^(NC|ND):/.test(k) ? k.replace(':',' ') : k;
+            const partes = [];
+            if(s.nuevos.length) partes.push(`${s.nuevos.length} nueva(s) (${s.nuevos.slice(0,8).map(nom).join(', ')}${s.nuevos.length>8?'…':''})`);
+            if(s.quitados.length) partes.push(`${s.quitados.length} que ya no está(n) (${s.quitados.slice(0,8).map(nom).join(', ')}${s.quitados.length>8?'…':''})`);
+            if(s.cambiados.length) partes.push(`${s.cambiados.length} con montos distintos (${s.cambiados.slice(0,8).map(nom).join(', ')}${s.cambiados.length>8?'…':''})`);
+            return partes.length ? partes.join(' · ') : `Ingresos $${formatNum(s.ajTot.ing)} → $${formatNum(s.tot.ing)} · Costo de venta $${formatNum(s.ajTot.cos)} → $${formatNum(s.tot.cos)}`;
+          };
+          const registrarRealMes = async (m) => {
+            if(importandoHist) return;
+            const s = estadoRealMes(m);
+            if(s.facts.length+s.notas.length===0){ alert(`No hay facturas reales de ${m.nombre} con Nro. Fiscal: no hay nada que registrar.`); return; }
+            if(s.enER.length>0){ alert(`«Inicio de Contabilidad Real» está ${s.corte?`en ${fechaLargaDupHist(s.corte)}`:'sin definir'} y ${s.enER.length} de las facturas de ${m.nombre} (${s.enER.slice(0,10).map(nombreFacDupHist).join(', ')}${s.enER.length>10?'…':''}) YA entran al Estado de Resultados por sí solas: el comprobante las sumaría dos veces, por eso no se registra.\n\nRevisa esa fecha en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al ${m.fin} de ${m.corto} de 2026).`); return; }
+            if(s.errores.length){ alert(`No se pudo calcular el ingreso o el costo de: ${s.errores.slice(0,5).join(' | ')}. No se registró nada.`); return; }
+            if(s.faltanCfg.length){ alert(`Falta configurar en Contabilidad → Configuración de cuentas: ${s.faltanCfg.join(' y ')}. Sin eso no se puede registrar el costo de venta de estas facturas.`); return; }
+            if(s.aj && !s.desact){ alert(`El comprobante «${s.aj.nroComprobante||s.aj.id}» de ${m.nombre} ya está al día con las facturas — no hay nada que actualizar.`); return; }
+            const act = !!s.aj;
+            const nro = act ? (s.aj.nroComprobante||nroAjusteRealMes(m)) : nroAjusteRealMes(m);
+            const ajM = s.ajM, rAj = s.resAj;
+            const quitaAj = !!(ajM && rAj && rAj.n>0);
+            const nuevasAj = quitaAj ? lineasAjusteSoloGastosDin(ajM) : null;
+            const fechaAj = s.lineas.map(l=>l.fecha).filter(Boolean).sort().slice(-1)[0] || `${m.ym}-${m.fin}`;
+            const nF = s.facts.length, nN = s.notas.length;
+            const conceptoReal = `${m.nombre} — ingreso y costo de ${nF} factura(s) real(es) del sistema${nN?` y ${nN} nota(s) fiscal(es)`:''} (las mismas del Reporte General de Ventas y Costos y del Libro de Ventas de ${m.corto}) — se registra aquí porque ${m.corto} es anterior al «Inicio de Contabilidad Real»; las facturas no se tocan`;
+            if(!window.confirm(`Se va a ${act?'ACTUALIZAR':'REGISTRAR'} el comprobante «${nro}» de ${m.nombre} con las facturas REALES del sistema (por la fecha de su Nro. Fiscal, como tu Reporte General de Ventas y Costos y el Libro de Ventas):\n\n• ${nF} factura(s)${nN?` y ${nN} nota(s) de crédito/débito fiscal(es)`:''}\n• Ingresos netos: $${formatNum(s.tot.ing)} (Bs. ${formatNum(s.tot.ingBs)})\n• Costo de venta neto: $${formatNum(s.tot.cos)} (Bs. ${formatNum(s.tot.cosBs)})${act?`\n• Hoy el comprobante trae: Ingresos $${formatNum(s.ajTot.ing)} · Costo de venta $${formatNum(s.ajTot.cos)} (${textoDifRealMes(s)}); la versión actual queda en la Papelera.`:''}${quitaAj?`\n\nAdemás se quita del ajuste «${m.ajuste}» lo que trae de Ingresos y Costo de Venta (${rAj.texto}): sus Gastos quedan como están y el ajuste actual queda en la Papelera. Sin esto ${m.corto} contaría las ventas dos veces.`:(ajM?'':`\n\nNo hay ajuste «${m.ajuste}»: no se quita nada.`)}\n\nNo toca Cuentas por Cobrar, IVA, Bancos ni las facturas. ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              const id = idAjusteRealMes(m.ym);
+              const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+              if(act){
+                const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+                batch.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'comprobantes_ajustes', docId:String(s.aj.id), datos:s.aj, resumen:`Ajuste (versión anterior, antes de actualizarlo) — ${s.aj.concepto||s.aj.id}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:Date.now()});
+              }
+              batch.set(getDocRef('comprobantes_ajustes', id), {id, fecha:fechaAj, nroComprobante:nro, concepto:conceptoReal, tasa:Number(s.facts[0]?.tasa)||0, lineas:s.lineas, docsHist:Object.keys(s.docs), resumenDocs:s.docs, createdAt:act?(s.aj.createdAt||Date.now()):Date.now(), ...(act?{updatedAt:Date.now()}:{}), user:act?(s.aj.user||quien):quien, origen:'historico_real', fuente:'facturas_reales'});
+              if(quitaAj) agregarSoloGastosAlLote(batch, ajM, nuevasAj, appUser);
+              await batch.commit();
+              logAuditoria(appUser,'Ventas',act?'EDICIÓN':'CREACIÓN',`Comprobante ${nro} de ${m.nombre} ${act?'ACTUALIZADO':'REGISTRADO'} con las facturas reales: ${nF} factura(s)${nN?` y ${nN} nota(s)`:''} · Ingresos $${formatNum(s.tot.ing)} · Costo de venta $${formatNum(s.tot.cos)}${quitaAj?` · el ajuste ${m.ajuste} quedó solo con Gastos (se quitó ${rAj.texto})`:''}${act?' — la versión anterior quedó en la Papelera':''}`);
+              alert(`Listo — «${nro}» ${act?'actualizado':'registrado'}: ${nF} factura(s)${nN?` y ${nN} nota(s)`:''} · Ingresos $${formatNum(s.tot.ing)} (Bs. ${formatNum(s.tot.ingBs)}) · Costo de venta $${formatNum(s.tot.cos)}.${quitaAj?` El ajuste «${m.ajuste}» quedó solo con Gastos.`:''} El Estado de Resultados de ${m.nombre} ya sale con las facturas reales.`);
+            } catch(err){ alert('Error al registrar el comprobante: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
+          const quitarRealMes = async (m) => {
+            if(importandoHist) return;
+            const aj = (ajustesApp||[]).find(a=>a.id===idAjusteRealMes(m.ym));
+            if(!aj){ alert(`No hay comprobante de facturas reales de ${m.nombre} para quitar.`); return; }
+            if(!window.confirm(`Se va a quitar el comprobante «${aj.nroComprobante||aj.id}» (ingreso y costo de las facturas reales de ${m.nombre}). Se archiva en la Papelera (recuperable); ${m.nombre} vuelve a salir sin esas ventas ni ese costo en el Estado de Resultados.\n\nNo toca facturas, ni otros ajustes ni cobros: si el ajuste «${m.ajuste}» ya quedó solo con Gastos, sus Ingresos y Costo de Venta del sistema anterior los recuperas desde la Papelera. ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+              const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+              batch.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'comprobantes_ajustes', docId:String(aj.id), datos:aj, resumen:`Ajuste — ${aj.concepto||aj.id}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:Date.now()});
+              batch.delete(getDocRef('comprobantes_ajustes', aj.id));
+              await batch.commit();
+              logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Comprobante de facturas reales de ${m.nombre} quitado (${aj.nroComprobante||aj.id}) — archivado en la Papelera`);
+              alert(`Listo — se quitó «${aj.nroComprobante||aj.id}» (queda en la Papelera).`);
+            } catch(err){ alert('Error al quitar el comprobante: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
+          // Solo quita Ingresos y Costo de venta del ajuste del mes (para el caso en que el comprobante ya está y el ajuste todavía los trae: se contarían dos veces)
+          const dejarSoloGastosMesReal = async (m) => {
+            if(importandoHist) return;
+            const a = ajusteMesHist(m.ajuste);
+            if(!a){ alert(`No se encontró el ajuste «${m.ajuste}».`); return; }
+            const r = resumenIngCostoAjHist(a);
+            if(r.n===0){ alert(`El ajuste «${m.ajuste}» ya está solo con Gastos: no hay nada que quitar.`); return; }
+            const nuevas = lineasAjusteSoloGastosDin(a);
+            if(!window.confirm(`Se va a dejar el ajuste «${m.ajuste}» solo con los Gastos de ${m.corto} (${nuevas.length} línea(s)).\n\nSe quitan: ${r.texto}.\nLas ventas y el costo de ${m.corto} salen de las facturas reales (comprobante «${nroAjusteRealMes(m)}»), así que se quitan para no contarlos dos veces. Solo cambia este ajuste y el actual queda guardado en la Papelera (recuperable). ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              agregarSoloGastosAlLote(batch, a, nuevas, appUser);
+              await batch.commit();
+              logAuditoria(appUser,'Contabilidad','EDICIÓN',`Ajuste ${m.ajuste} dejado solo con Gastos: se quitaron ${r.texto}`);
+              alert(`Listo — «${m.ajuste}» quedó solo con Gastos (se quitaron ${r.n} línea(s)). El ajuste anterior está en la Papelera.`);
+            } catch(err){ alert('Error: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
           const exportarNEExcel=()=>{
             const headers=['NE#','Fecha','Cliente','RIF','Territorio','Vendedor','OP','Monto','IVA','Total','Estatus','Factura'];
             const dataRows=neFiltradas.map(ne=>[ne.id,ne.fecha||'',ne.clientName||'',ne.clientRif||'',ne.territorio||'',ne.vendedor||'',opaTextoNE(ne),formatNum(ne.montoBase||0),formatNum(ne.ivaAmt||0),formatNum(ne.total||0),neEstatusLabel(ne.status),ne.facturaId||'']);
@@ -45283,6 +45524,108 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             </div>
                           </div>
                         )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+              {(() => {
+                // Meses anteriores al «Inicio de Contabilidad Real» con facturas reales del sistema (mayo, junio, julio): su ingreso y costo salen de esas facturas, no del ajuste del sistema anterior
+                const filasRM = MESES_REAL_PREV.map(m=>({m, s:estadoRealMes(m)})).filter(x=>x.s.facts.length>0 || x.s.notas.length>0 || x.s.aj);
+                if(filasRM.length===0) return null;
+                const lista = (arr, fn, n=8) => arr.slice(0,n).map(fn).join(' | ') + (arr.length>n ? ` | …y ${arr.length-n} más` : '');
+                return (
+                  <div data-testid="real-mes-panel" className="bg-orange-50 border-2 border-orange-200 rounded-2xl px-4 py-3 text-xs space-y-3">
+                    <div className="font-black text-orange-800 uppercase text-[10px] tracking-wide">🧾 Facturas reales → Estado de Resultados (meses anteriores al «Inicio de Contabilidad Real»)</div>
+                    <div className="text-[10px] font-semibold text-orange-700">El ingreso y el costo salen de las facturas reales del sistema, por la fecha de su Nro. Fiscal: son las mismas de tu Reporte General de Ventas y Costos y del Libro de Ventas, y los Bs. son los propios de cada factura (los del Libro). El ajuste «HIST-&lt;MES&gt;-2026» del sistema anterior se deja solo con los Gastos.</div>
+                    {filasRM.map(({m,s})=>{
+                      const nroAj = s.aj ? (s.aj.nroComprobante||s.aj.id) : nroAjusteRealMes(m);
+                      const alDia = !!s.aj && !s.desact;
+                      const nAj = s.resAj ? s.resAj.n : 0;
+                      return (
+                        <div key={m.ym} className="space-y-1">
+                          <div data-testid={'real-mes-'+m.ym} className="flex items-center gap-3 flex-wrap">
+                            <div className="font-bold text-orange-900 flex-1 min-w-[320px]">
+                              <span className="font-black">{m.nombre}</span> · {s.facts.length} factura(s) con Nro. Fiscal de {m.corto}{s.notas.length>0 ? ` + ${s.notas.length} nota(s) fiscal(es)` : ''} · Ingresos netos ${formatNum(s.tot.ing)} (Bs. {formatNum(s.tot.ingBs)}) · Costo de venta neto ${formatNum(s.tot.cos)} (Bs. {formatNum(s.tot.cosBs)})
+                              {alDia && nAj===0 && <span className="text-emerald-700"> · ✅ ya sale en el Estado de Resultados</span>}
+                            </div>
+                            {!s.aj && (s.facts.length+s.notas.length>0) && (
+                              <button data-testid={'real-mes-registrar-'+m.ym} onClick={()=>registrarRealMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
+                                <FileCheck size={14}/> {importandoHist?'Registrando...':`Pasar ${m.corto} al Estado de Resultados (${s.facts.length})`}
+                              </button>
+                            )}
+                            {s.aj && s.desact && (
+                              <button data-testid={'real-mes-actualizar-'+m.ym} onClick={()=>registrarRealMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
+                                <FileCheck size={14}/> {importandoHist?'Actualizando...':'Actualizar comprobante'}
+                              </button>
+                            )}
+                            {s.aj && (
+                              <button data-testid={'real-mes-quitar-'+m.ym} onClick={()=>quitarRealMes(m)} disabled={importandoHist} className="bg-white border-2 border-orange-300 text-orange-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase hover:bg-orange-100 disabled:opacity-50">
+                                Quitar comprobante
+                              </button>
+                            )}
+                          </div>
+                          {s.enER.length>0 && (
+                            <div data-testid={'real-mes-corte-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700">
+                              ⚠️ «Inicio de Contabilidad Real» está {s.corte ? `en ${fechaLargaDupHist(s.corte)}` : 'sin definir'}: {s.enER.length} de estas facturas ({s.enER.slice(0,8).map(nombreFacDupHist).join(', ')}{s.enER.length>8?'…':''}) YA entra(n) al Estado de Resultados por sí sola(s), así que {s.aj ? `el comprobante «${nroAj}» las suma dos veces: pulsa «Quitar comprobante» o corrige esa fecha` : 'NO registres el comprobante (las sumaría dos veces): corrige esa fecha'} en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al {m.fin} de {m.corto} de 2026).
+                            </div>
+                          )}
+                          {!s.aj && (
+                            <div data-testid={'real-mes-pend-'+m.ym} className={'pl-3 border-l-4 text-[10px] font-bold '+(s.ajM?'border-amber-400 text-amber-800':'border-slate-300 text-slate-600')}>
+                              {s.ajM?'⚠️':'ℹ️'} {s.ajM ? (nAj>0 ? `Hoy ${m.corto} sale en el Estado de Resultados desde el ajuste «${m.ajuste}» (sistema anterior): ${s.resAj.texto}. Eso NO es lo que dicen tus reportes de ventas.` : `El ajuste «${m.ajuste}» ya está solo con Gastos, así que ${m.corto} todavía no tiene ventas ni costo en el Estado de Resultados.`) : `No hay ajuste «${m.ajuste}» del sistema anterior: salvo que ya los hayas cargado a mano, ${m.corto} no tiene ventas ni costo en el Estado de Resultados.`} Al pulsar «Pasar {m.corto} al Estado de Resultados» se registra UN comprobante «{nroAj}» con las facturas reales (cada una en su fecha, contra utilidad acumulada, como los demás ajustes históricos){nAj>0 ? ` y el ajuste «${m.ajuste}» queda solo con sus Gastos (el actual se guarda en la Papelera)` : ''}; no toca Cuentas por Cobrar, IVA, Bancos ni las facturas.
+                            </div>
+                          )}
+                          {s.aj && (
+                            <div data-testid={'real-mes-reg-'+m.ym} className={'pl-3 border-l-4 text-[10px] font-bold '+(s.desact?'border-red-400 text-red-700':'border-emerald-400 text-emerald-700')}>
+                              {s.desact ? '⚠️' : '✅'} Registrado como comprobante «{nroAj}»: Ingresos ${formatNum(s.ajTot.ing)} (Bs. {formatNum(s.ajTot.ingBs)}) · Costo de venta ${formatNum(s.ajTot.cos)} (Bs. {formatNum(s.ajTot.cosBs)}){s.desact ? '' : ' — ya sale en el Estado de Resultados.'}
+                            </div>
+                          )}
+                          {s.aj && s.desact && (
+                            <div data-testid={'real-mes-desact-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700">
+                              ⚠️ Las facturas de {m.corto} cambiaron después de registrar el comprobante: {textoDifRealMes(s)}. Pulsa «Actualizar comprobante» para que el Estado de Resultados las tome otra vez (la versión actual queda en la Papelera).
+                            </div>
+                          )}
+                          {s.aj && nAj>0 && (
+                            <div data-testid={'real-mes-ajuste-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700 flex items-center gap-3 flex-wrap">
+                              <div className="flex-1 min-w-[320px]">
+                                ⚠️ El ajuste «{m.ajuste}» todavía trae {s.resAj.texto} y ya está el comprobante «{nroAj}»: {m.corto} se está contando DOS veces en el Estado de Resultados. Pulsa «Dejar {m.corto} solo con Gastos» (no toca las facturas; el ajuste actual queda en la Papelera).
+                              </div>
+                              <button data-testid={'real-mes-dejarsolo-'+m.ym} onClick={()=>dejarSoloGastosMesReal(m)} disabled={importandoHist} className="bg-white border-2 border-slate-400 text-slate-700 px-3 py-1.5 rounded-xl font-black text-[10px] uppercase hover:bg-slate-100 shrink-0 disabled:opacity-50">
+                                Dejar {m.corto} solo con Gastos
+                              </button>
+                            </div>
+                          )}
+                          {s.baseDist.length>0 && (
+                            <div data-testid={'real-mes-base-'+m.ym} className="pl-3 border-l-4 border-amber-300 text-[10px] font-semibold text-slate-700">
+                              ℹ️ {s.baseDist.length} factura(s) cuya base en $ no coincide con la suma de sus artículos (tu Reporte suma los artículos; el Estado de Resultados y el Libro de Ventas usan la base de la factura): {lista(s.baseDist, x=>`${x.nf} · ${x.cli} · base $${formatNum(x.base)} · artículos $${formatNum(x.items)}`)}.
+                            </div>
+                          )}
+                          {s.bsDist.length>0 && (
+                            <div data-testid={'real-mes-bs-'+m.ym} className="pl-3 border-l-4 border-amber-300 text-[10px] font-semibold text-slate-700">
+                              ℹ️ {s.bsDist.length} factura(s) con Bs. propios (los del Libro de Ventas) distintos de su base en $ × tasa: el Estado de Resultados usa esos Bs. del Libro y los $ de la factura — {lista(s.bsDist, x=>`${x.nf} · ${x.cli} · Libro Bs. ${formatNum(x.baseBs)} · $${formatNum(x.usd)} × ${formatTasa(x.tasa)} = Bs. ${formatNum(x.usdBs)}`)}.
+                            </div>
+                          )}
+                          {s.sinCosto.length>0 && (
+                            <div data-testid={'real-mes-sincosto-'+m.ym} className="pl-3 border-l-4 border-amber-300 text-[10px] font-semibold text-slate-700">
+                              ℹ️ {s.sinCosto.length} factura(s) con artículos sin costo guardado (el Estado de Resultados no les pone costo de venta): {s.sinCosto.slice(0,10).join(', ')}{s.sinCosto.length>10?'…':''}.
+                            </div>
+                          )}
+                          {s.sinFiscal.length>0 && (
+                            <div data-testid={'real-mes-sinfiscal-'+m.ym} className="pl-3 border-l-4 border-slate-300 text-[10px] font-semibold text-slate-600">
+                              ℹ️ {s.sinFiscal.length} factura(s) de {m.corto} sin Nro. Fiscal (${formatNum(s.sinFiscal.reduce((sm,f)=>sm+parseNum(f.montoBase||0),0))}) no entran, igual que en tu Reporte: {s.sinFiscal.slice(0,8).map(f=>f.documento||f.id).join(', ')}{s.sinFiscal.length>8?'…':''}.
+                            </div>
+                          )}
+                          {s.divergentes.length>0 && (
+                            <div data-testid={'real-mes-diverg-'+m.ym} className="pl-3 border-l-4 border-slate-300 text-[10px] font-semibold text-slate-600">
+                              ℹ️ {s.divergentes.length} factura(s) con fecha interna de {m.corto} pero Nro. Fiscal de otro mes (${formatNum(s.divergentes.reduce((sm,f)=>sm+parseNum(f.montoBase||0),0))}): van al mes de su Nro. Fiscal, como tu Reporte y el Libro de Ventas — {lista(s.divergentes, f=>`${nfRealMes(f)} · fiscal ${fechaLargaDupHist(fechaRealMes(f))}`)}.
+                            </div>
+                          )}
+                          {s.errores.length>0 && (
+                            <div data-testid={'real-mes-errores-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700">
+                              ⚠️ No se pudo calcular: {s.errores.slice(0,5).join(' | ')}.
+                            </div>
+                          )}
                         </div>
                       );
                     })}
