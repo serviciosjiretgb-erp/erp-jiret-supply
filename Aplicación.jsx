@@ -26697,6 +26697,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     setShowAjusteModal(true);
   };
   const abrirEditarAjuste = (raw) => {
+    // El comprobante «HIST-REAL-…» lo arma el panel «Facturas históricas» y guarda UNA FECHA POR LÍNEA (la de cada documento): este formulario no las conserva (guardaría todo con una sola fecha), así que no se edita a mano.
+    if(raw && raw.origen==='historico_real'){ alert(`El comprobante «${raw.nroComprobante||raw.id}» lo arma el panel «Facturas históricas» (Ventas → Notas de Entrega) y cada línea lleva la fecha de su documento: no se edita a mano porque se perderían esas fechas.\n\nPara cambiarlo usa «Quitar comprobante» en ese panel y regístralo otra vez.`); return; }
     setAjusteEditando(raw);
     setAjusteForm({fecha:raw.fecha||getTodayDate(), nroComprobante:raw.nroComprobante||'', concepto:raw.concepto||'', tasa:raw.tasa?String(raw.tasa):'',
       lineas:(raw.lineas||[]).map(l=>({codigo:l.codigo||'',cuenta:l.cuenta||'',tipo:l.tipo||'D',montoBs:l.montoBs?String(l.montoBs):'',montoUSD:l.montoUSD?String(l.montoUSD):'',detalle:l.detalle||''}))});
@@ -44518,12 +44520,24 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const neDoc = new Map(); (notasEntrega||[]).forEach(n=>{ if(n.origenImport==='HIST_ENE_ABR_2026_XLSX') neDoc.set(n.origenDoc, n); });
             const invId = new Map(), invFisc = new Map();
             (invoices||[]).forEach(i=>{ invId.set(i.id, i); [i.nroFiscal, i.documento].forEach(k=>{ if(k && !invFisc.has(k)) invFisc.set(k, i); }); });
-            const e = {docs, pendientes:[], facturadas:0, sinNE:[], otraFactura:[]};
+            // Documentos del reporte que YA existen como factura normal del sistema (misma venta, ver «duplicadasSistemaHist») o que ya van en el comprobante «HIST-REAL-…» registrado: NO se crean
+            // (saldrían dos veces); su ingreso y costo entran por ese comprobante (ver «estadoRealHist»). Las facturas normales no se tocan.
+            const ajReal = (ajustesApp||[]).find(a=>a.id===`HIST-REAL-${ym}`) || null;
+            const docsAjReal = new Set(Array.isArray(ajReal?.docsHist) ? ajReal.docsHist : []);
+            const gemMap = new Map(duplicadasSistemaHist(ym).claras.map(x=>[x.f.doc, x]));
+            const e = {docs, pendientes:[], facturadas:0, sinNE:[], otraFactura:[], gemelas:[], ajReal};
             docs.forEach(f=>{
               const ne = neDoc.get(f.doc);
-              if(!ne){ e.sinNE.push(f); return; }                                         // el documento no tiene su NE importada
-              if(invId.get(f.doc) || invFisc.get(f.doc)){ e.facturadas++; return; }       // ya existe factura con ese número
+              const gm = gemMap.get(f.doc);
+              const yaFact = invId.get(f.doc) || invFisc.get(f.doc);                      // ya existe una factura con ese número
+              if(!ne){                                                                    // el documento no tiene su NE importada…
+                if(!yaFact && (gm || docsAjReal.has(f.doc))) e.gemelas.push({f, ne:null, inv:gm?gm.inv:null});   // …pero su factura normal sí existe (o ya va en el comprobante): su ingreso y costo van por el comprobante, que no necesita la NE
+                else e.sinNE.push(f);
+                return;
+              }
+              if(yaFact){ e.facturadas++; return; }
               if(ne.facturaId && invId.has(ne.facturaId)){ e.otraFactura.push({f,ne}); return; } // la NE ya fue facturada con OTRA factura: no se duplica
+              if(gm || docsAjReal.has(f.doc)){ e.gemelas.push({f, ne, inv:gm?gm.inv:null}); return; }   // ya existe como factura normal del sistema (o ya va en el comprobante): no se crea
               e.pendientes.push({f,ne});
             });
             const r2 = (n)=>Math.round(n*100)/100;
@@ -44630,6 +44644,73 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             } catch(err){ alert('Error al quitar la ND: '+err.message); }
             finally{ setImportandoHist(false); }
           };
+          // ── Facturas NORMALES del sistema (hechas en Facturación, no importadas) que son la MISMA venta que un documento de tu reporte antiguo ──
+          // Criterio estricto y uno a uno: mismo cliente (primera palabra del nombre), misma fecha, mismo monto base (±0,01) y, si la factura trae un número fiscal, el mismo número que el documento.
+          // Si algo no calza (otra fecha, otro monto, otro número, dos candidatas) NO se toca. Tampoco cuenta una factura que ya ES la factura de un documento del reporte (mismo id / número fiscal que «F000…», o una NE del reporte apunta a ella o ella a esa NE):
+          // esa ya se considera facturada («ya tienen otra factura — no se duplican»).
+          // Solo detecta: no modifica nada. Al crear las facturas del mes, estas ventas saldrían DOS veces en Comprobantes → Ventas y en el Reporte de Ventas.
+          const claveCliDupHist = (s0) => String(s0||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9 ]/g,' ').trim().split(/\s+/)[0] || '';
+          const nroFiscalDupHist = (s0) => { const t = String(s0||'').trim(); return /^[A-Za-z]?\d{5,}$/.test(t) ? parseInt(t.replace(/\D/g,''),10) : null; };
+          const nombreFacDupHist = (i) => i.nroFiscal || i.documento || i.id;
+          const fechaCortaDupHist = (i) => { const d = String(i.fechaFactura||i.fecha||''); return d.substring(8,10)+'/'+d.substring(5,7); };
+          const fechaLargaDupHist = (s0) => { const d = String(s0||''); return d.substring(8,10)+'/'+d.substring(5,7)+'/'+d.substring(0,4); };
+          const duplicadasSistemaHist = (ym) => {
+            const docs = HIST_NE_ENE_ABR_2026.filter(f=>(f.fecha||'').startsWith(ym) && f.montoBase>0);
+            const todosDocs = new Set(HIST_NE_ENE_ABR_2026.map(f=>f.doc));
+            const neHist = (notasEntrega||[]).filter(n=>n.origenImport==='HIST_ENE_ABR_2026_XLSX');
+            const idsNeHist = new Set(neHist.map(n=>n.id));
+            const facDeNeHist = new Set(neHist.map(n=>n.facturaId).filter(Boolean));
+            const reales = (invoices||[]).filter(i=>!i.origenImport && !i.esAnulacionFiscal && !todosDocs.has(i.id) && !todosDocs.has(i.nroFiscal) && !todosDocs.has(i.documento)
+              && !facDeNeHist.has(i.id) && !idsNeHist.has(i.neOrigen) && !(Array.isArray(i.nesAdicionales)?i.nesAdicionales:[]).some(x=>idsNeHist.has(x))
+              && String(i.fechaFactura||i.fecha||'').substring(0,7)===ym && parseNum(i.montoBase||0)>0.005);
+            const cand = reales.map(inv=>{
+              const fInv = String(inv.fechaFactura||inv.fecha||'').substring(0,10);
+              const nro = nroFiscalDupHist(inv.nroFiscal||inv.documento);
+              const cli = claveCliDupHist(inv.clientName);
+              const base = parseNum(inv.montoBase||0);
+              const coinc = cli ? docs.filter(f=>f.fecha===fInv && claveCliDupHist(f.clientName)===cli && Math.abs(f.montoBase-base)<=0.011 && (nro===null || nro===parseInt(String(f.doc).replace(/\D/g,''),10))) : [];
+              return {inv, docs:coinc};
+            }).filter(x=>x.docs.length>0).sort((x,y)=>String(x.inv.fechaFactura||x.inv.fecha||'').localeCompare(String(y.inv.fechaFactura||y.inv.fecha||'')) || String(nombreFacDupHist(x.inv)).localeCompare(String(nombreFacDupHist(y.inv))));
+            const usos = new Map(); cand.forEach(x=>x.docs.forEach(f=>usos.set(f.doc,(usos.get(f.doc)||0)+1)));
+            const claras = (x)=>x.docs.length===1 && usos.get(x.docs[0].doc)===1;
+            return {
+              claras: cand.filter(claras).map(x=>({inv:x.inv, f:x.docs[0]})),
+              ambiguas: cand.filter(x=>!claras(x)),
+            };
+          };
+          const detalleFacDupHist = (x) => `${nombreFacDupHist(x.inv)} · ${x.inv.clientName||'—'} · ${fechaCortaDupHist(x.inv)} · base $${formatNum(parseNum(x.inv.montoBase||0))}${parseNum(x.inv.iva||0)>0?` + IVA $${formatNum(parseNum(x.inv.iva||0))}`:''}${x.inv.opAsignada?` · OP ${x.inv.opAsignada}`:''} (= ${x.f.doc} del reporte)`;
+          // ── Ingreso y costo de los documentos del reporte que YA existen como FACTURA NORMAL del sistema (misma venta; ver «duplicadasSistemaHist») ──
+          // Esas facturas normales NO se tocan y sus gemelas del reporte NO se crean (saldrían dos veces en Comprobantes → Ventas y en el Reporte de Ventas). Pero las facturas normales de meses anteriores a
+          // «Inicio de Contabilidad Real» no entran al Estado de Resultados, así que el ingreso y el costo de esas ventas (según el reporte antiguo) se registran como UN comprobante manual por mes
+          // (id HIST-REAL-<mes>, con su propio botón y reversible): cada documento en su fecha, en la misma cuenta de ingreso y de costo de venta («Con OP» / «Sin OP») que habría tenido su factura histórica,
+          // y cerrado contra utilidad acumulada (igual que la ND histórica y que los ajustes históricos). No toca Cuentas por Cobrar, IVA, Bancos ni las facturas. El comprobante guarda los documentos que cubre (docsHist).
+          const idAjusteRealHist = (ym) => `HIST-REAL-${ym}`;
+          const nroAjusteRealHist = (m) => `HIST-REAL-${m.corto.toUpperCase()}-2026`;
+          const estadoRealHist = (ym) => {
+            const e = estadoFactHist(ym);
+            const aj = e.ajReal;
+            const cub = new Set(Array.isArray(aj?.docsHist) ? aj.docsHist : []);
+            const hayFact = (doc) => (invoices||[]).some(i=>i.id===doc || i.nroFiscal===doc || i.documento===doc);
+            const r2g = (n)=>Math.round((n+(n<0?-1e-9:1e-9))*100)/100;
+            const suma = (arr,fn)=>r2g(arr.reduce((sm,g)=>sm+fn(g.f),0));
+            const gem = e.gemelas;
+            const porCubrir = gem.filter(g=>!cub.has(g.f.doc));
+            const du = duplicadasSistemaHist(ym);
+            const dobles = du.claras.filter(x=>hayFact(x.f.doc));                       // existe la factura normal Y ya está creada la factura histórica del documento: salen dos veces
+            // «Inicio de Contabilidad Real»: una factura normal con fecha igual o posterior ENTRA SOLA al Estado de Resultados (sin fecha de inicio entra todo): el comprobante la sumaría otra vez.
+            const corteCont = String(settings?.fechaInicioContabilidad||'');
+            const enER = gem.filter(g=>g.inv && (!corteCont || String(g.inv.fechaFactura||g.inv.fecha||'').substring(0,10)>=corteCont));
+            const lAj = Array.isArray(aj?.lineas) ? aj.lineas : [];
+            const sumaAj = (re,tipo)=>r2g(lAj.filter(l=>re.test(String(l.codigo||'')) && l.tipo===tipo).reduce((sm,l)=>sm+Number(l.montoUSD||0),0));
+            return {e, aj, gem, porCubrir, corteCont, enER,
+              huerfanas:[...cub].filter(d=>!gem.some(g=>g.f.doc===d) && !dobles.some(x=>x.f.doc===d)),   // cubiertos por el comprobante pero que ya tienen factura (la histórica o la ligada a su NE) sin ser un «doble» (su factura normal ya no se detecta): se contarían dos veces
+              dobles,
+              ambiguas:du.ambiguas,
+              ingTodas:suma(gem,f=>f.montoBase), cosTodas:suma(gem,f=>costoDocHist(f)),
+              ingPorCubrir:suma(porCubrir,f=>f.montoBase), cosPorCubrir:suma(porCubrir,f=>costoDocHist(f)),
+              ingAj:sumaAj(/^4/,'H'), cosAj:sumaAj(/^5/,'D')};
+          };
+          const detalleGemHist = (g) => g.inv ? detalleFacDupHist(g) : `${g.f.doc} · ${g.f.clientName||'—'} · ${fechaCortaDupHist(g.f)} · base $${formatNum(g.f.montoBase)} (ya va en el comprobante; su factura normal ya no se detecta)`;
           const crearFacturasHistoricasMes = async (m) => {
             if(importandoHist) return;
             const e = estadoFactHist(m.ym);
@@ -44644,7 +44725,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const nDev = e.pendientes.filter(x=>x.f.montoBase<0).length, nVta = e.pendientes.length - nDev;
             const primero = e.pendientes[0].f.doc, ultimo = e.pendientes[e.pendientes.length-1].f.doc;
             const efCxC = efectoCxCFactHist(e.pendientes);
-            if(!window.confirm(`Se van a crear ${e.pendientes.length} factura(s) de ${m.nombre} (${nVta} venta(s)${nDev?` y ${nDev} devolución(es)`:''}), con su número fiscal original (${primero} … ${ultimo}), vinculadas a sus Notas de Entrega históricas.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos netos $${formatNum(e.ingPend)} · Costo de venta neto $${formatNum(e.cosPend)}.${e.nOpPend>0?` De ellas, ${e.nOpPend} factura(s) de bolsas de producción van como «Con OP» (Ingresos $${formatNum(e.ingOpPend)} · Costo de venta $${formatNum(e.cosOpPend)}); el resto va como «Sin OP». Es la misma separación de tu reporte antiguo.`:''}\n\n${efCxC.n===0 ? 'Cuentas por Cobrar: los saldos en USD no cambian (no hay retenciones ni NC/ND registradas con el número de estas facturas).' : `⚠️ CUENTAS POR COBRAR SÍ CAMBIARÍA: hay ${efCxC.rets.length} retención(es) y ${efCxC.notas.length} NC/ND registradas con el número de estas facturas. Hoy Cuentas por Cobrar las ignora; al crear las facturas se aplicarían a su NE y moverían el saldo del cliente:\n${detalleEfectoCxC(efCxC)}\n\nSi tu Cuentas por Cobrar ya está cuadrada, cancela y revisa esos registros primero.`}\n\nNo se tocan otros meses, los ajustes contables ni los cobros. ¿Continuar?`)) return;
+            const rlCrear = estadoRealHist(m.ym);
+            const nGemCrear = rlCrear.gem.length;
+            const nroCompCrear = rlCrear.aj?.nroComprobante||nroAjusteRealHist(m);
+            const fechaCorteTxt = rlCrear.corteCont ? `en ${fechaLargaDupHist(rlCrear.corteCont)}` : 'sin definir';
+            const textoIngCosGem = rlCrear.enER.length>0
+              ? `⚠️ «Inicio de Contabilidad Real» está ${fechaCorteTxt}: ${rlCrear.enER.length} de esas facturas YA entra(n) al Estado de Resultados por sí sola(s), así que el comprobante «${nroCompCrear}» las sumaría dos veces. Revisa esa fecha (Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real») antes de usar el comprobante.`
+              : rlCrear.porCubrir.length===0
+                ? `Su ingreso y costo ya entran por el comprobante «${nroCompCrear}».`
+                : rlCrear.aj
+                  ? `⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} de ellos (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): su ingreso y costo (Ingresos $${formatNum(rlCrear.ingPorCubrir)} · Costo de venta $${formatNum(rlCrear.cosPorCubrir)}) NO saldrán en el Estado de Resultados hasta que lo quites (botón «Quitar comprobante» del panel) y lo registres de nuevo.`
+                  : `⚠️ Su ingreso y costo (Ingresos $${formatNum(rlCrear.ingPorCubrir)} · Costo de venta $${formatNum(rlCrear.cosPorCubrir)}) NO saldrán en el Estado de Resultados hasta que registres el comprobante «${nroAjusteRealHist(m)}» (botón «Registrar ingreso y costo» del panel, después de crear).`;
+            const avisoDupCrear = nGemCrear>0 ? `ℹ️ NO se crean ${nGemCrear} documento(s) de ${m.corto} porque ya existen como factura normal del sistema (${rlCrear.gem.map(g=>`${g.inv?nombreFacDupHist(g.inv):'factura normal'} = ${g.f.doc}`).join(', ')}); esas facturas no se tocan.\n${textoIngCosGem}\n\n` : '';
+            const avisoAmbCrear = rlCrear.ambiguas.length>0 ? `ℹ️ ${rlCrear.ambiguas.length} factura(s) del sistema (${rlCrear.ambiguas.map(x=>nombreFacDupHist(x.inv)).join(', ')}) podrían ser la misma venta que algún documento del reporte, pero no se pueden emparejar con certeza: esos documentos SÍ se crean y esas ventas podrían salir dos veces (revísalas en Comprobantes → Ventas).\n\n` : '';
+            const avisoFinCrear = nGemCrear===0 ? '' : rlCrear.enER.length>0
+              ? `\n\n⚠️ Revisa «Inicio de Contabilidad Real» (está ${fechaCorteTxt}): ${rlCrear.enER.length} factura(s) normales de ${m.corto} YA entran al Estado de Resultados por sí solas; el comprobante las sumaría dos veces.`
+              : rlCrear.porCubrir.length===0 ? ''
+              : rlCrear.aj
+                ? `\n\n⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} factura(s) normales de tu reporte (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): quítalo (botón «Quitar comprobante» del panel) y regístralo de nuevo; si no, ${m.nombre} queda $${formatNum(rlCrear.ingPorCubrir)} por debajo de tu reporte en ventas.`
+                : `\n\nFalta registrar el comprobante «${nroAjusteRealHist(m)}» con el ingreso y costo de las ${rlCrear.porCubrir.length} factura(s) normales que ya estaban en tu reporte (botón «Registrar ingreso y costo» del panel): sin él, ${m.nombre} queda $${formatNum(rlCrear.ingPorCubrir)} por debajo de tu reporte en ventas.`;
+            if(!window.confirm(`Se van a crear ${e.pendientes.length} factura(s) de ${m.nombre} (${nVta} venta(s)${nDev?` y ${nDev} devolución(es)`:''}), con su número fiscal original (${primero} … ${ultimo}), vinculadas a sus Notas de Entrega históricas.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos netos $${formatNum(e.ingPend)} · Costo de venta neto $${formatNum(e.cosPend)}.${e.nOpPend>0?` De ellas, ${e.nOpPend} factura(s) de bolsas de producción van como «Con OP» (Ingresos $${formatNum(e.ingOpPend)} · Costo de venta $${formatNum(e.cosOpPend)}); el resto va como «Sin OP». Es la misma separación de tu reporte antiguo.`:''}\n\n${efCxC.n===0 ? 'Cuentas por Cobrar: los saldos en USD no cambian (no hay retenciones ni NC/ND registradas con el número de estas facturas).' : `⚠️ CUENTAS POR COBRAR SÍ CAMBIARÍA: hay ${efCxC.rets.length} retención(es) y ${efCxC.notas.length} NC/ND registradas con el número de estas facturas. Hoy Cuentas por Cobrar las ignora; al crear las facturas se aplicarían a su NE y moverían el saldo del cliente:\n${detalleEfectoCxC(efCxC)}\n\nSi tu Cuentas por Cobrar ya está cuadrada, cancela y revisa esos registros primero.`}\n\n${avisoDupCrear}${avisoAmbCrear}No se tocan otros meses, los ajustes contables ni los cobros. ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const batch = writeBatch(db);
@@ -44664,7 +44764,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               });
               await batch.commit();
               logAuditoria(appUser,'Ventas','CREACIÓN',`Facturas históricas de ${m.nombre}: ${e.pendientes.length} creada(s) · Ingresos netos $${formatNum(e.ingPend)} · Costo neto $${formatNum(e.cosPend)}`);
-              alert(`Se crearon ${e.pendientes.length} factura(s) de ${m.nombre}. Ya salen en Contabilidad → Estado de Resultados (del 01 al ${m.fin} de ${m.corto} de 2026).`);
+              alert(`Se crearon ${e.pendientes.length} factura(s) de ${m.nombre}. Ya salen en Contabilidad → Estado de Resultados (del 01 al ${m.fin} de ${m.corto} de 2026).${avisoFinCrear}`);
             } catch(err){ alert('Error al crear facturas: '+err.message); }
             finally{ setImportandoHist(false); }
           };
@@ -44688,6 +44788,73 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Facturas históricas de ${m.nombre} DESHECHAS: ${e.hechas.length} archivada(s) en la Papelera`);
               alert(`Listo — se quitaron ${e.hechas.length} factura(s) de ${m.nombre} (quedan en la Papelera).`);
             } catch(err){ alert('Error al deshacer: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
+          const registrarRealesHistoricasMes = async (m) => {
+            if(importandoHist) return;
+            const rl = estadoRealHist(m.ym);
+            if(rl.aj){ alert(`El comprobante de las facturas normales de ${m.nombre} ya está registrado (${rl.aj.nroComprobante||rl.aj.id}) — no se crea de nuevo.`); return; }
+            if(rl.gem.length===0){ alert(`No hay facturas normales de ${m.nombre} que ya estén en tu reporte antiguo: no hay nada que registrar.`); return; }
+            if(rl.enER.length>0){ alert(`«Inicio de Contabilidad Real» está ${rl.corteCont?`en ${fechaLargaDupHist(rl.corteCont)}`:'sin definir'} y ${rl.enER.length} de las facturas normales de ${m.nombre} (${rl.enER.map(g=>nombreFacDupHist(g.inv)).join(', ')}) YA entran al Estado de Resultados por sí solas: el comprobante las sumaría dos veces, por eso no se registra.\n\nRevisa esa fecha en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al ${m.fin} de ${m.corto} de 2026) y vuelve a intentar.`); return; }
+            const nIng = lineasIngresoEnAjuste(m.ajuste);
+            if(nIng>0){ alert(`El ajuste "${m.ajuste}" todavía trae ${nIng} línea(s) de Ingresos / Costo de Venta: si registras este comprobante, las ventas de ${m.corto} se contarían dos veces.\n\nPrimero usa "Revertir a Solo-Gastos Ene-Abr" en Contabilidad → Comprobantes Contables → Ajustes.`); return; }
+            const r2n = (n)=>Math.round((n+(n<0?-1e-9:1e-9))*100)/100;
+            const esOp = (g)=>OP_ORIGEN_HIST.has(g.f.doc);
+            const faltan = [];
+            if(rl.gem.some(g=>!esOp(g) && costoDocHist(g.f)>0.004) && !cuentasProduccionCfg?.costoVentaMercanciaNombre) faltan.push('Costo de venta (mercancía)');
+            if(rl.gem.some(g=>esOp(g) && costoDocHist(g.f)>0.004) && !cuentasProduccionCfg?.costoVentaProduccionNombre) faltan.push('Costo de venta (producción / con OP)');
+            if(faltan.length){ alert(`Falta configurar en Contabilidad → Configuración de cuentas: ${faltan.join(' y ')}. Sin eso no se puede registrar el costo de venta de estas facturas.`); return; }
+            const partir = (cfg, codDef, nomDef) => { const p = String(cfg||'').split('—'); return {codigo:(p[0]||'').trim()||codDef, cuenta:p.slice(1).join('—').trim()||nomDef}; };
+            const ctaIngSin = partir(cuentasIngresoCfg?.sinOpNombre || '4.1.01.02.001 — Ingresos por Ventas (Sin OP)', '4.1.01.02.001', 'Ingresos por Ventas (Sin OP)');
+            const ctaIngCon = partir(cuentasIngresoCfg?.conOpNombre || '4.1.01.01.001 — Ingresos por Ventas (Con OP)', '4.1.01.01.001', 'Ingresos por Ventas (Con OP)');
+            const ctaCosSin = partir(cuentasProduccionCfg?.costoVentaMercanciaNombre, '', 'Costo de venta (mercancía)');
+            const ctaCosCon = partir(cuentasProduccionCfg?.costoVentaProduccionNombre, '', 'Costo de venta (producción)');
+            const gems = [...rl.gem].sort((a,b)=>String(a.f.fecha).localeCompare(String(b.f.fecha)) || String(a.f.doc).localeCompare(String(b.f.doc)));
+            const lineas = [];
+            gems.forEach(g=>{
+              const f = g.f, op = esOp(g), tasa = Number(f.tasa)||0;
+              const ing = r2n(f.montoBase), cos = r2n(costoDocHist(f));
+              const ingBs = r2n(ing*tasa), cosBs = r2n(cos*tasa);
+              const ci = op ? ctaIngCon : ctaIngSin, cc = op ? ctaCosCon : ctaCosSin;
+              const quien = `${f.doc} · ${f.clientName||'—'}`;
+              lineas.push({codigo:ci.codigo, cuenta:ci.cuenta, tipo:'H', montoUSD:ing, montoBs:ingBs, fecha:f.fecha, detalle:`${quien}${g.inv?` · factura del sistema ${nombreFacDupHist(g.inv)}`:''} · venta ${op?'con':'sin'} OP`});
+              if(cos>0.004) lineas.push({codigo:cc.codigo, cuenta:cc.cuenta, tipo:'D', montoUSD:cos, montoBs:cosBs, fecha:f.fecha, detalle:`Costo de venta ${op?'(con OP)':'(sin OP)'} · ${quien}`});
+              const netU = r2n(ing-cos), netB = r2n(ingBs-cosBs);
+              if(Math.abs(netU)>0.004 || Math.abs(netB)>0.004) lineas.push({codigo:'3.3.01.01.002', cuenta:'(UTILIDAD) PÉRDIDA ACUMULADA', tipo:netU>=0?'D':'H', montoUSD:Math.abs(netU), montoBs:Math.abs(netB), fecha:f.fecha, detalle:`Cierre del ingreso y costo de ${f.doc} contra utilidad acumulada (como los demás ajustes históricos)`});
+            });
+            const totIng = r2n(gems.reduce((sm,g)=>sm+r2n(g.f.montoBase),0)), totCos = r2n(gems.reduce((sm,g)=>sm+r2n(costoDocHist(g.f)),0));
+            const nro = nroAjusteRealHist(m);
+            const totMes = r2n(rl.e.ingMes);
+            const lista = gems.map(g=>`• ${g.inv?nombreFacDupHist(g.inv):'factura normal'} = ${g.f.doc} · ${g.f.clientName||'—'} · ${fechaCortaDupHist(g.f)} · ingreso $${formatNum(r2n(g.f.montoBase))} · costo $${formatNum(r2n(costoDocHist(g.f)))}${esOp(g)?' · Con OP':''}`).join('\n');
+            if(!window.confirm(`Se va a registrar el comprobante manual «${nro}» con el ingreso y el costo de venta de ${gems.length} documento(s) de tu reporte antiguo de ${m.nombre} que YA existen como factura normal del sistema:\n\n${lista}\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos +$${formatNum(totIng)} · Costo de venta +$${formatNum(totCos)} (con las demás facturas del mes, ${m.nombre} suma $${formatNum(totMes)} de ingresos netos, el total de tu reporte antiguo).\nCada documento va en su fecha, en la cuenta de ingreso y de costo «Con OP» o «Sin OP» como en tu reporte, y se cierra contra (UTILIDAD) PÉRDIDA ACUMULADA, igual que los demás ajustes históricos.\n\nNo toca Cuentas por Cobrar, IVA, Bancos ni las facturas normales (siguen exactamente como están). Se puede quitar después (queda en la Papelera). ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const fechaAj = gems.map(g=>g.f.fecha).sort().slice(-1)[0];
+              const batch = writeBatch(db);
+              const id = idAjusteRealHist(m.ym);
+              batch.set(getDocRef('comprobantes_ajustes', id), {id, fecha:fechaAj, nroComprobante:nro, concepto:`${m.nombre} — ingreso y costo de ${gems.length} factura(s) normal(es) del sistema que ya están en el reporte antiguo (${gems.map(g=>g.f.doc).join(', ')}) — se registra aquí para que el Estado de Resultados cuadre con ese reporte; las facturas normales no se tocan`, tasa:Number(gems[0].f.tasa)||0, lineas, docsHist:gems.map(g=>g.f.doc), createdAt:Date.now(), user:'Importación Histórica (Excel)', origen:'historico_real'});
+              await batch.commit();
+              logAuditoria(appUser,'Ventas','CREACIÓN',`Ingreso y costo de ${gems.length} factura(s) normales de ${m.nombre} registrados (${nro}): Ingresos $${formatNum(totIng)} · Costo de venta $${formatNum(totCos)}`);
+              alert(`Listo — se registró «${nro}» con ${gems.length} documento(s) (Ingresos $${formatNum(totIng)} · Costo de venta $${formatNum(totCos)}). Con las demás facturas de ${m.nombre} creadas, el Estado de Resultados suma $${formatNum(totMes)} de ingresos netos, como tu reporte antiguo.`);
+            } catch(err){ alert('Error al registrar el comprobante: '+err.message); }
+            finally{ setImportandoHist(false); }
+          };
+          const quitarRealesHistoricasMes = async (m) => {
+            if(importandoHist) return;
+            const rl = estadoRealHist(m.ym);
+            if(!rl.aj){ alert(`No hay comprobante de facturas normales de ${m.nombre} para quitar.`); return; }
+            if(!window.confirm(`Se va a quitar el comprobante «${rl.aj.nroComprobante||rl.aj.id}» (ingreso y costo de las facturas normales de ${m.nombre} que ya estaban en tu reporte). Se archiva en la Papelera (recuperable); ${m.nombre} vuelve a salir sin esas ventas ni ese costo en el Estado de Resultados.\n\nNo toca facturas, otros ajustes ni cobros. ¿Continuar?`)) return;
+            setImportandoHist(true);
+            try{
+              const batch = writeBatch(db);
+              const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+              const papId = `PAP-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+              batch.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'comprobantes_ajustes', docId:String(rl.aj.id), datos:rl.aj, resumen:`Ajuste — ${rl.aj.concepto||rl.aj.id}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:Date.now()});
+              batch.delete(getDocRef('comprobantes_ajustes', rl.aj.id));
+              await batch.commit();
+              logAuditoria(appUser,'Ventas','ELIMINACIÓN',`Comprobante de facturas normales de ${m.nombre} quitado (${rl.aj.nroComprobante||rl.aj.id}) — archivado en la Papelera`);
+              alert(`Listo — se quitó «${rl.aj.nroComprobante||rl.aj.id}» (queda en la Papelera).`);
+            } catch(err){ alert('Error al quitar el comprobante: '+err.message); }
             finally{ setImportandoHist(false); }
           };
           const exportarNEExcel=()=>{
@@ -44747,14 +44914,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <div className="text-[10px] font-semibold text-indigo-700">Se crean sin IVA (solo la base, igual que tu reporte antiguo): no mueven el IVA.</div>
                     {MESES_FACT_HIST.map(m=>{
                       const e = estadoFactHist(m.ym);
-                      const completo = e.pendientes.length===0 && e.facturadas>0 && e.sinNE.length===0;
+                      const rl = estadoRealHist(m.ym);
+                      const completo = e.pendientes.length===0 && e.facturadas>0 && e.sinNE.length===0 && rl.porCubrir.length===0 && rl.dobles.length===0 && rl.huerfanas.length===0 && rl.enER.length===0;
                       const nd = estadoNDHist(m.ym);
                       const ot = otrasNEMesHist(m.ym);
                       return (
                         <div key={m.ym} className="space-y-1">
                         <div data-testid={'fact-hist-'+m.ym} className="flex items-center gap-3 flex-wrap">
                           <div className="font-bold text-indigo-900 flex-1 min-w-[320px]">
-                            <span className="font-black">{m.nombre}</span> · {e.docs.length} NE ({e.docs.length-e.nDev} venta(s){e.nDev>0?` + ${e.nDev} devolución(es)`:''}) · {e.facturadas} facturada(s) · {e.pendientes.length} por facturar · Ingresos netos ${formatNum(e.ingMes)} · Costo neto ${formatNum(e.cosMes)}
+                            <span className="font-black">{m.nombre}</span> · {e.docs.length} NE ({e.docs.length-e.nDev} venta(s){e.nDev>0?` + ${e.nDev} devolución(es)`:''}) · {e.facturadas} facturada(s) · {e.pendientes.length} por facturar{e.gemelas.length>0 ? ` · ${e.gemelas.length} ya ${e.gemelas.length===1?'es':'son'} factura normal del sistema (no se ${e.gemelas.length===1?'crea':'crean'})` : ''} · Ingresos netos ${formatNum(e.ingMes)} · Costo neto ${formatNum(e.cosMes)}
                             {completo && <span className="text-emerald-700"> · ✅ ya sale en el Estado de Resultados</span>}
                             {e.sinNE.length>0 && <div className="text-red-600 font-bold">⚠️ {e.sinNE.length} documento(s) del histórico no tienen su NE importada — no se facturan.</div>}
                             {e.otraFactura.length>0 && <div className="text-amber-700 font-bold">ℹ️ {e.otraFactura.length} NE ya tienen otra factura — no se duplican.</div>}
@@ -44793,6 +44961,66 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           return (
                             <div data-testid={'fact-hist-opaviso-'+m.ym} className="pl-3 border-l-4 border-amber-400 text-[10px] font-bold text-amber-800">
                               ℹ️ {sinMarcaOp.length} factura(s) de bolsas de {m.corto} ya están creadas como «Sin OP» (se crearon con una versión anterior). Para que salgan «Con OP» como tu reporte antiguo: pulsa «Deshacer {m.corto}» y luego «Crear» otra vez. No cambia ningún monto: solo pasa el ingreso y el costo de «Sin OP» a «Con OP».
+                            </div>
+                          );
+                        })()}
+                        {(() => {
+                          if(rl.gem.length+rl.dobles.length+rl.ambiguas.length+rl.huerfanas.length===0 && !rl.aj) return null;
+                          const nroAj = rl.aj ? (rl.aj.nroComprobante||rl.aj.id) : nroAjusteRealHist(m);
+                          return (
+                            <div data-testid={'fact-hist-real-'+m.ym} className="pl-3 border-l-4 border-orange-400 text-[10px] font-semibold text-orange-900 flex items-start gap-3 flex-wrap">
+                              <div className="flex-1 min-w-[320px] space-y-1">
+                                {rl.gem.length>0 && (
+                                  <div data-testid={'fact-hist-real-lista-'+m.ym} className="font-bold">
+                                    ℹ️ {rl.gem.length} documento(s) de {m.corto} de tu reporte YA existen como factura normal del sistema (mismo cliente, fecha y monto base), por eso NO se crean: {rl.gem.map(g=>detalleGemHist(g)).join(' | ')}. Esas facturas normales no se tocan: siguen con su IVA, NE, cobros y OP.
+                                  </div>
+                                )}
+                                {rl.gem.length>0 && !rl.aj && (
+                                  <div data-testid={'fact-hist-real-pend-'+m.ym} className="font-bold text-amber-800">
+                                    ⚠️ Su ingreso y costo todavía NO están en el Estado de Resultados de {m.corto}: Ingresos ${formatNum(rl.ingPorCubrir)} · Costo de venta ${formatNum(rl.cosPorCubrir)}. Se registran como UN comprobante manual «{nroAj}» (cada documento en su fecha, contra utilidad acumulada, igual que la ND de febrero): no toca Cuentas por Cobrar, IVA, Bancos ni las facturas.
+                                  </div>
+                                )}
+                                {rl.enER.length>0 && (
+                                  <div data-testid={'fact-hist-real-corte-'+m.ym} className="font-bold text-red-700">
+                                    ⚠️ «Inicio de Contabilidad Real» está {rl.corteCont ? `en ${fechaLargaDupHist(rl.corteCont)}` : 'sin definir'}: {rl.enER.length} de esas facturas normales ({rl.enER.map(g=>nombreFacDupHist(g.inv)).join(', ')}) YA entra(n) al Estado de Resultados por sí sola(s), así que {rl.aj ? `el comprobante «${nroAj}» las suma dos veces: pulsa «Quitar comprobante» o corrige esa fecha` : 'NO registres el comprobante (las sumaría dos veces): corrige esa fecha'} en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al {m.fin} de {m.corto} de 2026).
+                                  </div>
+                                )}
+                                {rl.aj && (
+                                  <div data-testid={'fact-hist-real-reg-'+m.ym} className="font-bold text-emerald-700">
+                                    ✅ Registrado como comprobante «{nroAj}»: Ingresos ${formatNum(rl.ingAj)} · Costo de venta ${formatNum(rl.cosAj)} — ya sale en el Estado de Resultados.
+                                  </div>
+                                )}
+                                {rl.aj && rl.porCubrir.length>0 && (
+                                  <div data-testid={'fact-hist-real-sincub-'+m.ym} className="font-bold text-red-700">
+                                    ⚠️ {rl.porCubrir.length} documento(s) más ya existen como factura normal y NO están en el comprobante «{nroAj}»: {rl.porCubrir.map(g=>g.f.doc).join(', ')}. Pulsa «Quitar comprobante» y regístralo de nuevo.
+                                  </div>
+                                )}
+                                {rl.huerfanas.length>0 && (
+                                  <div data-testid={'fact-hist-real-huerf-'+m.ym} className="font-bold text-red-700">
+                                    ⚠️ El comprobante «{nroAj}» cubre {rl.huerfanas.join(', ')}, pero esos documentos ya tienen factura creada (la histórica o la ligada a su NE): ese ingreso y costo se estarían contando dos veces. Pulsa «Quitar comprobante» y regístralo de nuevo.
+                                  </div>
+                                )}
+                                {rl.dobles.length>0 && (
+                                  <div data-testid={'fact-hist-real-dobles-'+m.ym} className="font-bold text-red-700">
+                                    ⚠️ {rl.dobles.length} documento(s) ya tienen creada su factura histórica Y además existe su factura normal, así que salen dos veces en Comprobantes → Ventas y en el Reporte de Ventas: {rl.dobles.map(x=>detalleFacDupHist(x)).join(' | ')}. Pulsa «Deshacer {m.corto}» y vuelve a crear las facturas (esos documentos ya no se crearán).{rl.aj && rl.dobles.every(x=>(rl.aj.docsHist||[]).includes(x.f.doc)) ? ` El comprobante «${nroAj}» se queda como está.` : ''}
+                                  </div>
+                                )}
+                                {rl.ambiguas.length>0 && (
+                                  <div data-testid={'fact-hist-real-amb-'+m.ym} className="font-bold text-amber-800">
+                                    ℹ️ {rl.ambiguas.length} factura(s) del sistema podrían corresponder a más de un documento del reporte (o varias facturas al mismo documento); no se puede decidir sola y no se toca: {rl.ambiguas.map(x=>`${nombreFacDupHist(x.inv)} (${x.docs.map(f=>f.doc).join(' / ')})`).join(' | ')}.
+                                  </div>
+                                )}
+                              </div>
+                              {rl.gem.length>0 && !rl.aj && (
+                                <button data-testid={'fact-hist-real-registrar-'+m.ym} onClick={()=>registrarRealesHistoricasMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
+                                  <FileCheck size={14}/> {importandoHist?'Registrando...':`Registrar ingreso y costo (${rl.gem.length})`}
+                                </button>
+                              )}
+                              {rl.aj && (
+                                <button data-testid={'fact-hist-real-quitar-'+m.ym} onClick={()=>quitarRealesHistoricasMes(m)} disabled={importandoHist} className="bg-white border-2 border-orange-300 text-orange-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase hover:bg-orange-100 disabled:opacity-50">
+                                  Quitar comprobante
+                                </button>
+                              )}
                             </div>
                           );
                         })()}
