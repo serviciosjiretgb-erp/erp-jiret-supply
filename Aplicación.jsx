@@ -23878,6 +23878,733 @@ const opReqDoc = (D, emp, opts) => {
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Requisicion_${esc(D.id || ('OP-' + D.numero))}</title><style>${OPREQ_CSS}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(e.empresa || '')}</h2><p>RIF: ${esc(e.rif || '')}</p><p>${esc(e.direccion || '')}</p>${e.tel ? `<p>Tel: ${esc(e.tel)}</p>` : ''}</div></div>${o.preview ? '' : '<button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button>'}<div class="contenido">${titulo}<div class="sec">${tit('Datos del pedido')}${pedido}</div><div class="sec">${tit('Especificaciones del producto')}${specs}</div><div class="sec">${tit('Cantidad y carga a planta')}<div class="calc">${piezas.join('')}</div>${cargaFloja ? `<div class="aviso rojo">La carga total planta (${esc(kg(D.cargaKg))}) es menor que el producto neto (${esc(kg(D.netoKg))}). Revise la cantidad o la carga de la OP.</div>` : ''}</div>${secF}${secRuta}<div class="cierre">${obs}${firmas}${pie}</div></div></div></body></html>`;
 };
 // == FIN OPREQ ==
+// == INICIO MPREQ ==
+// ═══ Requerimiento de materia prima: «voy a producir X kilos → cuánto necesito de cada materia prima» ═══
+// Lógica pura (sin React ni Firestore) para poder probarla fuera de la pantalla.
+//  · kilos = producto terminado · carga a planta = kilos ÷ (1 − merma %)
+//  · % de cada materia prima en la mezcla = promedio de las fórmulas, ponderado según el modo:
+//      promedio simple (todas pesan igual) · por producto (pesa lo que se va a hacer de cada una) · según lo producido (pesa lo producido en un período)
+//  · Misma materia prima = mismo CÓDIGO (la descripción no cuenta). La existencia y el costo se consolidan por código igual que el Inventario General.
+const MPREQ_MODOS = [['promedio', 'Promedio simple'], ['producto', 'Por producto'], ['producido', 'Según lo producido']];
+const mpreqModoTxt = (m) => (MPREQ_MODOS.find(x => x[0] === m) || ['', ''])[1];
+const mpreqNum = (v) => { const n = parseNum(v); return Number.isFinite(n) ? n : 0; };
+const mpreqTxt = (v) => String(v == null ? '' : v).trim();
+// Número escrito a mano en un campo (kilos, merma, kilos por producto): «30.000» = 30000 · «30.000,5» = 30000,5 · «5,5» = 5,5 · «5.5» = 5,5 · «0.500» = 0,5
+const mpreqLeer = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  let t = String(v == null ? '' : v).trim().replace(/\s+/g, '');
+  if (!t) return 0;
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? n : 0;
+};
+const mpreqK = (c) => mpreqTxt(c).toUpperCase();                    // mayúsculas y minúsculas no cuentan
+const mpreqKc = (c) => mpreqK(c).replace(/\s+/g, '');               // «MP- 1-0500» y «MP-1-0500» son el mismo código
+const mpreqR2 = (x) => Math.round(x * 100 + (x >= 0 ? 1e-7 : -1e-7)) / 100;
+const mpreqEsKg = (u) => { const t = mpreqTxt(u).toLowerCase(); return !t || /^(kg|kgs|kilo|kilos|kilogramo|kilogramos)$/.test(t); };
+const mpreqFechaTxt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const mpreqFechaMenosDias = (n, base) => { const d = base ? new Date(base) : new Date(); d.setDate(d.getDate() - n); return mpreqFechaTxt(d); };
+const MPREQ_TIPO_ORDEN = { BOLSAS: 0, TERMOENCOGIBLE: 1 };
+// Fórmulas en el orden de la pantalla de Fórmulas: primero bolsas, luego termoencogible, luego lo demás; dentro de cada tipo, por nombre.
+const mpreqOrdenFormulas = (formulas) => (formulas || [])
+  .filter(f => f && f.id != null && mpreqTxt(f.categoria))
+  .slice()
+  .sort((a, b) => ((MPREQ_TIPO_ORDEN[a.tipoProducto || 'BOLSAS'] ?? 9) - (MPREQ_TIPO_ORDEN[b.tipoProducto || 'BOLSAS'] ?? 9)) || String(a.categoria).localeCompare(String(b.categoria), undefined, { numeric: true }));
+
+// Existencia y costo por código, igual que el Inventario General: solo activos y sin códigos FG-; se suma la existencia de todos los almacenes
+// y el costo es el promedio ponderado por existencia (si no hay existencia queda el costo del último registro).
+const mpreqInventario = (inventory) => {
+  const porK = new Map(), porKc = new Map();
+  (inventory || []).forEach(i => {
+    if (!i || i.activo === false) return;
+    const code = mpreqTxt(i.displayId || String(i.id || '').split('___')[0]);
+    if (!code || code.toUpperCase().startsWith('FG-')) return;
+    const k = code.toUpperCase();
+    const stk = mpreqNum(i.stock), cst = mpreqNum(i.cost);
+    let o = porK.get(k);
+    if (!o) { o = { code, desc: '', unit: '', category: '', stock: 0, cost: 0, docs: 0 }; porK.set(k, o); }
+    const prev = o.stock;
+    o.stock = prev + stk;
+    o.cost = o.stock > 0 ? (prev * o.cost + stk * cst) / o.stock : cst;
+    o.docs++;
+    if (!o.desc && i.desc) o.desc = String(i.desc);
+    if (!o.unit && i.unit) o.unit = String(i.unit);
+    if (!o.category && i.category) o.category = String(i.category);
+  });
+  porK.forEach(o => { const kc = mpreqKc(o.code); if (!porKc.has(kc)) porKc.set(kc, o); });
+  return { porK, porKc };
+};
+const mpreqBuscar = (inv, code) => inv.porK.get(mpreqK(code)) || inv.porKc.get(mpreqKc(code)) || null;
+
+// Peso de cada fórmula dentro de la mezcla (suma 1).
+//  promedio → todas iguales · producto / producido → proporcional a los kilos de cada una (base[id]); si nadie tiene kilos, todo 0.
+const mpreqPesos = (modo, formulas, base) => {
+  const fl = formulas || [];
+  if (!fl.length) return [];
+  if (modo === 'promedio') return fl.map(() => 1 / fl.length);
+  const b = fl.map(f => Math.max(0, mpreqNum(base && base[f.id])));
+  const t = b.reduce((s, x) => s + x, 0);
+  return b.map(x => (t > 0 ? x / t : 0));
+};
+
+// Kilos con 2 decimales que suman EXACTAMENTE el total (método del mayor residuo): la tabla siempre cuadra con la carga a planta.
+const mpreqRepartir = (exactos) => {
+  const cs = (exactos || []).map(x => x * 100);
+  const total = Math.round(cs.reduce((s, x) => s + x, 0));
+  const base = cs.map(x => Math.floor(x + 1e-6));
+  let falta = total - base.reduce((s, x) => s + x, 0);
+  const orden = cs.map((x, i) => [x - base[i], i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (let k = 0; falta > 0 && k < orden.length; k++, falta--) base[orden[k][1]]++;
+  return base.map(c => c / 100);
+};
+
+// Cálculo principal. formulas = las incluidas; pesos[i] = peso de formulas[i] (ver mpreqPesos); kilos = producto terminado; mermaPct = % de merma.
+const mpreqCalcular = ({ formulas, pesos, kilos, mermaPct, inventory, inv: invPre }) => {
+  const fl = formulas || [];
+  const kg = Math.max(0, mpreqNum(kilos));
+  const mermaIn = mpreqNum(mermaPct);
+  const merma = Math.min(Math.max(mermaIn, 0), 99.9) / 100;
+  const carga = kg > 0 ? kg / (1 - merma) : 0;
+  const inv = invPre || mpreqInventario(inventory);
+  const filas = new Map();
+  const avisos = { sinInventario: [], balance: [], sinIngredientes: [], unidad: [] };
+  const detalle = [];
+  fl.forEach((f, i) => {
+    const w = (pesos && pesos[i]) || 0;
+    if (!(w > 0)) return;
+    const ings = (f.ingredientes || []).filter(x => x && mpreqTxt(x.id));
+    const total = ings.reduce((s, x) => s + mpreqNum(x.pct), 0);
+    detalle.push({ id: f.id, categoria: f.categoria, tipo: f.tipoProducto || 'BOLSAS', peso: w, kgProducto: kg * w, kgCarga: carga * w, balance: total, nIng: ings.length });
+    if (!ings.length) { avisos.sinIngredientes.push(f.categoria); return; }
+    if (Math.abs(total - 100) >= 0.1) avisos.balance.push({ categoria: f.categoria, total });
+    ings.forEach(ing => {
+      const code = mpreqTxt(ing.id);
+      const it = mpreqBuscar(inv, code);
+      const key = it ? 'I:' + mpreqK(it.code) : 'F:' + mpreqKc(code);
+      let r = filas.get(key);
+      if (!r) {
+        r = { key, code: it ? it.code : code, desc: it ? it.desc : '', descFormula: '', enInventario: !!it, unit: it ? it.unit : '', stock: it ? it.stock : 0, costoU: it ? it.cost : 0, pct: 0, formulas: [] };
+        filas.set(key, r);
+      }
+      if (!r.descFormula && ing.desc) r.descFormula = mpreqTxt(ing.desc);
+      r.pct += w * mpreqNum(ing.pct);
+      if (!r.formulas.includes(f.categoria)) r.formulas.push(f.categoria);
+    });
+  });
+  const lista = [...filas.values()];
+  const kgR = mpreqRepartir(lista.map(r => carga * r.pct / 100));
+  lista.forEach((r, i) => {
+    r.kg = kgR[i];
+    r.nFormulas = r.formulas.length;
+    r.faltante = r.enInventario ? mpreqR2(Math.max(0, r.kg - r.stock)) : r.kg;
+    r.costo = mpreqR2(r.kg * r.costoU);
+    r.costoFaltante = mpreqR2(r.faltante * r.costoU);
+    r.estado = !r.enInventario ? 'sininv' : (r.kg <= 0 ? 'sinuso' : (r.stock + 1e-9 >= r.kg ? 'ok' : 'falta'));
+  });
+  lista.sort((a, b) => b.pct - a.pct || b.kg - a.kg || a.code.localeCompare(b.code, undefined, { numeric: true }));
+  lista.forEach(r => {
+    if (!r.enInventario) avisos.sinInventario.push({ code: r.code, desc: r.descFormula, formulas: r.formulas });
+    else if (!mpreqEsKg(r.unit)) avisos.unidad.push({ code: r.code, unit: r.unit });
+  });
+  const sum = (k) => lista.reduce((s, r) => s + r[k], 0);
+  const total = {
+    pct: sum('pct'), kg: mpreqR2(sum('kg')), costo: mpreqR2(sum('costo')), faltante: mpreqR2(sum('faltante')), costoFaltante: mpreqR2(sum('costoFaltante')),
+    nFaltan: lista.filter(r => r.estado === 'falta' || r.estado === 'sininv').length, nMp: lista.length,
+  };
+  detalle.sort((a, b) => b.peso - a.peso || String(a.categoria).localeCompare(String(b.categoria), undefined, { numeric: true }));
+  return { kilos: kg, mermaPct: merma * 100, mermaKg: carga - kg, carga, filas: lista, total, avisos, detalle, nFormulas: detalle.length };
+};
+
+// ── «Según lo producido»: kilos de producto terminado que produjo cada fórmula en un período ──
+// Misma regla que el envío a inventario: se cuenta la ÚLTIMA fase de la ruta (sellado en bolsas, extrusión en termoencogible) y no los despachos de almacén.
+const mpreqFormulaDeOP = (req, formulas) => {
+  const fl = formulas || [];
+  const catU = String((req && req.categoria) || '').toUpperCase();
+  let f = catU ? fl.find(x => x && x.categoria && String(x.categoria).toUpperCase() === catU) : null;
+  if (!f && req) {
+    const cand = [req.categoria, req.subcategoria, req.subCategoria, req.producto, req.product, req.nombreProducto].filter(Boolean).map(envPtKey);
+    f = fl.find(x => x && x.categoria && cand.includes(envPtKey(x.categoria)));
+  }
+  return f || null;
+};
+const mpreqBatchesFase = (req, fase) => {
+  const prod = (req && req.production) || {};
+  const vistos = new Set(), out = [];
+  const add = (lista) => (Array.isArray(lista) ? lista : []).forEach(b => {
+    if (!envPtEsReal(b)) return;
+    if (b.id != null) { const id = String(b.id); if (vistos.has(id)) return; vistos.add(id); }
+    out.push(b);
+  });
+  add(prod[fase] && prod[fase].batches);
+  if (Array.isArray(prod.lotes)) prod.lotes.forEach(l => add(l && l[fase] && l[fase].batches));
+  return out;
+};
+const mpreqFechaBatch = (b) => {
+  const d = String((b && b.date) || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const t = Number(b && b.timestamp);
+  return t > 0 ? mpreqFechaTxt(new Date(t)) : '';
+};
+const mpreqProducido = (requirements, formulas, desde, hasta) => {
+  const porFormula = new Map();
+  let sinFormulaKg = 0, totalKg = 0, nOps = 0;
+  (requirements || []).forEach(req => {
+    if (!req || req.status === 'ANULADA') return;
+    const fase = envPtUltimaFase(req, formulas);
+    let kg = 0;
+    mpreqBatchesFase(req, fase).forEach(b => {
+      const k = mpreqNum(b.producedKg);
+      if (!(k > 0)) return;
+      const d = mpreqFechaBatch(b);
+      if (desde || hasta) { if (!d) return; if (desde && d < desde) return; if (hasta && d > hasta) return; }
+      kg += k;
+    });
+    if (!(kg > 0)) return;
+    totalKg += kg; nOps++;
+    const fo = mpreqFormulaDeOP(req, formulas);
+    if (!fo) { sinFormulaKg += kg; return; }
+    const o = porFormula.get(fo.id) || { kg: 0, ops: 0 };
+    o.kg += kg; o.ops++;
+    porFormula.set(fo.id, o);
+  });
+  return { porFormula, sinFormulaKg, totalKg, nOps };
+};
+
+// Avisos para la pantalla, el PDF y el Excel. nivel: 'warn' (revisar) o 'info'.
+const mpreqAvisos = (R, ctx) => {
+  const c = ctx || {};
+  const out = [];
+  const fmt = (n) => formatNum(n);
+  if (!R || !R.nFormulas) {
+    out.push({ nivel: 'warn', txt: c.nIncluidas === 0 ? 'No hay fórmulas incluidas: marque al menos una.' : c.modo === 'producido' ? 'Ninguna de las fórmulas incluidas tiene producción registrada en ese período.' : c.modo === 'producto' ? 'Escriba los kilos de al menos un producto.' : 'No hay fórmulas incluidas: marque al menos una.' });
+    return out;
+  }
+  if (R.avisos.sinInventario.length) out.push({ nivel: 'warn', txt: `Estas materias primas están en las fórmulas pero NO en el Inventario General (o están desactivadas); se cuentan sin existencia y sin costo: ${R.avisos.sinInventario.map(x => `${x.code} (usada en ${x.formulas.join(', ')})`).join(' · ')}.` });
+  if (R.avisos.balance.length) out.push({ nivel: 'warn', txt: `Fórmulas cuyo balance no suma 100 %: ${R.avisos.balance.map(x => `${x.categoria} (${fmt(x.total)} %)`).join(' · ')}. Los kilos de la tabla no suman exactamente la carga a planta.` });
+  if (R.avisos.sinIngredientes.length) out.push({ nivel: 'warn', txt: `Fórmulas sin ingredientes (no aportan nada): ${R.avisos.sinIngredientes.join(' · ')}.` });
+  if (R.avisos.unidad.length) out.push({ nivel: 'warn', txt: `Materias primas cuya unidad en el inventario no es kg (el cálculo está en kilos): ${R.avisos.unidad.map(x => `${x.code} (${x.unit})`).join(' · ')}.` });
+  if (c.modo === 'producido' && c.sinFormulaKg > 0) out.push({ nivel: 'info', txt: `${fmt(c.sinFormulaKg)} kg producidos en OPs que no tienen fórmula asociada no entran en el cálculo.` });
+  if (c.modo === 'producido' && c.sinProduccion > 0) out.push({ nivel: 'info', txt: `${c.sinProduccion} fórmula${c.sinProduccion !== 1 ? 's' : ''} incluida${c.sinProduccion !== 1 ? 's' : ''} sin producción en el período (no pesan en la mezcla).` });
+  if (c.modo === 'producto' && c.sinKilos > 0) out.push({ nivel: 'info', txt: `${c.sinKilos} fórmula${c.sinKilos !== 1 ? 's' : ''} incluida${c.sinKilos !== 1 ? 's' : ''} sin kilos (no pesan en la mezcla).` });
+  return out;
+};
+// == FIN MPREQ ==
+
+// == INICIO MPREQ EXP ==
+// ═══ Requerimiento de materia prima: Excel y PDF (lo que se ve en pantalla es lo que baja) ═══
+// D = { R, modo, kilos, mermaPct, tipo, nTotal, nIncluidas, periodo:{desde,hasta}|null, empresa:{empresa,rif,direccion,tel}, usuario }
+const MPREQ_ESTADO = { ok: 'Alcanza', falta: 'Falta', sininv: 'Sin inventario', sinuso: '—' };
+const mpreqPeriodoTxt = (p) => !p ? '' : (p.desde && p.hasta ? `del ${frmFechaTxt(Date.parse(p.desde + 'T12:00:00'))} al ${frmFechaTxt(Date.parse(p.hasta + 'T12:00:00'))}` : p.desde ? `desde el ${frmFechaTxt(Date.parse(p.desde + 'T12:00:00'))}` : p.hasta ? `hasta el ${frmFechaTxt(Date.parse(p.hasta + 'T12:00:00'))}` : 'todo el historial');
+const mpreqAlcanceTxt = (D) => D.tipo && D.tipo !== 'TODOS' ? `${D.tipo} · ${D.nIncluidas} de ${D.nTotal} fórmulas` : `${D.nIncluidas} de ${D.nTotal} fórmulas`;
+const mpreqNombreArchivo = (ext) => `Requerimiento_MP_${getTodayDate()}.${ext}`;
+
+const MPREQ_CSS_PDF = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:16px;font-weight:900;text-transform:uppercase;color:#111;letter-spacing:.3px;}.rep-sub{font-size:10px;color:#6b7280;margin:2px 0 12px;}.kpis{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;}.kpi{flex:1 1 130px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;}.kpi span{display:block;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;font-weight:700;}.kpi b{font-size:14px;font-weight:900;color:#0f172a;}.kpi small{display:block;font-size:8.5px;color:#64748b;margin-top:2px;}.kpi.warn{background:#fef2f2;border-color:#fecaca;}.kpi.warn b{color:#b91c1c;}.kpi.good{background:#f0fdf4;border-color:#bbf7d0;}.kpi.good b{color:#15803d;}.param{font-size:9.5px;color:#475569;margin:0 0 10px;line-height:1.6;}.param b{color:#0f172a;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}th.n,td.n{text-align:right;white-space:nowrap;}th.c,td.c{text-align:center;}tbody td{padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle;}tbody tr:nth-child(even) td{background:#f8fafc;}tr{page-break-inside:avoid;break-inside:avoid;}td.id{font-weight:900;color:#ea580c;white-space:nowrap;}td.b{font-weight:900;}td.bad,.bad{color:#b91c1c;font-weight:900;}.ok{color:#15803d;font-weight:900;}.st{font-size:8.5px;font-weight:900;text-transform:uppercase;white-space:nowrap;}tr.e-falta .st,tr.e-sininv .st{color:#b91c1c;}tr.e-ok .st{color:#15803d;}tr.e-sinuso .st{color:#9ca3af;}tfoot td{padding:8px;font-weight:900;border-top:2px solid #0f172a;background:#f1f5f9;}.avisos{margin:12px 0 0;}.aviso{font-size:9.5px;line-height:1.5;padding:7px 10px;border-radius:6px;margin-bottom:5px;}.aviso.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e;}.aviso.info{background:#f1f5f9;border:1px solid #e2e8f0;color:#475569;}.anexo-tit{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:#0f172a;margin:20px 0 6px;page-break-after:avoid;break-after:avoid;}.pie{margin-top:18px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:8.5px;color:#9ca3af;text-align:center;line-height:1.6;}@page{size:landscape;margin:8mm 8mm 12mm;}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}table{font-size:9px;}th{font-size:7.5px;padding:5px 6px;}tbody td{padding:4px 6px;}.membrete{padding:8px 14px 6px;}.contenido{padding:8px 14px 14px;}.rep-titulo{font-size:13px;}.kpi{padding:6px 10px;}.kpi b{font-size:12px;}}`;
+
+const mpreqDocPdf = (D) => {
+  const esc = rhCierreEsc;
+  const R = D.R, E = D.empresa || {};
+  const n2 = formatNum;
+  const hayKg = R.kilos > 0;
+  const dash = '—';
+  const filas = R.filas.map((r, i) => {
+    const faltaCls = hayKg && r.faltante > 0 ? ' bad' : '';
+    return `<tr class="e-${r.estado}"><td class="c">${i + 1}</td><td class="id">${esc(r.code)}</td><td>${esc(r.desc || r.descFormula)}</td><td class="n">${n2(r.pct)} %</td><td class="n b">${hayKg ? n2(r.kg) : dash}</td><td class="n">${r.enInventario ? n2(r.stock) : dash}</td><td class="n${faltaCls}">${hayKg ? n2(r.faltante) : dash}</td><td class="n">${r.enInventario ? n2(r.costoU) : dash}</td><td class="n">${hayKg ? n2(r.costo) : dash}</td><td class="c st">${hayKg ? MPREQ_ESTADO[r.estado] : dash}</td></tr>`;
+  }).join('');
+  const T = R.total;
+  const pie = `<tfoot><tr><td></td><td colspan="2">TOTAL · ${T.nMp} materia${T.nMp !== 1 ? 's' : ''} prima${T.nMp !== 1 ? 's' : ''}</td><td class="n">${n2(T.pct)} %</td><td class="n">${hayKg ? n2(T.kg) : dash}</td><td></td><td class="n">${hayKg ? n2(T.faltante) : dash}</td><td></td><td class="n">${hayKg ? n2(T.costo) : dash}</td><td></td></tr></tfoot>`;
+  const kpi = (lbl, val, sub, cls) => `<div class="kpi${cls ? ' ' + cls : ''}"><span>${esc(lbl)}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const kpis = hayKg
+    ? kpi('Kilos a producir (terminado)', `${n2(R.kilos)} kg`) + kpi(`Merma ${n2(R.mermaPct)} %`, `${n2(R.mermaKg)} kg`) + kpi('Carga a planta', `${n2(R.carga)} kg`, 'kilos ÷ (1 − merma)')
+      + kpi('Costo estimado de la materia prima', `$ ${n2(T.costo)}`) + (T.nFaltan ? kpi('Materias primas con faltante', `${T.nFaltan} de ${T.nMp}`, `Valor del faltante: $ ${n2(T.costoFaltante)}`, 'warn') : kpi('Existencia', 'Alcanza para todo', `${T.nMp} materias primas`, 'good'))
+    : kpi('Kilos a producir', dash, 'sin kilos: solo se muestra la mezcla') + kpi('Materias primas', String(T.nMp));
+  const av = (D.avisos || []).map(a => `<div class="aviso ${a.nivel}">${a.nivel === 'warn' ? '⚠ ' : 'ℹ '}${esc(a.txt)}</div>`).join('');
+  const per = D.periodo ? ` · producción ${esc(mpreqPeriodoTxt(D.periodo))}` : '';
+  const detalle = R.detalle.length
+    ? `<div class="anexo-tit">Fórmulas consideradas y su peso en la mezcla</div><table><thead><tr><th>Fórmula</th><th>Tipo</th><th class="n">Peso en la mezcla</th><th class="n">Kg producto terminado</th><th class="n">Kg a planta</th><th class="n">Balance de la fórmula</th></tr></thead><tbody>${R.detalle.map(x => `<tr><td><b>${esc(x.categoria)}</b></td><td>${esc(x.tipo)}</td><td class="n">${n2(x.peso * 100)} %</td><td class="n">${hayKg ? n2(x.kgProducto) : dash}</td><td class="n">${hayKg ? n2(x.kgCarga) : dash}</td><td class="n ${Math.abs(x.balance - 100) < 0.1 ? 'ok' : 'bad'}">${n2(x.balance)} %</td></tr>`).join('')}</tbody></table>`
+    : '';
+  const quien = `${esc(frmAhoraTxt())}${D.usuario ? ' · ' + esc(D.usuario) : ''}`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${mpreqNombreArchivo('pdf').replace(/\.pdf$/, '')}</title><style>${MPREQ_CSS_PDF}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(E.empresa)}</h2><p>RIF: ${esc(E.rif)}</p><p>${esc(E.direccion)}</p>${E.tel ? `<p>Tel: ${esc(E.tel)}</p>` : ''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">Requerimiento de materia prima</div><div class="rep-sub">Cuánta materia prima se necesita para el plan de producción, con la existencia y el costo del Inventario General</div><div class="kpis">${kpis}</div><div class="param"><b>Modo de reparto:</b> ${esc(mpreqModoTxt(D.modo))}${per} · <b>Fórmulas:</b> ${esc(mpreqAlcanceTxt(D))} · <b>Emitido:</b> ${quien}</div><table><thead><tr><th class="c">#</th><th>Código</th><th>Materia prima</th><th class="n">% mezcla</th><th class="n">Kg requeridos</th><th class="n">Existencia (kg)</th><th class="n">Faltante (kg)</th><th class="n">Costo U. ($)</th><th class="n">Costo ($)</th><th class="c">Estado</th></tr></thead><tbody>${filas}</tbody>${pie}</table>${av ? `<div class="avisos">${av}</div>` : ''}${detalle}<div class="pie">% mezcla = promedio de las fórmulas incluidas, ponderado según el modo de reparto · Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga) · Existencia y costo = Inventario General, consolidados por código · ${esc(E.empresa)}</div></div></div></body></html>`;
+};
+
+// Excel (ExcelJS): hoja «Requerimiento» (la tabla de pantalla, con fórmulas vivas para faltante, costo y totales) y hoja «Fórmulas» (peso de cada una en la mezcla).
+const mpreqXlsxBuffer = async (D) => {
+  const EJ = await ccLoadExcelJS();
+  const R = D.R, E = D.empresa || {}, T = R.total;
+  const hayKg = R.kilos > 0;
+  const INK = 'FF0F172A', ORANGE = 'FFF97316', WHITE = 'FFFFFFFF', GRID = 'FFD1D5DB', SLATE = 'FFF1F5F9', ZEBRA = 'FFF8FAFC', MUTED = 'FF64748B', GREEN = 'FF15803D', RED = 'FFB91C1C', AMBER = 'FFFFFBEB';
+  const NF_KG = '#,##0.00', NF_PCT = '0.00"%"', NF_USD = '"$" #,##0.00';
+  const fill = a => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: a } });
+  const thin = { style: 'thin', color: { argb: GRID } };
+  const bd = { top: thin, left: thin, bottom: thin, right: thin };
+  const AR = (size, color, bold, italic) => ({ name: 'Arial', size, bold: !!bold, italic: !!italic, color: { argb: color } });
+  const hoy = frmFechaTxt(Date.now());
+  const CENTER = { vertical: 'middle', horizontal: 'center' };
+  const infoTxt = `${mpreqAlcanceTxt(D)}  ·  Emitido el ${frmAhoraTxt()}${D.usuario ? '  ·  ' + D.usuario : ''}`;
+  const wb = new EJ.Workbook();
+  wb.creator = String(E.empresa || ''); wb.created = new Date(); wb.title = 'Requerimiento de materia prima'; wb.company = String(E.empresa || '');
+  const mkSheet = (nombre, tab, ySplit) => wb.addWorksheet(nombre, {
+    properties: { tabColor: { argb: tab } },
+    views: [{ state: 'frozen', ySplit, showGridLines: false }],
+    pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true,
+      margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: `${ySplit}:${ySplit}` },
+    headerFooter: { oddFooter: `&L&8&"Arial,Regular"Requerimiento de materia prima — ${nombre}&C&8&"Arial,Regular"Página &P de &N&R&8&"Arial,Regular"Generado el ${hoy}` },
+  });
+  const put = (ws, r, c1, c2, val, font, al) => { if (c2 > c1) ws.mergeCells(r, c1, r, c2); const cell = ws.getCell(r, c1); cell.value = val; cell.font = font; cell.alignment = al || { vertical: 'middle', horizontal: 'left', indent: 1 }; return cell; };
+  const headRow = (ws, row, heads) => {
+    heads.forEach((t, i) => {
+      const c = ws.getCell(row, i + 1);
+      c.value = t; c.font = AR(9, WHITE, true); c.fill = fill(INK);
+      c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      c.border = { left: { style: 'thin', color: { argb: WHITE } }, right: { style: 'thin', color: { argb: WHITE } }, bottom: { style: 'medium', color: { argb: ORANGE } } };
+    });
+    ws.getRow(row).height = 30;
+  };
+
+  // ═══ Hoja 1: Requerimiento ═══
+  const p6 = (x) => Math.round((Number(x) || 0) * 1e6) / 1e6;
+  const NC = 11, HR = 8;
+  const ws = mkSheet('Requerimiento', 'FF6D28D9', HR);
+  [5, 22, 40, 11, 16, 16, 16, 12, 17, 17, 15].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  put(ws, 1, 1, 7, String(E.empresa || ''), AR(15, INK, true));
+  put(ws, 2, 1, 7, `RIF: ${E.rif || ''}`, AR(9, 'FF475569'));
+  put(ws, 3, 1, 7, String(E.direccion || ''), AR(8, MUTED));
+  put(ws, 4, 1, 7, 'REQUERIMIENTO DE MATERIA PRIMA', AR(17, ORANGE, true));
+  put(ws, 1, 8, 11, 'PRODUCCIÓN  ·  REQUERIMIENTO DE MP', AR(9, 'FFEA580C', true), CENTER).fill = fill(SLATE);
+  put(ws, 2, 8, 11, hayKg ? `KILOS A PRODUCIR:  ${formatNum(R.kilos)} kg` : 'KILOS A PRODUCIR:  —', AR(10, INK, true), CENTER).fill = fill(SLATE);
+  put(ws, 3, 8, 11, hayKg ? `MERMA ${formatNum(R.mermaPct)} %  ·  CARGA A PLANTA:  ${formatNum(R.carga)} kg` : `MERMA ${formatNum(R.mermaPct)} %`, AR(10, INK, true), CENTER).fill = fill(SLATE);
+  put(ws, 4, 8, 11, `MODO:  ${mpreqModoTxt(D.modo)}${D.periodo ? '  ·  ' + mpreqPeriodoTxt(D.periodo) : ''}`, AR(9, 'FF475569'), CENTER).fill = fill(SLATE);
+  [24, 15, 14, 28].forEach((h, i) => { ws.getRow(i + 1).height = h; });
+  for (let c = 1; c <= NC; c++) ws.getCell(5, c).fill = fill(ORANGE);
+  ws.getRow(5).height = 4;
+  put(ws, 6, 1, NC, infoTxt, AR(9, MUTED, false, true));
+  ws.getRow(6).height = 18;
+  ws.getRow(7).height = 6;
+  headRow(ws, HR, ['#', 'CÓDIGO MP', 'MATERIA PRIMA', '% MEZCLA', 'KG REQUERIDOS', 'EXISTENCIA (kg)', 'FALTANTE (kg)', 'COSTO U. ($)', 'COSTO ESTIMADO ($)', 'COSTO DEL FALTANTE ($)', 'ESTADO']);
+  let r = HR + 1;
+  const r0 = r;
+  R.filas.forEach((f, i) => {
+    const bg = i % 2 ? ZEBRA : WHITE;
+    for (let c = 1; c <= NC; c++) { const cell = ws.getCell(r, c); cell.fill = fill(bg); cell.border = bd; cell.font = AR(9, INK); cell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 }; }
+    ws.getRow(r).height = 17;
+    const set = (c, v, nf, font, al) => { const cell = ws.getCell(r, c); cell.value = v; if (nf) cell.numFmt = nf; if (font) cell.font = font; if (al) cell.alignment = al; return cell; };
+    set(1, i + 1, null, AR(9, MUTED), CENTER);
+    set(2, f.code, null, AR(9, 'FFEA580C', true), { vertical: 'middle', horizontal: 'left', indent: 1 });
+    set(3, f.desc || f.descFormula || null, null, AR(9, 'FF4B5563'), { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true });
+    set(4, p6(f.pct), NF_PCT, AR(9, 'FF6D28D9', true));
+    if (hayKg) {
+      set(5, f.kg, NF_KG, AR(10, INK, true));
+      set(6, f.enInventario ? f.stock : null, NF_KG);
+      set(7, { formula: `ROUND(MAX(0,E${r}-F${r}),2)`, result: f.faltante }, NF_KG, AR(9, f.faltante > 0 ? RED : INK, f.faltante > 0));
+      set(8, f.enInventario ? f.costoU : null, NF_USD);
+      set(9, { formula: `ROUND(E${r}*H${r},2)`, result: f.costo }, NF_USD);
+      set(10, { formula: `ROUND(G${r}*H${r},2)`, result: f.costoFaltante }, NF_USD, AR(9, f.costoFaltante > 0 ? RED : INK, f.costoFaltante > 0));
+      set(11, f.enInventario ? { formula: `IF(F${r}>=E${r},"Alcanza","Falta")`, result: f.estado === 'ok' ? 'Alcanza' : 'Falta' } : 'Sin inventario', null, AR(9, f.estado === 'ok' ? GREEN : RED, true), CENTER);
+    } else {
+      [5, 6, 7, 8, 9, 10, 11].forEach(c => { const cell = ws.getCell(r, c); cell.value = '—'; cell.alignment = CENTER; cell.font = AR(9, 'FF9CA3AF'); });
+    }
+    r++;
+  });
+  const r1 = r - 1;
+  // Totales (con fórmulas)
+  for (let c = 1; c <= NC; c++) { const cell = ws.getCell(r, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'medium', color: { argb: INK } } }; cell.font = AR(10, INK, true); }
+  ws.mergeCells(r, 1, r, 3);
+  const tl = ws.getCell(r, 1); tl.value = `TOTAL  —  ${T.nMp} materia${T.nMp !== 1 ? 's' : ''} prima${T.nMp !== 1 ? 's' : ''}`; tl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  const sumCell = (c, col, val, nf) => { const cell = ws.getCell(r, c); cell.value = r1 >= r0 ? { formula: `SUM(${col}${r0}:${col}${r1})`, result: val } : val; cell.numFmt = nf; cell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 }; };
+  sumCell(4, 'D', p6(T.pct), NF_PCT);
+  if (hayKg) { sumCell(5, 'E', T.kg, NF_KG); sumCell(7, 'G', T.faltante, NF_KG); sumCell(9, 'I', T.costo, NF_USD); sumCell(10, 'J', T.costoFaltante, NF_USD); }
+  ws.getRow(r).height = 22;
+  r += 2;
+  const notas = (D.avisos || []).map(a => (a.nivel === 'warn' ? '⚠ ' : 'ℹ ') + a.txt);
+  notas.push('% MEZCLA = promedio de las fórmulas incluidas, ponderado según el modo de reparto. KG REQUERIDOS = carga a planta × % mezcla (suman exacto con la carga a planta).');
+  notas.push('EXISTENCIA y COSTO U. = Inventario General, consolidados por código (existencia sumada de todos los almacenes y costo promedio ponderado).');
+  notas.forEach((t, i) => {
+    const warn = i < notas.length - 2 && t.startsWith('⚠');
+    const cell = put(ws, r, 1, NC, t, AR(8, warn ? 'FF92400E' : MUTED, false, !warn), { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true });
+    if (warn) cell.fill = fill(AMBER);
+    ws.getRow(r).height = Math.max(14, Math.ceil(t.length / 150) * 11 + 4);
+    r++;
+  });
+
+  // ═══ Hoja 2: Fórmulas ═══
+  const NC2 = 6;
+  const ws2 = mkSheet('Fórmulas', 'FF0891B2', 4);
+  [44, 18, 16, 20, 16, 18].forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
+  put(ws2, 1, 1, 3, String(E.empresa || ''), AR(14, INK, true)); ws2.getRow(1).height = 22;
+  put(ws2, 2, 1, 4, 'REQUERIMIENTO DE MATERIA PRIMA — FÓRMULAS CONSIDERADAS', AR(12, ORANGE, true)); ws2.getRow(2).height = 20;
+  put(ws2, 3, 1, NC2, infoTxt, AR(9, MUTED, false, true)); ws2.getRow(3).height = 16;
+  headRow(ws2, 4, ['FÓRMULA', 'TIPO', 'PESO EN LA MEZCLA', 'KG PRODUCTO TERMINADO', 'KG A PLANTA', 'BALANCE DE LA FÓRMULA']);
+  let r2 = 5;
+  R.detalle.forEach((x, i) => {
+    const vals = [x.categoria, x.tipo, p6(x.peso * 100), hayKg ? mpreqR2(x.kgProducto) : null, hayKg ? mpreqR2(x.kgCarga) : null, x.balance];
+    vals.forEach((v, ci) => {
+      const col = ci + 1, c = ws2.getCell(r2, col);
+      c.value = v;
+      c.font = AR(9, col === 1 ? 'FF6D28D9' : col === 6 ? (Math.abs(x.balance - 100) < 0.1 ? GREEN : RED) : INK, col === 1 || col === 6);
+      c.fill = fill(i % 2 ? ZEBRA : WHITE); c.border = bd;
+      c.alignment = { vertical: 'middle', horizontal: col <= 2 ? 'left' : 'right', indent: 1 };
+      if (col === 3 || col === 6) c.numFmt = NF_PCT;
+      if (col === 4 || col === 5) c.numFmt = NF_KG;
+    });
+    ws2.getRow(r2).height = 16;
+    r2++;
+  });
+  if (R.detalle.length) ws2.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r2 - 1, 5), column: NC2 } };
+
+  return wb.xlsx.writeBuffer();
+};
+const mpreqExportXLSX = async (D) => {
+  const buf = await mpreqXlsxBuffer(D);
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const aEl = document.createElement('a');
+  aEl.href = url; aEl.download = mpreqNombreArchivo('xlsx');
+  document.body.appendChild(aEl); aEl.click(); document.body.removeChild(aEl);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+// == FIN MPREQ EXP ==
+
+// == INICIO MPREQ UI ==
+// ═══ Requerimiento de materia prima: pantalla (Producción › Fórmulas › «Requerimiento de MP») ═══
+// Componente propio con sus estados: App solo le pasa los datos en vivo (fórmulas, inventario, órdenes de producción) y decide si está abierto.
+const mpreqFmtInput = (n, cero) => (n > 0 ? new Intl.NumberFormat('es-VE', { minimumFractionDigits: 0, maximumFractionDigits: 2, useGrouping: 'always' }).format(n) : (cero ? '0' : ''));
+const mpreqSoloNum = (v) => { let t = String(v == null ? '' : v).replace(/[^0-9.,]/g, ''); const i = t.indexOf(','); if (i >= 0) t = t.slice(0, i + 1) + t.slice(i + 1).replace(/,/g, ''); return t; };
+const MPREQ_DESC_MODO = {
+  promedio: 'Todas las fórmulas incluidas pesan igual: el % de cada materia prima es el promedio de sus porcentajes (la fórmula que no la usa cuenta 0 %).',
+  producto: 'Usted escribe cuántos kilos va a hacer de cada producto: cada fórmula pesa según sus kilos y los kilos a producir son la suma de todos.',
+  producido: 'Cada fórmula pesa según los kilos de producto terminado que produjo en el período (según las órdenes de producción): repite la proporción de lo que realmente se fabrica.',
+};
+const MPREQ_ESTADO_CHIP = {
+  ok: ['ALCANZA', 'bg-emerald-100 text-emerald-700'],
+  falta: ['FALTA', 'bg-red-100 text-red-700'],
+  sininv: ['SIN INVENTARIO', 'bg-amber-100 text-amber-700'],
+  sinuso: ['—', 'bg-gray-100 text-gray-500'],
+};
+function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDialog, onClose }) {
+  const [modo, setModo] = useState('promedio');
+  const [kilosTxt, setKilosTxt] = useState('');
+  const [mermaTxt, setMermaTxt] = useState('5');
+  const [tipo, setTipo] = useState('TODOS');
+  const [excl, setExcl] = useState(() => new Set());
+  const [kgProd, setKgProd] = useState({});
+  const [desde, setDesde] = useState(() => mpreqFechaMenosDias(90));
+  const [hasta, setHasta] = useState(() => getTodayDate());
+  const [verLista, setVerLista] = useState(false);
+  const [exportando, setExportando] = useState(false);
+
+  const tipoDe = (f) => f.tipoProducto || 'BOLSAS';
+  const ordenadas = useMemo(() => mpreqOrdenFormulas(formulas), [formulas]);
+  const tipos = useMemo(() => { const m = new Map(); ordenadas.forEach(f => m.set(tipoDe(f), (m.get(tipoDe(f)) || 0) + 1)); return [...m.entries()]; }, [ordenadas]);
+  const delTipo = useMemo(() => ordenadas.filter(f => tipo === 'TODOS' || tipoDe(f) === tipo), [ordenadas, tipo]);
+  const incluidas = useMemo(() => delTipo.filter(f => !excl.has(f.id)), [delTipo, excl]);
+  const inv = useMemo(() => mpreqInventario(inventory), [inventory]);
+  const prod = useMemo(() => (modo === 'producido' ? mpreqProducido(requirements, ordenadas, desde, hasta) : null), [modo, requirements, ordenadas, desde, hasta]);
+  const kgPorId = useMemo(() => {
+    const o = {};
+    if (modo === 'producto') ordenadas.forEach(f => { o[f.id] = Math.max(0, mpreqLeer(kgProd[f.id])); });
+    else if (modo === 'producido' && prod) prod.porFormula.forEach((v, id) => { o[id] = v.kg; });
+    return o;
+  }, [modo, kgProd, prod, ordenadas]);
+  const kilos = modo === 'producto' ? incluidas.reduce((s, f) => s + (kgPorId[f.id] || 0), 0) : mpreqLeer(kilosTxt);
+  const merma = mpreqLeer(mermaTxt);
+  const pesos = useMemo(() => mpreqPesos(modo, incluidas, kgPorId), [modo, incluidas, kgPorId]);
+  const R = useMemo(() => mpreqCalcular({ formulas: incluidas, pesos, kilos, mermaPct: merma, inv }), [incluidas, pesos, kilos, merma, inv]);
+  const detallePorId = useMemo(() => new Map(R.detalle.map(d => [d.id, d])), [R]);
+  const avisos = useMemo(() => mpreqAvisos(R, {
+    modo,
+    nIncluidas: incluidas.length,
+    sinFormulaKg: prod ? prod.sinFormulaKg : 0,
+    sinProduccion: modo === 'producido' && prod ? incluidas.filter(f => !((prod.porFormula.get(f.id) || {}).kg > 0)).length : 0,
+    sinKilos: modo === 'producto' ? incluidas.filter(f => !(kgPorId[f.id] > 0)).length : 0,
+  }), [R, modo, prod, incluidas, kgPorId]);
+  const hayKg = R.kilos > 0;
+  const listaAbierta = modo === 'producto' || verLista;
+
+  const datosExp = () => ({ R, modo, kilos: R.kilos, mermaPct: R.mermaPct, tipo, nTotal: ordenadas.length, nIncluidas: R.nFormulas, periodo: modo === 'producido' ? { desde, hasta } : null, empresa, usuario, avisos });
+  const bajarExcel = async () => {
+    if (exportando) return;
+    if (!R.nFormulas) return setDialog({ title: 'Aviso', text: 'No hay nada que exportar: incluya al menos una fórmula con peso en la mezcla.', type: 'alert' });
+    setExportando(true);
+    try { await mpreqExportXLSX(datosExp()); }
+    catch (e) { setDialog({ title: 'Error', text: 'No se pudo generar el Excel: ' + (e && e.message ? e.message : String(e)), type: 'alert' }); }
+    finally { setExportando(false); }
+  };
+  const abrirPdf = () => {
+    if (!R.nFormulas) return setDialog({ title: 'Aviso', text: 'No hay nada que imprimir: incluya al menos una fórmula con peso en la mezcla.', type: 'alert' });
+    const w = window.open('', '_blank');
+    if (!w) return setDialog({ title: 'Aviso', text: 'El navegador bloqueó la ventana del PDF. Permita las ventanas emergentes de este sitio e inténtelo de nuevo.', type: 'alert' });
+    try { w.document.write(mpreqDocPdf(datosExp())); w.document.close(); }
+    catch (e) { try { w.close(); } catch (_) {} setDialog({ title: 'Error', text: 'No se pudo generar el PDF: ' + (e && e.message ? e.message : String(e)), type: 'alert' }); }
+  };
+
+  const marcar = (todas) => setExcl(prev => { const n = new Set(prev); delTipo.forEach(f => { if (todas) n.delete(f.id); else n.add(f.id); }); return n; });
+  const alternar = (id) => setExcl(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const dias = (n) => { setDesde(mpreqFechaMenosDias(n)); setHasta(getTodayDate()); };
+  const chip = (activo) => `px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border-2 transition-all ${activo ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'}`;
+  const lbl = 'text-[10px] font-black text-gray-500 uppercase block mb-1';
+  const kpi = (id, titulo, valor, sub, tono) => (
+    <div data-mpreq={'kpi-' + id} className={`rounded-2xl border p-4 ${tono === 'bad' ? 'bg-red-50 border-red-200' : tono === 'good' ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'}`}>
+      <p className="text-[9px] font-black uppercase tracking-wider text-gray-500">{titulo}</p>
+      <p className={`text-xl font-black mt-1 tabular-nums ${tono === 'bad' ? 'text-red-700' : tono === 'good' ? 'text-emerald-700' : 'text-gray-900'}`}>{valor}</p>
+      {sub ? <p className="text-[9px] font-bold text-gray-400 mt-0.5">{sub}</p> : null}
+    </div>
+  );
+  const T = R.total;
+
+  return (
+    <div className="p-8 bg-indigo-50/40 border-b border-indigo-100" data-mpreq="panel">
+      <div className="bg-white rounded-3xl border border-indigo-100 shadow-sm p-8 space-y-6">
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-4">
+          <div>
+            <h3 className="text-sm font-black uppercase text-black flex items-center gap-2"><Calculator size={18} className="text-indigo-600" /> Requerimiento de materia prima</h3>
+            <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase">Escriba cuántos kilos va a producir y vea cuánto necesita de cada materia prima, según el porcentaje de las fórmulas</p>
+          </div>
+          <button type="button" data-mpreq="cerrar" onClick={onClose} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-100 text-gray-600 hover:bg-gray-200 flex items-center gap-1.5 shrink-0"><X size={14} /> Cerrar</button>
+        </div>
+
+        {ordenadas.length === 0 ? (
+          <p data-mpreq="sin-formulas" className="text-sm font-bold text-gray-500">Todavía no hay fórmulas creadas. Cree las fórmulas primero y luego calcule el requerimiento.</p>
+        ) : (<>
+          {/* Parámetros */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-start">
+            <div>
+              <label className={lbl}>Kilos a producir (producto terminado)</label>
+              {modo === 'producto' ? (
+                <div data-mpreq="kilos-total" className="w-full border-2 border-gray-100 bg-gray-50 rounded-xl p-3 font-black text-lg text-gray-700 tabular-nums">{formatNum(kilos)} kg <span className="block text-[9px] font-bold text-gray-400 uppercase">suma de los kilos de cada producto</span></div>
+              ) : (<>
+                <input data-mpreq="kilos" type="text" inputMode="decimal" value={kilosTxt} placeholder="Ej: 60.000"
+                  onChange={e => setKilosTxt(mpreqSoloNum(e.target.value))}
+                  onBlur={() => setKilosTxt(mpreqFmtInput(mpreqLeer(kilosTxt)))}
+                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                  className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-lg outline-none focus:border-indigo-500 tabular-nums" />
+                <div className="flex gap-1.5 mt-2 flex-wrap">
+                  {[30000, 40000, 50000, 60000].map(n => (
+                    <button key={n} type="button" data-mpreq={'kilos-' + n} onClick={() => setKilosTxt(mpreqFmtInput(n))}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-gray-100 text-gray-600 hover:bg-indigo-100 hover:text-indigo-700 tabular-nums">{mpreqFmtInput(n)}</button>
+                  ))}
+                </div>
+              </>)}
+            </div>
+            <div>
+              <label className={lbl}>Merma % <span className="normal-case font-bold text-gray-400">(lo que se pierde)</span></label>
+              <input data-mpreq="merma" type="text" inputMode="decimal" value={mermaTxt} placeholder="5"
+                onChange={e => setMermaTxt(mpreqSoloNum(e.target.value))}
+                onBlur={() => setMermaTxt(mermaTxt.trim() === '' ? '0' : mpreqFmtInput(Math.min(Math.max(mpreqLeer(mermaTxt), 0), 99.9), true))}
+                onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-lg outline-none focus:border-indigo-500 tabular-nums" />
+              <p className="text-[9px] font-bold text-gray-400 mt-2">Se suma a la carga para que el producto terminado alcance.</p>
+            </div>
+            <div data-mpreq="merma-kg" className="rounded-2xl bg-gray-50 border border-gray-200 p-4">
+              <p className="text-[9px] font-black uppercase tracking-wider text-gray-500">Merma ({formatNum(R.mermaPct)} %)</p>
+              <p className="text-xl font-black mt-1 text-gray-800 tabular-nums">{hayKg ? formatNum(R.mermaKg) + ' kg' : '—'}</p>
+            </div>
+            <div data-mpreq="carga" className="rounded-2xl bg-indigo-50 border border-indigo-200 p-4">
+              <p className="text-[9px] font-black uppercase tracking-wider text-indigo-600">Carga a planta</p>
+              <p className="text-xl font-black mt-1 text-indigo-800 tabular-nums">{hayKg ? formatNum(R.carga) + ' kg' : '—'}</p>
+              <p className="text-[9px] font-bold text-indigo-400 mt-0.5">kilos ÷ (1 − merma)</p>
+            </div>
+          </div>
+
+          {/* Cómo se reparte */}
+          <div>
+            <label className={lbl}>¿Cómo se reparte entre las fórmulas?</label>
+            <div className="flex flex-wrap gap-2">
+              {MPREQ_MODOS.map(([k, t]) => (
+                <button key={k} type="button" data-mpreq={'modo-' + k} onClick={() => setModo(k)}
+                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${modo === k ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'}`}>{t}</button>
+              ))}
+            </div>
+            <p data-mpreq="modo-desc" className="text-[11px] font-semibold text-gray-500 mt-2">{MPREQ_DESC_MODO[modo]}</p>
+          </div>
+
+          {modo === 'producido' && (
+            <div data-mpreq="periodo" className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 flex flex-wrap items-end gap-4">
+              <div>
+                <label className={lbl}>Producción desde</label>
+                <input data-mpreq="desde" type="date" value={desde} max={hasta || undefined} onChange={e => setDesde(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2 font-bold text-xs outline-none focus:border-indigo-500 bg-white" />
+              </div>
+              <div>
+                <label className={lbl}>Hasta</label>
+                <input data-mpreq="hasta" type="date" value={hasta} min={desde || undefined} onChange={e => setHasta(e.target.value)} className="border-2 border-gray-200 rounded-xl p-2 font-bold text-xs outline-none focus:border-indigo-500 bg-white" />
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {[[30, '30 días'], [90, '90 días'], [180, '180 días']].map(([n, t]) => (
+                  <button key={n} type="button" data-mpreq={'dias-' + n} onClick={() => dias(n)} className="px-3 py-2 rounded-lg text-[10px] font-black uppercase bg-white border-2 border-gray-200 text-gray-600 hover:border-indigo-300">{t}</button>
+                ))}
+                <button type="button" data-mpreq="dias-todo" onClick={() => { setDesde(''); setHasta(''); }} className="px-3 py-2 rounded-lg text-[10px] font-black uppercase bg-white border-2 border-gray-200 text-gray-600 hover:border-indigo-300">Todo el historial</button>
+              </div>
+              <p data-mpreq="prod-resumen" className="text-[11px] font-bold text-indigo-700 ml-auto">
+                {prod && prod.totalKg > 0 ? `Producción encontrada: ${formatNum(prod.totalKg)} kg en ${prod.nOps} ${prod.nOps !== 1 ? 'órdenes' : 'orden'}` : 'No hay producción registrada en ese período.'}
+              </p>
+            </div>
+          )}
+
+          {/* Fórmulas incluidas */}
+          <div>
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className="text-[10px] font-black text-gray-500 uppercase mr-1">Fórmulas</span>
+              {[['TODOS', ordenadas.length], ...tipos].map(([k, n]) => (
+                <button key={k} type="button" data-mpreq={'tipo-' + k} onClick={() => setTipo(k)} className={chip(tipo === k)}>{k === 'TODOS' ? 'Todas' : k} <span className="opacity-70">{n}</span></button>
+              ))}
+              <span data-mpreq="incluidas" className="text-[10px] font-bold text-gray-500 ml-2">{incluidas.length} de {delTipo.length} incluidas</span>
+              <button type="button" data-mpreq="marcar-todas" onClick={() => marcar(true)} className="text-[10px] font-black uppercase text-indigo-600 hover:underline ml-1">Marcar todas</button>
+              <button type="button" data-mpreq="quitar-todas" onClick={() => marcar(false)} className="text-[10px] font-black uppercase text-gray-500 hover:underline">Quitar todas</button>
+              {modo !== 'producto' && (
+                <button type="button" data-mpreq="ver-lista" onClick={() => setVerLista(v => !v)} className="text-[10px] font-black uppercase text-indigo-600 hover:underline flex items-center gap-1 ml-auto">
+                  <ChevronDown size={14} className={verLista ? 'rotate-180 transition-transform' : 'transition-transform'} /> {verLista ? 'Ocultar la lista' : 'Elegir fórmulas'}
+                </button>
+              )}
+            </div>
+            {listaAbierta && (
+              <div data-mpreq="lista" className="border border-gray-200 rounded-2xl overflow-hidden">
+                <div className="max-h-80 overflow-y-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr className="text-[9px] font-black uppercase tracking-wider text-gray-500">
+                        <th className="px-3 py-2 w-8"></th>
+                        <th className="px-3 py-2">Fórmula</th>
+                        <th className="px-3 py-2">Tipo</th>
+                        {modo === 'producto' && <th className="px-3 py-2 text-right">Kilos de este producto</th>}
+                        {modo === 'producido' && <th className="px-3 py-2 text-right">Producido en el período</th>}
+                        <th className="px-3 py-2 text-right">Peso en la mezcla</th>
+                        <th className="px-3 py-2 text-right">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {delTipo.map(f => {
+                        const marcada = !excl.has(f.id);
+                        const d = detallePorId.get(f.id);
+                        const bal = (f.ingredientes || []).reduce((s, x) => s + mpreqNum(x.pct), 0);
+                        const pr = prod && prod.porFormula.get(f.id);
+                        return (
+                          <tr key={f.id} data-mpreq-formula={f.categoria} className={`border-t border-gray-100 ${marcada ? '' : 'opacity-50'}`}>
+                            <td className="px-3 py-1.5"><input type="checkbox" data-mpreq={'chk-' + f.id} checked={marcada} onChange={() => alternar(f.id)} className="accent-indigo-600 w-4 h-4" /></td>
+                            <td className="px-3 py-1.5 text-[11px] font-black text-gray-800">{f.categoria}</td>
+                            <td className="px-3 py-1.5 text-[9px] font-black uppercase text-gray-400">{tipoDe(f)}</td>
+                            {modo === 'producto' && (
+                              <td className="px-3 py-1.5 text-right">
+                                <input data-mpreq={'kg-' + f.id} type="text" inputMode="decimal" value={kgProd[f.id] == null ? '' : kgProd[f.id]} placeholder="0" disabled={!marcada}
+                                  onChange={e => { const v = mpreqSoloNum(e.target.value); setKgProd(p => ({ ...p, [f.id]: v })); }}
+                                  onBlur={() => setKgProd(p => ({ ...p, [f.id]: mpreqFmtInput(mpreqLeer(p[f.id])) }))}
+                                  className="w-32 border-2 border-gray-200 rounded-lg p-1.5 text-right font-black text-xs outline-none focus:border-indigo-500 tabular-nums disabled:bg-gray-50" />
+                              </td>
+                            )}
+                            {modo === 'producido' && <td className="px-3 py-1.5 text-right text-[11px] font-bold text-gray-600 tabular-nums">{pr ? `${formatNum(pr.kg)} kg · ${pr.ops} ${pr.ops !== 1 ? 'órdenes' : 'orden'}` : '—'}</td>}
+                            <td data-mpreq={'peso-' + f.id} className="px-3 py-1.5 text-right text-[11px] font-black text-indigo-700 tabular-nums">{d ? formatNum(d.peso * 100) + ' %' : '—'}</td>
+                            <td className={`px-3 py-1.5 text-right text-[11px] font-black tabular-nums ${Math.abs(bal - 100) < 0.1 ? 'text-emerald-600' : 'text-red-600'}`}>{formatNum(bal)} %</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Resultado */}
+          <div className="border-t border-gray-100 pt-6 space-y-4" data-mpreq="resultado">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h4 className="text-xs font-black uppercase text-black">Materia prima necesaria {hayKg ? <span className="text-gray-400 font-bold normal-case">· para {formatNum(R.kilos)} kg de producto terminado</span> : null}</h4>
+              <div className="flex items-center gap-2">
+                <button type="button" data-mpreq="btn-excel" onClick={bajarExcel} disabled={exportando || !R.nFormulas}
+                  className="bg-white border-2 border-emerald-200 text-emerald-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-50 hover:border-emerald-400 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                  {exportando ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} className="text-emerald-600" />} {exportando ? 'Generando...' : 'Excel'}
+                </button>
+                <button type="button" data-mpreq="btn-pdf" onClick={abrirPdf} disabled={!R.nFormulas}
+                  className="bg-white border-2 border-red-200 text-red-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-red-50 hover:border-red-400 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <Printer size={14} className="text-red-500" /> PDF
+                </button>
+              </div>
+            </div>
+
+            {avisos.length > 0 && (
+              <div data-mpreq="avisos" className="space-y-2">
+                {avisos.map((a, i) => (
+                  <div key={i} data-mpreq={'aviso-' + a.nivel} className={`rounded-xl border px-4 py-2.5 text-[11px] font-bold flex items-start gap-2 ${a.nivel === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
+                    {a.nivel === 'warn' ? <AlertTriangle size={14} className="shrink-0 mt-0.5" /> : <ClipboardList size={14} className="shrink-0 mt-0.5" />}
+                    <span>{a.txt}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {R.nFormulas > 0 && (<>
+              {hayKg ? (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {kpi('kilos', 'Producto terminado', formatNum(R.kilos) + ' kg', `merma ${formatNum(R.mermaPct)} % = ${formatNum(R.mermaKg)} kg`)}
+                  {kpi('carga', 'Carga a planta', formatNum(R.carga) + ' kg', `${T.nMp} materia${T.nMp !== 1 ? 's' : ''} prima${T.nMp !== 1 ? 's' : ''}`)}
+                  {kpi('costo', 'Costo estimado de la MP', '$ ' + formatNum(T.costo), 'con el costo promedio del inventario')}
+                  {T.nFaltan > 0
+                    ? kpi('faltante', 'Materias primas con faltante', `${T.nFaltan} de ${T.nMp}`, `Valor del faltante: $ ${formatNum(T.costoFaltante)}`, 'bad')
+                    : kpi('faltante', 'Existencia', 'Alcanza para todo', `${T.nMp} materias primas`, 'good')}
+                </div>
+              ) : (
+                <p data-mpreq="sin-kilos" className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5">Escriba los kilos a producir para ver cuánta materia prima necesita. Mientras tanto se muestra el % de cada materia prima en la mezcla.</p>
+              )}
+
+              <div className="border border-gray-200 rounded-2xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table data-mpreq="tabla" className="w-full text-left">
+                    <thead className="bg-gray-900 text-white">
+                      <tr className="text-[9px] font-black uppercase tracking-wider">
+                        <th className="px-3 py-3 text-center w-10">#</th>
+                        <th className="px-3 py-3">Código</th>
+                        <th className="px-3 py-3">Materia prima</th>
+                        <th className="px-3 py-3 text-right">% mezcla</th>
+                        <th className="px-3 py-3 text-right">Kg requeridos</th>
+                        <th className="px-3 py-3 text-right">Existencia (kg)</th>
+                        <th className="px-3 py-3 text-right">Faltante (kg)</th>
+                        <th className="px-3 py-3 text-right">Costo U. ($)</th>
+                        <th className="px-3 py-3 text-right">Costo ($)</th>
+                        <th className="px-3 py-3 text-center">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {R.filas.map((r, i) => {
+                        const ch = MPREQ_ESTADO_CHIP[r.estado];
+                        return (
+                          <tr key={r.key} data-mpreq-fila={r.code} title={'Usada en: ' + r.formulas.join(', ')}
+                            className={`border-b border-gray-100 ${hayKg && (r.estado === 'falta' || r.estado === 'sininv') ? 'bg-red-50/50' : (i % 2 ? 'bg-gray-50/60' : '')}`}>
+                            <td className="px-3 py-2.5 text-center text-[10px] font-bold text-gray-400">{i + 1}</td>
+                            <td className="px-3 py-2.5 text-[11px] font-black text-orange-600 whitespace-nowrap">{r.code}</td>
+                            <td className="px-3 py-2.5 text-[11px] font-bold text-gray-700">{r.desc || r.descFormula}<span className="ml-2 text-[9px] font-bold text-gray-400">en {r.nFormulas} fórmula{r.nFormulas !== 1 ? 's' : ''}</span></td>
+                            <td data-mpreq="c-pct" className="px-3 py-2.5 text-right text-[11px] font-black text-purple-700 tabular-nums whitespace-nowrap">{formatNum(r.pct)} %</td>
+                            <td data-mpreq="c-kg" className="px-3 py-2.5 text-right text-xs font-black text-gray-900 tabular-nums whitespace-nowrap">{hayKg ? formatNum(r.kg) : '—'}</td>
+                            <td data-mpreq="c-stock" className="px-3 py-2.5 text-right text-[11px] font-bold text-gray-600 tabular-nums whitespace-nowrap">{r.enInventario ? formatNum(r.stock) : '—'}</td>
+                            <td data-mpreq="c-falta" className={`px-3 py-2.5 text-right text-[11px] tabular-nums whitespace-nowrap ${hayKg && r.faltante > 0 ? 'font-black text-red-600' : 'font-bold text-gray-400'}`}>{hayKg ? formatNum(r.faltante) : '—'}</td>
+                            <td data-mpreq="c-costou" className="px-3 py-2.5 text-right text-[11px] font-bold text-gray-600 tabular-nums whitespace-nowrap">{r.enInventario ? formatNum(r.costoU) : '—'}</td>
+                            <td data-mpreq="c-costo" className="px-3 py-2.5 text-right text-[11px] font-black text-gray-800 tabular-nums whitespace-nowrap">{hayKg ? formatNum(r.costo) : '—'}</td>
+                            <td data-mpreq="c-estado" className="px-3 py-2.5 text-center">{hayKg ? <span className={`px-2 py-0.5 rounded-full text-[9px] font-black whitespace-nowrap ${ch[1]}`}>{ch[0]}</span> : <span className="text-gray-300">—</span>}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr data-mpreq="totales" className="bg-slate-100 border-t-2 border-gray-900 text-[11px] font-black text-gray-900">
+                        <td className="px-3 py-3" colSpan={3}>TOTAL · {T.nMp} materia{T.nMp !== 1 ? 's' : ''} prima{T.nMp !== 1 ? 's' : ''}</td>
+                        <td data-mpreq="t-pct" className="px-3 py-3 text-right tabular-nums whitespace-nowrap">{formatNum(T.pct)} %</td>
+                        <td data-mpreq="t-kg" className="px-3 py-3 text-right tabular-nums whitespace-nowrap">{hayKg ? formatNum(T.kg) : '—'}</td>
+                        <td className="px-3 py-3"></td>
+                        <td data-mpreq="t-falta" className="px-3 py-3 text-right tabular-nums whitespace-nowrap">{hayKg ? formatNum(T.faltante) : '—'}</td>
+                        <td className="px-3 py-3"></td>
+                        <td data-mpreq="t-costo" className="px-3 py-3 text-right tabular-nums whitespace-nowrap">{hayKg ? formatNum(T.costo) : '—'}</td>
+                        <td className="px-3 py-3"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+              <p className="text-[9px] font-bold text-gray-400">% mezcla = promedio de las fórmulas incluidas, ponderado según el modo de reparto. Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga). Existencia y costo = Inventario General, sumados por código entre todos los almacenes. La misma materia prima se junta por su código, aunque la descripción sea distinta.</p>
+            </>)}
+          </div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+// == FIN MPREQ UI ==
+
 const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false, filaExtra='') => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
@@ -31752,6 +32479,7 @@ function App() {
   const [exportandoFormulas, setExportandoFormulas] = useState(false);
   const [formulaSearch, setFormulaSearch] = useState('');
   const [showFormulaPanel, setShowFormulaPanel] = useState(false);
+  const [showMpReq, setShowMpReq] = useState(false);
   const [editingFormulaId, setEditingFormulaId] = useState(null);
   const [formulaForm, setFormulaForm] = useState({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ancho: '', fuelles: '', largo: '', micras: '', ingredientes: [] });
   const [formulaIngId, setFormulaIngId] = useState('');
@@ -57227,6 +57955,10 @@ ${resumen}
               <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase">Defina la composición de materias primas por categoría de producto</p>
             </div>
             <div className="flex items-center gap-2 flex-wrap justify-end">
+              <button onClick={()=>setShowMpReq(v=>!v)} data-mpreq="abrir" title="Calcule cuánta materia prima necesita para producir los kilos que usted indique"
+                className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase flex items-center gap-2 transition-all border-2 ${showMpReq?'bg-indigo-600 border-indigo-600 text-white shadow-md':'bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400'}`}>
+                <Calculator size={14}/> Requerimiento de MP
+              </button>
               <button onClick={exportarFormulasExcel} disabled={exportandoFormulas||formulasFiltradas.length===0} title={formulasFiltradas.length===0?'No hay fórmulas para exportar':`Descargar en Excel ${formulasFiltradas.length} fórmula${formulasFiltradas.length!==1?'s':''} (lo que se ve en pantalla)`}
                 className="bg-white border-2 border-emerald-200 text-emerald-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-50 hover:border-emerald-400 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                 {exportandoFormulas ? <Loader2 size={14} className="animate-spin"/> : <FileSpreadsheet size={14} className="text-emerald-600"/>} {exportandoFormulas ? 'Generando...' : 'Excel'}
@@ -57241,6 +57973,18 @@ ${resumen}
               </button>
             </div>
           </div>
+
+          {/* Requerimiento de materia prima: kilos a producir → kilos de cada MP (con existencia, faltante y costo) */}
+          {showMpReq && (
+            <MpReqPanel formulas={formulas} inventory={inventory} requirements={requirements} usuario={appUser?.name||''}
+              empresa={{
+                empresa: settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.',
+                rif: settings?.empresaRif||settings?.empresaRIF||'J-412309374',
+                direccion: settings?.empresaDireccion||settings?.direccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA',
+                tel: settings?.empresaTelefono||'',
+              }}
+              setDialog={setDialog} onClose={()=>setShowMpReq(false)} />
+          )}
 
           {/* Formulario nueva/editar fórmula */}
           {showFormulaPanel && (
