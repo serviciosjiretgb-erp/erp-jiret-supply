@@ -24089,6 +24089,15 @@ const mpreqAvisos = (R, ctx) => {
   if (c.modo === 'producto' && c.sinKilos > 0) out.push({ nivel: 'info', txt: `${c.sinKilos} fórmula${c.sinKilos !== 1 ? 's' : ''} incluida${c.sinKilos !== 1 ? 's' : ''} sin kilos (no pesan en la mezcla).` });
   return out;
 };
+
+// Cómo se obtiene el «peso en la mezcla» de cada fórmula y las columnas de kilos (se escribe en pantalla, en el PDF y en el Excel para que no quede duda)
+const mpreqExplicaPeso = (modo, n) => {
+  if (modo === 'promedio') return n > 0 ? `todas las fórmulas pesan igual: 100 % ÷ ${n} fórmula${n !== 1 ? 's' : ''} = ${formatNum(100 / n)} % cada una` : 'todas las fórmulas pesan igual (100 % repartido entre las fórmulas incluidas)';
+  if (modo === 'producto') return 'cada fórmula pesa según los kilos escritos para ella (su parte del total de kilos)';
+  return 'cada fórmula pesa según los kilos de producto terminado que produjo en el período (su parte del total producido)';
+};
+const mpreqExplicaKg = (mermaPct) => `Kg producto terminado = kilos a producir × peso en la mezcla · Kg a planta = kg producto terminado ÷ (1 − merma ${formatNum(mermaPct)} %) · Balance = suma de los % de las materias primas de la fórmula (100 % = fórmula completa)`;
+const MPREQ_NOTA_MEZCLA = '% mezcla = suma de (% de la materia prima en cada fórmula × peso de esa fórmula)';
 // == FIN MPREQ ==
 
 // == INICIO MPREQ EXP ==
@@ -24099,7 +24108,7 @@ const mpreqPeriodoTxt = (p) => !p ? '' : (p.desde && p.hasta ? `del ${frmFechaTx
 const mpreqAlcanceTxt = (D) => D.tipo && D.tipo !== 'TODOS' ? `${D.tipo} · ${D.nIncluidas} de ${D.nTotal} fórmulas` : `${D.nIncluidas} de ${D.nTotal} fórmulas`;
 const mpreqNombreArchivo = (ext) => `Requerimiento_MP_${getTodayDate()}.${ext}`;
 
-const MPREQ_CSS_PDF = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:16px;font-weight:900;text-transform:uppercase;color:#111;letter-spacing:.3px;}.rep-sub{font-size:10px;color:#6b7280;margin:2px 0 12px;}.kpis{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;}.kpi{flex:1 1 130px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;}.kpi span{display:block;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;font-weight:700;}.kpi b{font-size:14px;font-weight:900;color:#0f172a;}.kpi small{display:block;font-size:8.5px;color:#64748b;margin-top:2px;}.kpi.warn{background:#fef2f2;border-color:#fecaca;}.kpi.warn b{color:#b91c1c;}.kpi.good{background:#f0fdf4;border-color:#bbf7d0;}.kpi.good b{color:#15803d;}.param{font-size:9.5px;color:#475569;margin:0 0 10px;line-height:1.6;}.param b{color:#0f172a;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}th.n,td.n{text-align:right;white-space:nowrap;}th.c,td.c{text-align:center;}tbody td{padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle;}tbody tr:nth-child(even) td{background:#f8fafc;}tr{page-break-inside:avoid;break-inside:avoid;}td.id{font-weight:900;color:#ea580c;white-space:nowrap;}td.b{font-weight:900;}td.bad,.bad{color:#b91c1c;font-weight:900;}.ok{color:#15803d;font-weight:900;}.st{font-size:8.5px;font-weight:900;text-transform:uppercase;white-space:nowrap;}tr.e-falta .st,tr.e-sininv .st{color:#b91c1c;}tr.e-ok .st{color:#15803d;}tr.e-sinuso .st{color:#9ca3af;}tfoot td{padding:8px;font-weight:900;border-top:2px solid #0f172a;background:#f1f5f9;}.avisos{margin:12px 0 0;}.aviso{font-size:9.5px;line-height:1.5;padding:7px 10px;border-radius:6px;margin-bottom:5px;}.aviso.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e;}.aviso.info{background:#f1f5f9;border:1px solid #e2e8f0;color:#475569;}.anexo-tit{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:#0f172a;margin:20px 0 6px;page-break-after:avoid;break-after:avoid;}.pie{margin-top:18px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:8.5px;color:#9ca3af;text-align:center;line-height:1.6;}@page{size:landscape;margin:8mm 8mm 12mm;}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}table{font-size:9px;}th{font-size:7.5px;padding:5px 6px;}tbody td{padding:4px 6px;}.membrete{padding:8px 14px 6px;}.contenido{padding:8px 14px 14px;}.rep-titulo{font-size:13px;}.kpi{padding:6px 10px;}.kpi b{font-size:12px;}}`;
+const MPREQ_CSS_PDF = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:16px;font-weight:900;text-transform:uppercase;color:#111;letter-spacing:.3px;}.rep-sub{font-size:10px;color:#6b7280;margin:2px 0 12px;}.kpis{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;}.kpi{flex:1 1 130px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;}.kpi span{display:block;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;font-weight:700;}.kpi b{font-size:14px;font-weight:900;color:#0f172a;}.kpi small{display:block;font-size:8.5px;color:#64748b;margin-top:2px;}.kpi.warn{background:#fef2f2;border-color:#fecaca;}.kpi.warn b{color:#b91c1c;}.kpi.good{background:#f0fdf4;border-color:#bbf7d0;}.kpi.good b{color:#15803d;}.param{font-size:9.5px;color:#475569;margin:0 0 10px;line-height:1.6;}.param b{color:#0f172a;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}th.n,td.n{text-align:right;white-space:nowrap;}th.c,td.c{text-align:center;}tbody td{padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle;}tbody tr:nth-child(even) td{background:#f8fafc;}tr{page-break-inside:avoid;break-inside:avoid;}td.id{font-weight:900;color:#ea580c;white-space:nowrap;}td.b{font-weight:900;}td.bad,.bad{color:#b91c1c;font-weight:900;}.ok{color:#15803d;font-weight:900;}.st{font-size:8.5px;font-weight:900;text-transform:uppercase;white-space:nowrap;}tr.e-falta .st,tr.e-sininv .st{color:#b91c1c;}tr.e-ok .st{color:#15803d;}tr.e-sinuso .st{color:#9ca3af;}tfoot td{padding:8px;font-weight:900;border-top:2px solid #0f172a;background:#f1f5f9;}.avisos{margin:12px 0 0;}.aviso{font-size:9.5px;line-height:1.5;padding:7px 10px;border-radius:6px;margin-bottom:5px;}.aviso.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e;}.aviso.info{background:#f1f5f9;border:1px solid #e2e8f0;color:#475569;}.anexo-tit{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:#0f172a;margin:20px 0 6px;page-break-after:avoid;break-after:avoid;}.nota-peso{font-size:9.5px;color:#475569;line-height:1.55;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px 10px;margin:0 0 8px;}.nota-peso b{color:#0f172a;}.pie{margin-top:18px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:8.5px;color:#9ca3af;text-align:center;line-height:1.6;}@page{size:landscape;margin:8mm 8mm 12mm;}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}table{font-size:9px;}th{font-size:7.5px;padding:5px 6px;}tbody td{padding:4px 6px;}.membrete{padding:8px 14px 6px;}.contenido{padding:8px 14px 14px;}.rep-titulo{font-size:13px;}.kpi{padding:6px 10px;}.kpi b{font-size:12px;}}`;
 
 const mpreqDocPdf = (D) => {
   const esc = rhCierreEsc;
@@ -24121,10 +24130,10 @@ const mpreqDocPdf = (D) => {
   const av = (D.avisos || []).map(a => `<div class="aviso ${a.nivel}">${a.nivel === 'warn' ? '⚠ ' : 'ℹ '}${esc(a.txt)}</div>`).join('');
   const per = D.periodo ? ` · producción ${esc(mpreqPeriodoTxt(D.periodo))}` : '';
   const detalle = R.detalle.length
-    ? `<div class="anexo-tit">Fórmulas consideradas y su peso en la mezcla</div><table><thead><tr><th>Fórmula</th><th>Tipo</th><th class="n">Peso en la mezcla</th><th class="n">Kg producto terminado</th><th class="n">Kg a planta</th><th class="n">Balance de la fórmula</th></tr></thead><tbody>${R.detalle.map(x => `<tr><td><b>${esc(x.categoria)}</b></td><td>${esc(x.tipo)}</td><td class="n">${n2(x.peso * 100)} %</td><td class="n">${hayKg ? n2(x.kgProducto) : dash}</td><td class="n">${hayKg ? n2(x.kgCarga) : dash}</td><td class="n ${Math.abs(x.balance - 100) < 0.1 ? 'ok' : 'bad'}">${n2(x.balance)} %</td></tr>`).join('')}</tbody></table>`
+    ? `<div class="anexo-tit">Fórmulas consideradas y su peso en la mezcla</div><div class="nota-peso"><b>Cómo se calcula.</b> <b>Peso en la mezcla:</b> ${esc(mpreqExplicaPeso(D.modo, R.nFormulas))}. ${esc(mpreqExplicaKg(R.mermaPct))}.</div><table><thead><tr><th>Fórmula</th><th>Tipo</th><th class="n">Peso en la mezcla</th><th class="n">Kg producto terminado</th><th class="n">Kg a planta</th><th class="n">Balance de la fórmula</th></tr></thead><tbody>${R.detalle.map(x => `<tr><td><b>${esc(x.categoria)}</b></td><td>${esc(x.tipo)}</td><td class="n">${n2(x.peso * 100)} %</td><td class="n">${hayKg ? n2(x.kgProducto) : dash}</td><td class="n">${hayKg ? n2(x.kgCarga) : dash}</td><td class="n ${Math.abs(x.balance - 100) < 0.1 ? 'ok' : 'bad'}">${n2(x.balance)} %</td></tr>`).join('')}</tbody></table>`
     : '';
   const quien = `${esc(frmAhoraTxt())}${D.usuario ? ' · ' + esc(D.usuario) : ''}`;
-  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${mpreqNombreArchivo('pdf').replace(/\.pdf$/, '')}</title><style>${MPREQ_CSS_PDF}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(E.empresa)}</h2><p>RIF: ${esc(E.rif)}</p><p>${esc(E.direccion)}</p>${E.tel ? `<p>Tel: ${esc(E.tel)}</p>` : ''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">Requerimiento de materia prima</div><div class="rep-sub">Cuánta materia prima se necesita para el plan de producción, con la existencia y el costo del Inventario General</div><div class="kpis">${kpis}</div><div class="param"><b>Modo de reparto:</b> ${esc(mpreqModoTxt(D.modo))}${per} · <b>Fórmulas:</b> ${esc(mpreqAlcanceTxt(D))} · <b>Emitido:</b> ${quien}</div><table><thead><tr><th class="c">#</th><th>Código</th><th>Materia prima</th><th class="n">% mezcla</th><th class="n">Kg requeridos</th><th class="n">Existencia (kg)</th><th class="n">Faltante (kg)</th><th class="n">Costo U. ($)</th><th class="n">Costo ($)</th><th class="c">Estado</th></tr></thead><tbody>${filas}</tbody>${pie}</table>${av ? `<div class="avisos">${av}</div>` : ''}${detalle}<div class="pie">% mezcla = promedio de las fórmulas incluidas, ponderado según el modo de reparto · Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga) · Existencia y costo = Inventario General, consolidados por código · ${esc(E.empresa)}</div></div></div></body></html>`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${mpreqNombreArchivo('pdf').replace(/\.pdf$/, '')}</title><style>${MPREQ_CSS_PDF}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(E.empresa)}</h2><p>RIF: ${esc(E.rif)}</p><p>${esc(E.direccion)}</p>${E.tel ? `<p>Tel: ${esc(E.tel)}</p>` : ''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">Requerimiento de materia prima</div><div class="rep-sub">Cuánta materia prima se necesita para el plan de producción, con la existencia y el costo del Inventario General</div><div class="kpis">${kpis}</div><div class="param"><b>Modo de reparto:</b> ${esc(mpreqModoTxt(D.modo))}${per} — ${esc(mpreqExplicaPeso(D.modo, R.nFormulas))} · <b>Fórmulas:</b> ${esc(mpreqAlcanceTxt(D))} · <b>Emitido:</b> ${quien}</div><table><thead><tr><th class="c">#</th><th>Código</th><th>Materia prima</th><th class="n">% mezcla</th><th class="n">Kg requeridos</th><th class="n">Existencia (kg)</th><th class="n">Faltante (kg)</th><th class="n">Costo U. ($)</th><th class="n">Costo ($)</th><th class="c">Estado</th></tr></thead><tbody>${filas}</tbody>${pie}</table>${av ? `<div class="avisos">${av}</div>` : ''}${detalle}<div class="pie">${esc(MPREQ_NOTA_MEZCLA)} · Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga) · Existencia y costo = Inventario General, consolidados por código · ${esc(E.empresa)}</div></div></div></body></html>`;
 };
 
 // Excel (ExcelJS): hoja «Requerimiento» (la tabla de pantalla, con fórmulas vivas para faltante, costo y totales) y hoja «Fórmulas» (peso de cada una en la mezcla).
@@ -24216,7 +24225,7 @@ const mpreqXlsxBuffer = async (D) => {
   ws.getRow(r).height = 22;
   r += 2;
   const notas = (D.avisos || []).map(a => (a.nivel === 'warn' ? '⚠ ' : 'ℹ ') + a.txt);
-  notas.push('% MEZCLA = promedio de las fórmulas incluidas, ponderado según el modo de reparto. KG REQUERIDOS = carga a planta × % mezcla (suman exacto con la carga a planta).');
+  notas.push('% MEZCLA = suma de (% de la materia prima en cada fórmula × peso de esa fórmula; ver la hoja «Fórmulas»). KG REQUERIDOS = carga a planta × % mezcla (suman exacto con la carga a planta).');
   notas.push('EXISTENCIA y COSTO U. = Inventario General, consolidados por código (existencia sumada de todos los almacenes y costo promedio ponderado).');
   notas.forEach((t, i) => {
     const warn = i < notas.length - 2 && t.startsWith('⚠');
@@ -24250,6 +24259,14 @@ const mpreqXlsxBuffer = async (D) => {
     r2++;
   });
   if (R.detalle.length) ws2.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r2 - 1, 5), column: NC2 } };
+  if (R.detalle.length) {
+    r2 += 1;
+    [`PESO EN LA MEZCLA: ${mpreqExplicaPeso(D.modo, R.nFormulas)}.`, `${mpreqExplicaKg(R.mermaPct)}.`].forEach(t => {
+      put(ws2, r2, 1, NC2, t, AR(8, MUTED, false, true), { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true });
+      ws2.getRow(r2).height = Math.max(14, Math.ceil(t.length / 140) * 11 + 4);
+      r2++;
+    });
+  }
 
   return wb.xlsx.writeBuffer();
 };
@@ -24350,6 +24367,9 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
     </div>
   );
   const T = R.total;
+  const descModo = modo === 'promedio'
+    ? `Todas las fórmulas incluidas pesan igual${incluidas.length ? ': 100 % ÷ ' + incluidas.length + ' fórmula' + (incluidas.length !== 1 ? 's' : '') + ' = ' + formatNum(100 / incluidas.length) + ' % cada una' : ''}. El % de cada materia prima es el promedio de sus porcentajes en esas fórmulas (la fórmula que no la usa cuenta 0 %).`
+    : MPREQ_DESC_MODO[modo];
 
   return (
     <div className="p-8 bg-indigo-50/40 border-b border-indigo-100" data-mpreq="panel">
@@ -24414,7 +24434,7 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
                   className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${modo === k ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'}`}>{t}</button>
               ))}
             </div>
-            <p data-mpreq="modo-desc" className="text-[11px] font-semibold text-gray-500 mt-2">{MPREQ_DESC_MODO[modo]}</p>
+            <p data-mpreq="modo-desc" className="text-[11px] font-semibold text-gray-500 mt-2">{descModo}</p>
           </div>
 
           {modo === 'producido' && (
@@ -24466,7 +24486,7 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
                         <th className="px-3 py-2">Tipo</th>
                         {modo === 'producto' && <th className="px-3 py-2 text-right">Kilos de este producto</th>}
                         {modo === 'producido' && <th className="px-3 py-2 text-right">Producido en el período</th>}
-                        <th className="px-3 py-2 text-right">Peso en la mezcla</th>
+                        <th className="px-3 py-2 text-right" title={'Peso en la mezcla: ' + mpreqExplicaPeso(modo, R.nFormulas)}>Peso en la mezcla</th>
                         <th className="px-3 py-2 text-right">Balance</th>
                       </tr>
                     </thead>
@@ -24595,7 +24615,7 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
                   </table>
                 </div>
               </div>
-              <p className="text-[9px] font-bold text-gray-400">% mezcla = promedio de las fórmulas incluidas, ponderado según el modo de reparto. Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga). Existencia y costo = Inventario General, sumados por código entre todos los almacenes. La misma materia prima se junta por su código, aunque la descripción sea distinta.</p>
+              <p className="text-[9px] font-bold text-gray-400">% mezcla = suma de (% de la materia prima en cada fórmula × peso de esa fórmula). Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga). Existencia y costo = Inventario General, sumados por código entre todos los almacenes. La misma materia prima se junta por su código, aunque la descripción sea distinta.</p>
             </>)}
           </div>
         </>)}
@@ -70416,7 +70436,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            {activeTab === 'formulas' && (
              <div className="print:hidden" style={{background:"#111827",borderBottom:"2px solid #f97316"}}>
                <div className="w-full flex px-2 overflow-x-auto" style={{scrollbarWidth:'none'}}>
-                 {[{id:'formulas',icon:'🧪',label:'Fórmulas'},{id:'ingredients',icon:'🧱',label:'Materias Primas'}].map(t=>(
+                 {[{id:'formulas',icon:'🧪',label:'Fórmulas'}].map(t=>(
                    <button key={t.id} onClick={()=>setFormulasView?.(t.id)} className={`px-3 py-3 whitespace-nowrap flex items-center gap-1.5 transition-all text-[9px] font-black uppercase tracking-wide border-b-2 ${(formulasView||'formulas')===t.id?'border-orange-500 text-orange-400 bg-white/5':'border-transparent text-gray-400 hover:text-white hover:bg-white/5'}`}>{t.icon} {t.label}</button>
                  ))}
                </div>
