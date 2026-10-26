@@ -1726,7 +1726,7 @@ const rhInformeFilas = (tipo, D, tasasTexto) => {
 // Parafiscales → «Reportes»: una ventana por parafiscal con cada trabajador, su aporte (lo que se le descontó), el aporte patronal (lo que paga la empresa) y el total, en $ y en Bs., filtrada por mes (o trimestre o año), período y tipo de nómina.
 // Todo sale de lo ya guardado en cada pago (rrhh_nominas + rrhh_nomina_detalles): las mismas cifras del recibo y del Cierre de Mes. El Bs. es el de cada recibo (con la tasa de su pago): no se vuelve a convertir con una tasa nueva.
 //   · IVSS, Paro Forzoso (RPE) y FAOV: las filas de ley del recibo (aporte del trabajador + aporte patronal). Un BANAVIH o un INCES escrito a mano en el recibo (de antes de que se calcularan solos) también cuenta, sin aporte patronal, y se marca «a mano».
-//   · INCES: el trabajador = lo descontado en los pagos de Utilidades; la empresa = la provisión del mes (% patronal de Parafiscales × salario normal de los recibos de NÓMINA: sus asignaciones menos Utilidades, Bono vacacional y los bonos / beneficios que no son nómina), la misma base del Cierre de Mes. El aporte de la empresa se paga por trimestre.
+//   · INCES: el trabajador = lo descontado en los pagos de Utilidades; la empresa = la provisión del mes (% patronal de Parafiscales × salario normal de los recibos de los pagos cuyo tipo de nómina lleva INCES: sus asignaciones menos Utilidades, Bono vacacional y los conceptos de bono / no bonificables), la misma base del Cierre de Mes. El aporte de la empresa se paga por trimestre.
 // Los montos se suman tal como están guardados y se redondean a centavos por trabajador; los totales suman esos renglones ya redondeados, así la pantalla, el PDF y el Excel siempre cuadran.
 const RH_PF_LEYES = [
   { id:'ivss', nombre:'Seguro Social Obligatorio (IVSS)', corto:'IVSS', campo:'ivss' },
@@ -1797,7 +1797,7 @@ const rhPfSumar = (lista) => {
   Object.keys(t).forEach(k => { t[k] = benR2(t[k]); });
   return t;
 };
-// Datos de los reportes. pagos = [{nomina, detalles}] · ctx = { centroDe(d) → {id, nombre}, fichaDe(d) → ficha del trabajador | null, pctInces, pagoEsBono(nomina) → true si el pago es un bono / beneficio (no es nómina: no entra en la base del INCES patronal) }
+// Datos de los reportes. pagos = [{nomina, detalles}] · ctx = { centroDe(d) → {id, nombre}, fichaDe(d) → ficha del trabajador | null, pctInces, aportesDe(nomina) → { inces, ivss, rpe, faov } los aportes patronales que lleva el tipo del pago (sin esta función se cuenta todo) }
 //   → { pagos:[{nomina, nRecibos}], nRecibos, personas, conAporte, abiertos, tot, leyes:{ ivss|rpe|faov|inces: { id, nombre, corto, campo, filas, centros, tot, nTrab, nManual } } }
 //   · filas: un renglón por trabajador y centro de costo (suma de todos sus recibos del filtro), por nombre; los que no tienen monto en ese parafiscal no salen
 //   · centros: lo mismo agrupado por centro de costo (por nombre; «sin centro de costo» al final), con su total
@@ -1811,11 +1811,13 @@ const rhPfDatos = (pagos, ctx) => {
   pagosOk.forEach(p => p.detalles.forEach(d => {
     const trab = idTrab(d);
     enRecibos.add(trab);
-    const m = rhPfMontosDetalle(d, p.nomina.tasa, (c.pagoEsBono && c.pagoEsBono(p.nomina)) ? 0 : c.pctInces);   // un pago de bono / beneficio no es nómina: no genera INCES patronal
+    const ap = c.aportesDe ? c.aportesDe(p.nomina) : null;   // los aportes patronales que lleva el tipo del pago (Configuración → Tipos de nómina)
+    const m = rhPfMontosDetalle(d, p.nomina.tasa, (ap && !ap.inces) ? 0 : c.pctInces);   // un tipo sin INCES no genera INCES patronal
     const ce = (c.centroDe && c.centroDe(d)) || { id:'', nombre:RH_SIN_CENTRO };
     const ficha = c.fichaDe ? c.fichaDe(d) : null;
     RH_PF_LEYES.forEach(l => {
       const x = m[l.id];
+      if (ap && l.id !== 'inces' && !ap[l.id]) { x.patUSD = 0; x.patBs = 0; }   // el tipo no lleva el aporte patronal de esta ley: queda solo lo que se le descontó al trabajador
       if (!(x.n > 0)) return;
       if (Math.abs(x.trabUSD) < 1e-9 && Math.abs(x.trabBs) < 1e-9 && Math.abs(x.patUSD) < 1e-9 && Math.abs(x.patBs) < 1e-9) return; // fila de ley en cero: no sale (los centavos de la provisión del INCES sí se acumulan)
       const k = (ce.id || '') + '|' + trab;
@@ -1885,7 +1887,7 @@ const rhPfEtiquetaArchivo = (f) => {
 };
 // Nota al pie de cada parafiscal
 const rhPfNotaLey = (id, pctInces) => {
-  if (id === 'inces') return `Aporte del trabajador: lo descontado en los pagos de Utilidades. Aporte patronal: la provisión de cada mes (${String(benNum(pctInces)).replace('.', ',')} % del salario normal de los recibos de nómina —sus asignaciones, sin Utilidades, Bono vacacional ni bonos / beneficios—), la misma base del Cierre de Mes; el INCES de la empresa se paga por trimestre (elige el trimestre en «Mes»). Se redondea por trabajador, así que puede diferir en centavos del Cierre de Mes.`;
+  if (id === 'inces') return `Aporte del trabajador: lo descontado en los pagos de Utilidades. Aporte patronal: la provisión de cada mes (${String(benNum(pctInces)).replace('.', ',')} % del salario normal de los recibos de los tipos de nómina que llevan INCES —sus asignaciones, sin Utilidades, Bono vacacional ni conceptos de bono / no bonificables—), la misma base del Cierre de Mes; el INCES de la empresa se paga por trimestre (elige el trimestre en «Mes»). Se redondea por trabajador, así que puede diferir en centavos del Cierre de Mes.`;
   const nombre = id === 'ivss' ? 'IVSS' : (id === 'rpe' ? 'Paro Forzoso (RPE)' : 'FAOV (BANAVIH)');
   return `Aporte del trabajador y aporte patronal de ${nombre} tal como quedaron guardados en cada recibo de pago (el Bs. es el de cada pago, con su propia tasa).`;
 };
@@ -1927,26 +1929,63 @@ const rhCierreDetalleAporte = (d, filtro) => ({ ...d, asignaciones:[], netoUSD:0
 const rhCierreDetalleCobrado = (d, filtro) => ({ ...d, asignaciones:[], netoUSD:0, deducciones:(d.deducciones || []).filter(filtro).map(x => ({ ...x, montoPatronalUSD:0, montoPatronalBs:0 })) });
 // Ley de una deducción legal, igual que en el asiento de cada pago: 'ivss', 'rpe' (paro forzoso) o 'faov'; '' si no es una de esas
 const rhCierreClaveLegal = (x) => { if (!x || !x.esLegal) return ''; const c = String(x.concepto || ''); return /^ivss/i.test(c) ? 'ivss' : (/rpe|paro forzoso/i.test(c) ? 'rpe' : (/faov/i.test(c) ? 'faov' : '')); };
-// INCES del mes de un pago: el salario normal de los trabajadores (asignaciones de NÓMINA, sin Utilidades, Bono vacacional ni bonos / beneficios, en $ y en Bs. tal como están guardadas) por el % patronal. Se suma por centro de costo y departamento y se redondea a centavos una sola vez por grupo (el INCES Trimestral también redondea el total, no a cada trabajador): así el gasto y el INCES por pagar suman centavos exactos y cuadran.
+// INCES del mes de un pago: el salario normal de los trabajadores (asignaciones de un pago cuyo tipo lleva INCES, sin Utilidades, Bono vacacional ni conceptos de bono / no bonificables, en $ y en Bs. tal como están guardadas) por el % patronal. Se suma por centro de costo y departamento y se redondea a centavos una sola vez por grupo (el INCES Trimestral también redondea el total, no a cada trabajador): así el gasto y el INCES por pagar suman centavos exactos y cuadran.
 // Cada grupo va como un aporte de la empresa de clave 'inces' (el asiento lo manda al gasto «APORTE PATRONAL INCES» de su centro de costo y al INCES por pagar de Parafiscales); __trab = los trabajadores que lo componen
-// Base del INCES patronal = SOLO la nómina. Quedan fuera los bonos y beneficios, que no son nómina: no entran los pagos de un tipo «beneficio» ni, aunque vengan dentro de un pago de nómina, los conceptos de bono / beneficio
-// (por su código: RETR0 bono presencial de productividad · 00011 bono de alimentación / cesta ticket · 00026 complemento de alimentación o transporte · R0023 bonificación por cargo / KPI; o por su nombre).
-// El Bono nocturno, las horas extras, los feriados y demás pagos de sueldo siguen siendo salario normal; Utilidades y Bono vacacional tampoco entran, como siempre.
-const RH_BONO_NOMBRE = /(BONO|BONIFICACION|COMPLEMENTO|BENEFICIO) (DE |POR )?(ALIMENTACION|TRANSPORTE|PRESENCIAL|CARGO|COMPLEMENTARIO|SOCIAL)|\bKPI\b|CESTA ?TICKET/;
+// Base del INCES patronal = el salario normal de los recibos de los pagos cuyo tipo de nómina lleva INCES (Configuración → Tipos de nómina → «Aportes patronales»: rhAportesDelPago).
+// Dentro de esos recibos quedan fuera Utilidades, Bono vacacional y lo que no es nómina: los conceptos de bono / beneficio (por su código —RETR0 bono presencial de productividad · 00011 bono de alimentación / cesta ticket ·
+// 00026 complemento de alimentación o transporte · R0023 bonificación por cargo / KPI— o por su nombre) y los «no bonificables» (33007 OTRAS ASIGNACIONES NO BONIFICABLES o cualquiera cuyo nombre diga «no bonificable»).
+// El Bono nocturno, las horas extras, los feriados y demás pagos de sueldo siguen siendo salario normal.
+const RH_CODIGOS_SIN_INCES = ['33007'];
+const RH_BONO_NOMBRE = /(BONO|BONIFICACION|COMPLEMENTO|BENEFICIO) (DE |POR )?(ALIMENTACION|TRANSPORTE|PRESENCIAL|CARGO|COMPLEMENTARIO|SOCIAL)|\bKPI\b|CESTA ?TICKET|\bNO BONIFICABLES?\b/;
 const rhAsignacionEsBono = (a) => {
   const cod = String((a && a.codigo) || '').trim().toUpperCase();
-  return (cod !== '' && RH_CIERRE_CODIGOS_BENEFICIO.includes(cod)) || RH_BONO_NOMBRE.test(rhNormalizarNombre((a && a.concepto) || ''));
-};
-// ¿El pago es un bono / beneficio y no nómina? Por su tipo, igual que el Cierre de Mes lo agrupa en «Beneficios» (Beneficio complementario, Bono de alimentación, Bono de transporte, Beneficio alimentación complementaria, Bono por cargos y KPI),
-// y también cualquier pago cuyo tipo (o su nombre, si es de antes de los tipos) diga bono, bonificación o beneficio. Todo lo que paga un pago así queda fuera de la base del INCES patronal.
-const rhPagoEsBono = (tipos, p) => {
-  if (!p) return false;
-  const tipo = p.tipoNominaId ? ((tipos || []).find(t => t && t.id === p.tipoNominaId) || null) : null;
-  const nombre = (tipo && tipo.nombre) || p.concepto || 'Nómina';
-  if (rhCierreCategoriaTipo(tipo, p.concepto || nombre) === 'beneficio') return true;
-  return /\b(BONO|BONOS|BONIFICACION|BENEFICIO|BENEFICIOS)\b/.test(rhNormalizarNombre(nombre));
+  return (cod !== '' && (RH_CIERRE_CODIGOS_BENEFICIO.includes(cod) || RH_CODIGOS_SIN_INCES.includes(cod))) || RH_BONO_NOMBRE.test(rhNormalizarNombre((a && a.concepto) || ''));
 };
 const rhCierreEsSalarioNormal = (a) => !/utilidad|bono vacacional/i.test(String((a && a.concepto) || '')) && !rhAsignacionEsBono(a);
+// == RRHH - Aportes patronales de cada tipo de nómina ==
+// Cada tipo de nómina (Configuración → Tipos de nómina) dice si sus pagos llevan aportes patronales y cuáles: INCES, Seguro Social (IVSS), Paro Forzoso (RPE) y BANAVIH (FAOV).
+//   aportesPatronales: { aplica, inces, ivss, rpe, faov } (booleanos; con aplica:false no se calcula ninguno, aunque las casillas queden marcadas)
+// Eso decide qué aporte de la empresa genera cada pago de ese tipo: en el recibo (IVSS / RPE / FAOV), en Cierre de Mes, en Parafiscales y en «INCES Trimestral». Solo toca el aporte de la empresa: lo que se descuenta al trabajador no cambia.
+// Un tipo que aún no lo guardó usa lo que corresponde a su nombre (rhAportesPorNombre): bonos, beneficios y Extranómina no llevan aportes; Utilidades solo FAOV; los demás (Nómina, Vacaciones, Horas extras…) los cuatro.
+const RH_APORTES_LEYES = [
+  { id:'inces', nombre:'INCES' }, { id:'ivss', nombre:'Seguro Social (IVSS)' }, { id:'rpe', nombre:'Paro Forzoso (RPE)' }, { id:'faov', nombre:'BANAVIH (FAOV)' },
+];
+const RH_APORTES_NINGUNO = { aplica:false, inces:false, ivss:false, rpe:false, faov:false };
+const RH_EXTRANOMINA = /\bEXTRA ?NOMINA\b|\bNOMINA EXTRA\b/;
+const RH_TIPO_SIN_APORTES = /\b(BONO|BONOS|BONIFICACION|BONIFICACIONES|BENEFICIO|BENEFICIOS)\b|\bNO BONIFICABLES?\b/;
+const rhAportesPorNombre = (tipo, nombre) => {
+  const n = rhNormalizarNombre(nombre != null && nombre !== '' ? nombre : (tipo && tipo.nombre));
+  if (rhCierreCategoriaTipo(tipo, nombre) === 'beneficio' || RH_EXTRANOMINA.test(n) || RH_TIPO_SIN_APORTES.test(n)) return { ...RH_APORTES_NINGUNO };
+  const c = rhCargaDeTipo(tipo || { nombre:nombre, cargaModo:'auto' });   // un tipo que solo carga conceptos «no bonificables» (o de bono / beneficio)
+  if (c.solo && c.conceptos.length > 0 && c.conceptos.every(x => { const k = String(x.codigo).trim().toUpperCase(); return RH_CIERRE_CODIGOS_BENEFICIO.includes(k) || RH_CODIGOS_SIN_INCES.includes(k); })) return { ...RH_APORTES_NINGUNO };
+  if (/\bUTILIDAD(ES)?\b/.test(n)) return { aplica:true, inces:false, ivss:false, rpe:false, faov:true };
+  return { aplica:true, inces:true, ivss:true, rpe:true, faov:true };
+};
+// Lo que el tipo lleva de verdad: lo guardado en el tipo o, si aún no lo guardó, lo que corresponde a su nombre. Con aplica:false no lleva ninguno.
+const rhAportesDeTipo = (tipo, nombre) => {
+  const g = tipo && tipo.aportesPatronales;
+  const a = (g && typeof g === 'object') ? { aplica:g.aplica !== false, inces:g.inces === true, ivss:g.ivss === true, rpe:g.rpe === true, faov:g.faov === true } : rhAportesPorNombre(tipo, nombre);
+  return a.aplica ? a : { ...RH_APORTES_NINGUNO };
+};
+// Los aportes que lleva un pago, por su tipo (los pagos anteriores, sin tipo —o con un tipo que ya no existe—, por el nombre del pago)
+const rhAportesDelPago = (tipos, p) => {
+  if (!p) return { aplica:true, inces:true, ivss:true, rpe:true, faov:true };
+  const tipo = p.tipoNominaId ? ((tipos || []).find(t => t && t.id === p.tipoNominaId) || null) : null;
+  return rhAportesDeTipo(tipo, (tipo && tipo.nombre) || p.concepto || 'Nómina');
+};
+// Lo que muestra y guarda el formulario del tipo: lo que el usuario dejó marcado o, si aún no tocó nada, lo que corresponde al nombre (guardado:false)
+const rhAportesFormulario = (t) => {
+  const g = t && t.aportesPatronales;
+  if (g && typeof g === 'object') return { aplica:g.aplica !== false, inces:g.inces === true, ivss:g.ivss === true, rpe:g.rpe === true, faov:g.faov === true, guardado:true };
+  return { ...rhAportesPorNombre(t, t && t.nombre), guardado:false };
+};
+const rhTipoAportesLimpio = (t) => { const { guardado:_guardado, ...a } = rhAportesFormulario(t); return { aportesPatronales:a }; };
+// «INCES · IVSS · RPE · FAOV» / «ninguno» (+ «(según el nombre)» si el tipo aún no lo guardó), para la lista de tipos
+const rhTextoAportesTipo = (t) => {
+  const f = rhAportesFormulario(t);
+  const ls = f.aplica ? RH_APORTES_LEYES.filter(l => f[l.id]).map(l => l.id.toUpperCase()) : [];
+  return (ls.length ? ls.join(' · ') : 'ninguno') + (f.guardado ? '' : ' (según el nombre)');
+};
 const rhCierreDetallesInces = (detalles, pct) => {
   const grupos = {};
   (detalles || []).forEach(d => {
@@ -1966,7 +2005,7 @@ const rhCierreDetallesInces = (detalles, pct) => {
   return partes;
 };
 // INCES trimestral (aporte patronal): suma, mes por mes, el «salario normal» en Bs. que YA quedó guardado en cada pago de los 3 meses del trimestre (cada uno con su propia tasa histórica, sin recalcular) × el % patronal.
-// Salario normal = lo que pagan los recibos de NÓMINA, sin Utilidades, Bono vacacional ni bonos / beneficios (rhCierreEsSalarioNormal y rhPagoEsBono: la misma base del Cierre de Mes). Lo que se deja fuera por ser bono / beneficio se devuelve aparte (excluidoBs).
+// Salario normal = lo que pagan los recibos de los pagos cuyo tipo de nómina lleva INCES, sin Utilidades, Bono vacacional ni conceptos de bono / no bonificables (rhCierreEsSalarioNormal y rhAportesDelPago: la misma base del Cierre de Mes). Lo que se deja fuera (pagos de tipos sin INCES y conceptos de bono / no bonificables) se devuelve aparte (excluidoBs).
 //   datos = { anio, trimestre (1-4), nominas, detalles, tipos (tipos de nómina), pct (% patronal) } → { porMes:[{mes, nominasIncluidas, nominasExcluidas, salarioNormalBs, excluidoBs}], totalSalarioNormalBs, totalExcluidoBs, aportePatronalBs }
 const rhIncesTrimestre = (datos) => {
   const d = datos || {};
@@ -1975,12 +2014,12 @@ const rhIncesTrimestre = (datos) => {
     let salarioNormalBs = 0, excluidoBs = 0, nominasIncluidas = 0, nominasExcluidas = 0;
     (d.nominas || []).filter(n => n && n.mes === mes).forEach(n => {
       const dets = (d.detalles || []).filter(x => x && x.nominaId === n.id);
-      const bono = rhPagoEsBono(d.tipos, n);
-      if (dets.length > 0) { if (bono) nominasExcluidas++; else nominasIncluidas++; }
+      const fuera = !rhAportesDelPago(d.tipos, n).inces;   // el tipo del pago no lleva INCES patronal (Configuración → Tipos de nómina)
+      if (dets.length > 0) { if (fuera) nominasExcluidas++; else nominasIncluidas++; }
       dets.forEach(x => (x.asignaciones || []).forEach(a => {
         const bs = Number((a && a.montoBs) || 0);
         if (/utilidad|bono vacacional/i.test(String((a && a.concepto) || ''))) return;            // Utilidades y Bono vacacional: fuera de la base, como siempre
-        if (bono || rhAsignacionEsBono(a)) excluidoBs += bs; else salarioNormalBs += bs;          // bono / beneficio: fuera, pero se muestra cuánto es
+        if (fuera || rhAsignacionEsBono(a)) excluidoBs += bs; else salarioNormalBs += bs;         // pago de un tipo sin INCES o concepto de bono / no bonificable: fuera, pero se muestra cuánto es
       }));
     });
     return { mes, nominasIncluidas, nominasExcluidas, salarioNormalBs, excluidoBs };
@@ -2051,7 +2090,7 @@ const RH_CIERRE_APORTES = [
   { clave:'ivss', titulo:'IVSS — aporte patronal por centro de costo vs IVSS por pagar', conc:() => 'IVSS: aporte patronal por centro de costo (gasto) contra IVSS por pagar' },
   { clave:'rpe', titulo:'SPF (RPE) — aporte patronal por centro de costo vs RPE por pagar', conc:() => 'SPF (RPE): aporte patronal por centro de costo (gasto) contra RPE por pagar' },
   { clave:'faov', titulo:'FAOV (BANAVIH) — aporte patronal por centro de costo vs FAOV por pagar', conc:() => 'FAOV (BANAVIH): aporte patronal por centro de costo (gasto) contra FAOV por pagar' },
-  { clave:'inces', titulo:'INCES — aporte patronal del mes por centro de costo vs INCES por pagar', conc:(pct) => `INCES: aporte patronal del mes (${String(pct).replace('.', ',')}% del salario normal de la nómina, sin bonos ni beneficios) por centro de costo (gasto) contra INCES por pagar; se paga por trimestre` },
+  { clave:'inces', titulo:'INCES — aporte patronal del mes por centro de costo vs INCES por pagar', conc:(pct) => `INCES: aporte patronal del mes (${String(pct).replace('.', ',')}% del salario normal de los tipos de nómina que llevan INCES) por centro de costo (gasto) contra INCES por pagar; se paga por trimestre` },
   { clave:'', titulo:'Otros aportes patronales', conc:() => 'Otros aportes patronales: gasto de la empresa contra lo que se debe pagar' },
 ];
 // HCM y Bolsa: cómo se llaman sus comprobantes y la cuenta «por pagar» cuando falta
@@ -2096,8 +2135,10 @@ const rhCierreCalcular = (datos) => {
     const ctx = { ...ctxBase, tasa:benNum(p.tasa), cuentaPasivoNomina:rhCuentaPasivoDePago(tipos, p) };
     const ref = { id:p.id, nombre:etiqueta };
     rhCierreSumar(g.bucket, det.map(rhCierreDetalleTrabajador), ctx, ref);
+    const aportes = rhAportesDelPago(tipos, p);   // los aportes patronales que lleva el tipo de este pago (Configuración → Tipos de nómina)
     RH_CIERRE_APORTES.forEach(a => {
-      if (a.clave === 'inces') { rhCierreSumar(bApa.inces, rhCierreDetallesInces(rhPagoEsBono(tipos, p) ? [] : det, pctInces), ctx, ref); return; }   // los pagos de bonos / beneficios no son nómina: sin INCES patronal
+      if (a.clave === 'inces') { rhCierreSumar(bApa.inces, rhCierreDetallesInces(aportes.inces ? det : [], pctInces), ctx, ref); return; }   // un tipo sin INCES (bonos, beneficios, Extranómina…) no genera INCES patronal
+      if (a.clave && !aportes[a.clave]) return;                                                                                          // ni el aporte de IVSS / RPE / FAOV que su tipo no lleva
       rhCierreSumar(bApa[a.clave], det.map(x => rhCierreDetalleAporte(x, (z) => rhCierreEsPatronal(z) && rhCierreClaveLegal(z) === a.clave)), ctx, ref);
     });
     RH_CIERRE_BENEFICIOS.forEach(b => {
@@ -3379,12 +3420,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     abrirCargarTrabajador(trab);
   };
   // ── Tipos de nómina (Configuración → Tipos de nómina) ──
-  const tipoFormVacio = () => ({id:null, nombre:'', periodo:'', codigoPasivo:'', nombrePasivo:'', activo:true, cargaModo:'auto', conceptosCarga:[], aplicaHCM:false, aplicaBolsa:false});
+  const tipoFormVacio = () => ({id:null, nombre:'', periodo:'', codigoPasivo:'', nombrePasivo:'', activo:true, cargaModo:'auto', conceptosCarga:[], aplicaHCM:false, aplicaBolsa:false, aportesPatronales:null});
   const [tipoForm,setTipoForm]=useState(tipoFormVacio());
   const [tipoConceptoBusq,setTipoConceptoBusq]=useState(''); // búsqueda de conceptos en «Cargar solo los conceptos que yo elija»
   const [busyTipo,setBusyTipo]=useState(false);
   const guardarTipoNomina = async () => {
-    const f = {...rhTipoNominaLimpio(tipoForm), ...rhTipoCargaLimpia(tipoForm)};
+    const f = {...rhTipoNominaLimpio(tipoForm), ...rhTipoCargaLimpia(tipoForm), ...rhTipoAportesLimpio(tipoForm)};
     if(!f.nombre) return alert('Escribe el nombre del tipo de nómina (por ejemplo: Nómina, Bono de alimentación, Utilidades)');
     if(!f.codigoPasivo) return alert('Elige la cuenta de pasivo de este tipo de nómina: es la que se acredita por el neto de sus pagos en el asiento.');
     if(f.cargaModo==='solo' && f.conceptosCarga.length===0) return alert('Elige al menos un concepto que cargue este tipo de nómina, o cambia a «Automático según el nombre» / «Como siempre».');
@@ -3404,7 +3445,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     } catch(e){ alert('Error al guardar el tipo de nómina: '+e.message); }
     finally{ setBusyTipo(false); }
   };
-  const editarTipoNomina = (t) => { setTipoConceptoBusq(''); setTipoForm({id:t.id, nombre:t.nombre||'', periodo:t.periodo||'', codigoPasivo:t.codigoPasivo||'', nombrePasivo:t.nombrePasivo||'', activo:t.activo!==false, ...rhTipoCargaLimpia(t)}); };
+  const editarTipoNomina = (t) => { setTipoConceptoBusq(''); setTipoForm({id:t.id, nombre:t.nombre||'', periodo:t.periodo||'', codigoPasivo:t.codigoPasivo||'', nombrePasivo:t.nombrePasivo||'', activo:t.activo!==false, ...rhTipoCargaLimpia(t), aportesPatronales:(t.aportesPatronales && typeof t.aportesPatronales==='object') ? {...t.aportesPatronales} : null}); };
   const cambiarActivoTipo = async (t) => {
     try{ await updateDoc(getDocRef('rrhh_tipos_nomina',t.id),{activo:t.activo===false, updatedAt:Date.now()}); }
     catch(e){ alert('Error: '+e.message); }
@@ -3548,7 +3589,10 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const fv = rhFaovDelPago(nominaActiva, tipoPago, conceptos);
     const cuentaFaov = fv.cuenta ? {codigoCuenta:fv.cuenta.codigo, nombreCuenta:fv.cuenta.nombre} : aCuenta(cFAOVc);
     const faovConCuentaDeTipo = (d) => (fv.cuenta && d.concepto==='FAOV') ? {...d, codigoCuenta:fv.cuenta.codigo, nombreCuenta:fv.cuenta.nombre, cuentaDeTipo:true} : d;
-    const legales = hayBase ? base.map(faovConCuentaDeTipo) : (fv.auto ? [{...faovConCuentaDeTipo(mkFaovPago(cuentaFaov)), incluida:fv.incluida}] : []);
+    // Aportes patronales del tipo (Configuración → Tipos de nómina): si el tipo no lleva el de una ley, la parte de la empresa de esa fila queda en 0 (lo que se le descuenta al trabajador no cambia)
+    const aportesTipo = rhAportesDeTipo(tipoPago, nominaActiva?.concepto);
+    const sinPatronalSiNoAplica = (d) => { const k = rhPfClaveFila(d); return (k && k !== 'inces' && !aportesTipo[k]) ? {...d, montoPatronalUSD:0, montoPatronalBs:0} : d; };
+    const legales = (hayBase ? base.map(faovConCuentaDeTipo) : (fv.auto ? [{...faovConCuentaDeTipo(mkFaovPago(cuentaFaov)), incluida:fv.incluida}] : [])).map(sinPatronalSiNoAplica);
     const inc = rhIncesDelPago(nominaActiva, tipoPago, conceptos);
     if(!inc.auto) return legales;
     const cuentaInces = inc.cuenta ? {codigoCuenta:inc.cuenta.codigo, nombreCuenta:inc.cuenta.nombre} : aCuenta(inc.concepto);
@@ -3909,7 +3953,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // mismo departamento en un solo bloque de Debe/Haber por cuenta contable.
   // INCES trimestral (aporte patronal) — suma el "salario normal" en Bs. que YA quedó guardado
   // en cada nómina de los 3 meses del trimestre (cada una con su propia tasa histórica, sin
-  // recalcular con una tasa nueva), de los recibos de NÓMINA: sin Utilidades, Bono vacacional ni bonos / beneficios (ver rhIncesTrimestre).
+  // recalcular con una tasa nueva), de los recibos de los tipos de nómina que llevan INCES: sin Utilidades, Bono vacacional ni conceptos de bono / no bonificables (ver rhIncesTrimestre).
   const calcularIncesTrimestral = (anio, trimestreNum) => rhIncesTrimestre({anio, trimestre:trimestreNum, nominas, detalles:nominaDetalles, tipos:tiposNomina, pct:configParafiscal.inces.pctPatronalTrimestral});
   const [showIncesModal,setShowIncesModal]=useState(false);
   const [incesTrimestreSel,setIncesTrimestreSel]=useState({anio:new Date().getFullYear(), trimestre:Math.ceil((new Date().getMonth()+1)/3)});
@@ -4370,7 +4414,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const pctIncesPf = () => benNum(((configParafiscal||{}).inces||{}).pctPatronalTrimestral);
   const datosParafiscal = (nominasSel) => rhPfDatos(
     (nominasSel||[]).map(n=>({nomina:n, detalles:nominaDetalles.filter(d=>d.nominaId===n.id)})),
-    {centroDe:centroDeDetalleInf, fichaDe:(d)=>trabajadores.find(t=>t.id===d.trabajadorId)||null, pctInces:pctIncesPf(), pagoEsBono:(n)=>rhPagoEsBono(tiposNomina, n)}
+    {centroDe:centroDeDetalleInf, fichaDe:(d)=>trabajadores.find(t=>t.id===d.trabajadorId)||null, pctInces:pctIncesPf(), aportesDe:(n)=>rhAportesDelPago(tiposNomina, n)}
   );
   // Las 5 tarjetas de cada parafiscal (y del Resumen): [rótulo, número | null, 'trab'|'pat'|'tot' | null, subtítulo]
   const kpisParafiscal = (L, D) => [
@@ -5676,6 +5720,24 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   </div>
                 )}
               </div>
+              {(()=>{
+                const ap = rhAportesFormulario(tipoForm);
+                const cambiarAporte = (cambio) => setTipoForm(f=>{ const { guardado:_guardado, ...actual } = rhAportesFormulario(f); return {...f, aportesPatronales:{...actual, ...cambio}}; });
+                return (
+              <div className="border-2 border-gray-100 rounded-xl p-3 space-y-2" data-testid="tipo-aportes">
+                <label className={lblCls}>Aportes patronales de este tipo</label>
+                <label className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" data-testid="tipo-aportes-aplica" checked={ap.aplica} onChange={e=>cambiarAporte({aplica:e.target.checked})}/> Los pagos de este tipo llevan aportes patronales</label>
+                {ap.aplica && (
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1 pl-5" data-testid="tipo-aportes-leyes">
+                    {RH_APORTES_LEYES.map(l=>(
+                      <label key={l.id} className="flex items-center gap-1.5 text-xs font-bold text-gray-700 cursor-pointer"><input type="checkbox" data-testid={'tipo-aportes-'+l.id} checked={ap[l.id]===true} onChange={e=>cambiarAporte({[l.id]:e.target.checked})}/> {l.nombre}</label>
+                    ))}
+                  </div>
+                )}
+                <p data-testid="tipo-aportes-ayuda" className="text-[10px] text-gray-500">{ap.guardado ? '' : 'Marcado según el nombre del tipo; cámbialo si no es así. '}{ap.aplica ? 'Cada pago de este tipo calcula el aporte de la empresa de lo marcado: en el recibo (IVSS, Paro Forzoso y BANAVIH), en Cierre de Mes, en Parafiscales y en INCES Trimestral. Lo que se descuenta al trabajador no cambia.' : 'Los pagos de este tipo no generan ningún aporte de la empresa (ni INCES, ni IVSS, ni Paro Forzoso, ni BANAVIH). Lo que se descuenta al trabajador no cambia.'}</p>
+              </div>
+                );
+              })()}
             </div>
             <div className="flex gap-2 mt-4">
               <button onClick={guardarTipoNomina} disabled={busyTipo} className="bg-cyan-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase hover:bg-cyan-700 disabled:opacity-50">{busyTipo ? 'Guardando...' : (editando ? 'Guardar cambios' : 'Agregar tipo')}</button>
@@ -5692,6 +5754,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                     <p className="text-xs font-black text-gray-800">{t.nombre}{t.activo===false && <span className="ml-2 text-[9px] font-black uppercase bg-gray-200 text-gray-500 rounded-full px-2 py-0.5">Inactivo</span>}</p>
                     <p className="text-[10px] text-gray-500">Pasivo: {t.codigoPasivo ? <span><span className="font-mono text-cyan-600">{t.codigoPasivo}</span> {t.nombrePasivo}</span> : <span className="font-black uppercase text-amber-600">sin cuenta</span>} · {t.periodo || 'Período a elegir'} · {usadosPor(t)} pago(s)</p>
                     <p data-testid="carga-tipo" className="text-[10px] text-gray-400">Al ingresar un trabajador: {rhTextoCargaTipo(t, conceptos)}</p>
+                    <p data-testid="aportes-tipo" className="text-[10px] text-gray-400">Aportes patronales: {rhTextoAportesTipo(t)}</p>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <button onClick={()=>editarTipoNomina(t)} className="text-[10px] font-black uppercase text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg px-2.5 py-1.5">Editar</button>
@@ -6026,7 +6089,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 </div>
               )}
               <p className="text-[10px] text-gray-400 leading-relaxed" data-testid="cierre-nota">
-                Cada comprobante cuadra por sí solo. Son las cifras de los pagos del mes, repartidas por tema y sumadas por cuenta (el Bs. de cada pago con su propia tasa). Lo que se descuenta al trabajador va en Nóminas y Beneficios; el aporte de la empresa va solo en su propio comprobante. HCM y Bolsas de alimentos llevan dos: lo cobrado a los trabajadores (la cuenta por cobrar que acredita la nómina) contra la cuenta «por pagar», y el aporte de la empresa por centro de costo contra esa misma cuenta «por pagar» (la «Cuenta de pasivo (cierre de mes)» de Configuración). IVSS, SPF y FAOV: el aporte de la empresa por centro de costo contra la misma cuenta «por pagar» donde la nómina acredita lo retenido al trabajador. {pctInces>0 ? `INCES: el aporte patronal del mes (${String(pctInces).replace('.',',')}% del salario normal de la nómina, sin utilidades, bono vacacional ni bonos / beneficios); se paga por trimestre.` : 'INCES: no hay aporte del mes porque en Parafiscales → INCES el % patronal está en 0.'} Estos comprobantes no pasan solos a Contabilidad.
+                Cada comprobante cuadra por sí solo. Son las cifras de los pagos del mes, repartidas por tema y sumadas por cuenta (el Bs. de cada pago con su propia tasa). Lo que se descuenta al trabajador va en Nóminas y Beneficios; el aporte de la empresa va solo en su propio comprobante. HCM y Bolsas de alimentos llevan dos: lo cobrado a los trabajadores (la cuenta por cobrar que acredita la nómina) contra la cuenta «por pagar», y el aporte de la empresa por centro de costo contra esa misma cuenta «por pagar» (la «Cuenta de pasivo (cierre de mes)» de Configuración). IVSS, SPF y FAOV: el aporte de la empresa por centro de costo contra la misma cuenta «por pagar» donde la nómina acredita lo retenido al trabajador. {pctInces>0 ? `INCES: el aporte patronal del mes (${String(pctInces).replace('.',',')}% del salario normal de los tipos de nómina que llevan INCES, sin utilidades, bono vacacional ni conceptos de bono / no bonificables); se paga por trimestre.` : 'INCES: no hay aporte del mes porque en Parafiscales → INCES el % patronal está en 0.'} Estos comprobantes no pasan solos a Contabilidad.
               </p>
             </>
           )}
@@ -6133,7 +6196,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               return (
               <>
                 <p className="font-black text-gray-800 mb-1">INCES</p>
-                <p className="text-[10px] text-gray-400 mb-4">Trabajador: solo 0,5% sobre utilidades (no mensual): el pago de Utilidades (o el de un tipo de nómina que lleve el concepto INCES) lo descuenta solo, con este %, sobre lo que se paga como utilidades. Patrono: 2% trimestral sobre el salario normal de la nómina (sin Utilidades, Bono vacacional ni bonos / beneficios) — ve a "Registro de Nómina → INCES Trimestral" para ese cálculo.</p>
+                <p className="text-[10px] text-gray-400 mb-4">Trabajador: solo 0,5% sobre utilidades (no mensual): el pago de Utilidades (o el de un tipo de nómina que lleve el concepto INCES) lo descuenta solo, con este %, sobre lo que se paga como utilidades. Patrono: 2% trimestral sobre el salario normal de los tipos de nómina que llevan INCES (se marca en Configuración → Tipos de nómina; sin Utilidades, Bono vacacional ni conceptos de bono / no bonificables) — ve a "Registro de Nómina → INCES Trimestral" para ese cálculo.</p>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Trabajador (solo utilidades)</label><input type="number" step="0.1" value={cfg.pctTrabajadorUtilidades} onChange={e=>set({pctTrabajadorUtilidades:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
                   <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">% Patronal (trimestral)</label><input type="number" step="0.1" value={cfg.pctPatronalTrimestral} onChange={e=>set({pctPatronalTrimestral:parseFloat(e.target.value)||0})} className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-cyan-500 text-right"/></div>
@@ -7330,14 +7393,14 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   {porMes.map((m,i)=>(
                     <tr key={i} className="border-t border-gray-100">
                       <td className="py-1.5">{NOMBRES_MESES[parseInt(m.mes.split('-')[1])-1]} {m.mes.split('-')[0]}</td>
-                      <td className="py-1.5 text-right">{m.nominasIncluidas}{m.nominasExcluidas>0 ? <span className="text-[9px] text-gray-400"> (+{m.nominasExcluidas} bono(s) fuera)</span> : null}</td>
+                      <td className="py-1.5 text-right">{m.nominasIncluidas}{m.nominasExcluidas>0 ? <span className="text-[9px] text-gray-400"> (+{m.nominasExcluidas} fuera de la base)</span> : null}</td>
                       <td className="py-1.5 text-right font-mono">{formatNum(m.salarioNormalBs)}</td>
                     </tr>
                   ))}
                   <tr className="border-t-2 border-gray-200"><td className="py-1.5 font-black" colSpan={2}>Total salario normal del trimestre</td><td className="py-1.5 text-right font-mono font-black">{formatNum(totalSalarioNormalBs)}</td></tr>
                 </tbody>
               </table>
-              <p data-testid="inces-base-nota" className="text-[10px] text-gray-500">Salario normal = lo que pagan los recibos de nómina del trimestre, sin Utilidades, Bono vacacional ni bonos / beneficios (bono de alimentación, de transporte, beneficio complementario, bono por cargo / KPI).{totalExcluidoBs>0 ? <> Fuera de la base por ser bonos / beneficios: <span data-testid="inces-excluido" className="font-mono font-black">Bs. {formatNum(totalExcluidoBs)}</span>.</> : null}</p>
+              <p data-testid="inces-base-nota" className="text-[10px] text-gray-500">Salario normal = lo que pagan los recibos de los tipos de nómina que llevan INCES (Configuración → Tipos de nómina) en el trimestre, sin Utilidades, Bono vacacional ni conceptos de bono / no bonificables.{totalExcluidoBs>0 ? <> Fuera de la base (pagos de tipos sin INCES, como bonos, beneficios o Extranómina, y conceptos de bono / no bonificables): <span data-testid="inces-excluido" className="font-mono font-black">Bs. {formatNum(totalExcluidoBs)}</span>.</> : null}</p>
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex justify-between items-center">
                 <span className="text-xs font-black text-amber-700 uppercase">Aporte patronal ({configParafiscal.inces.pctPatronalTrimestral}%)</span>
                 <span className="font-mono font-black text-amber-700 text-lg">Bs. {formatNum(aportePatronalBs)}</span>
