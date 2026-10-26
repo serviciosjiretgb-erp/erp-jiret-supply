@@ -23704,6 +23704,180 @@ const frmDocPdf = ({ grupos, filtros, empresa, rif, direccion, tel, usuario }) =
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Formulas_Produccion_${getTodayDate()}</title><style>${FRM_CSS_PDF}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(empresa)}</h2><p>RIF: ${esc(rif)}</p><p>${esc(direccion)}</p>${tel ? `<p>Tel: ${esc(tel)}</p>` : ''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">Fórmulas / Recetas de Producción</div><div class="rep-sub">Composición de materias primas por categoría de producto</div>${resumen}${secciones}${anexo}<div class="pie">KG/Mill. = (Ancho + Fuelle) × Largo × Micras, el mismo cálculo que muestra la pantalla · El balance de cada fórmula debe sumar 100 % · ${esc(empresa)}</div></div></div></body></html>`;
 };
 
+// == INICIO OPREQ ==
+// ===== Requisición de Producción (OP): datos del pedido, cantidad y carga con merma, FÓRMULA (kg por materia prima) y RUTA de fases (extrusión / impresión / sellado) =====
+// Se arma en dos pasos: opReqDatos() hace los cálculos (sin pantalla) y opReqDoc() arma el documento HTML (vista previa en pantalla y ventana de impresión).
+const OPREQ_FASES = [['extrusion', 'Extrusión', '#1d4ed8'], ['impresion', 'Impresión', '#7e22ce'], ['sellado', 'Sellado / Corte', '#15803d']];
+const opReqNum = (v) => { const n = parseNum(v); return Number.isFinite(n) ? n : 0; };
+const opReqFechaTxt = (f) => { const m = String(f == null ? '' : f).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : String(f == null ? '' : f); };
+// 27 → «27» · 0.5 → «0,5» · 19.5 → «19,5» (coma decimal, sin ceros de relleno)
+const opReqDec = (v, d = 2) => { const k = Math.pow(10, d); return String(Math.round((Number(v) || 0) * k) / k).replace('.', ','); };
+// Misma búsqueda de fórmula que las pestañas de Producción y envPtFases: categoría exacta; si no, por palabras.
+const opReqFormula = (req, formulas) => {
+  const r = req || {}, fl = formulas || [];
+  const catU = String(r.categoria || '').toUpperCase();
+  let f = catU ? fl.find(x => x && x.categoria && String(x.categoria).toUpperCase() === catU) : null;
+  if (!f) {
+    const cand = [r.categoria, r.subcategoria, r.subCategoria, r.producto, r.product, r.nombreProducto].filter(Boolean).map(envPtKey);
+    f = fl.find(x => x && x.categoria && cand.includes(envPtKey(x.categoria)));
+  }
+  return f || null;
+};
+// Reparte `baseKg` según los % en centésimas (método del mayor residuo): si la fórmula suma 100 %, los kg suman EXACTAMENTE la carga (sin 0,01 de diferencia por redondeo).
+const opReqReparto = (pcts, baseKg) => {
+  const cents = Math.round((Number(baseKg) || 0) * 100);
+  const exact = (pcts || []).map(p => cents * (Number(p) || 0) / 100);
+  const base = exact.map(x => Math.floor(x + 1e-9));
+  let resto = Math.round(exact.reduce((s, x) => s + x, 0)) - base.reduce((s, x) => s + x, 0);
+  const orden = exact.map((x, i) => [x - base[i], i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (let k = 0; k < orden.length && resto > 0; k++, resto--) base[orden[k][1]]++;
+  return base.map(c => c / 100);
+};
+const opReqDatos = (req, formulas, inventory) => {
+  const r = req || {};
+  const esTermo = String(r.tipoProducto || '').toUpperCase() === 'TERMOENCOGIBLE';
+  const catRaw = String(r.categoria == null ? '' : r.categoria).trim();
+  const categoria = catRaw === '__OTRA__' ? '' : catRaw;
+  const formula = opReqFormula({ ...r, categoria }, formulas);
+  const prod = envPtProducto(r, inventory);
+  // Fases: las de la fórmula; sin fórmula (o sin fases marcadas) → la ruta habitual del tipo de producto (igual que las pestañas de Producción)
+  const porDefecto = esTermo ? { extrusion: true, impresion: false, sellado: false } : { extrusion: true, impresion: true, sellado: true };
+  const fF = formula && formula.fases ? formula.fases : null;
+  const hayFases = !!(fF && (fF.extrusion || fF.impresion || fF.sellado));
+  const fases = hayFases ? { extrusion: !!fF.extrusion, impresion: !!fF.impresion, sellado: !!fF.sellado } : porDefecto;
+  const cantidad = opReqNum(r.cantidad), pesoMillar = opReqNum(r.pesoMillar), cargaKg = opReqNum(r.requestedKg);
+  const pres = String(r.presentacion || '').toUpperCase();
+  const esMillar = pres ? pres.startsWith('MILL') : !esTermo;
+  const netoKg = esMillar ? (pesoMillar > 0 ? cantidad * pesoMillar : 0) : cantidad;
+  const mermaKg = netoKg > 0 && cargaKg > netoKg ? cargaKg - netoKg : 0;
+  const mermaPct = cargaKg > 0 ? mermaKg / cargaKg * 100 : 0;
+  const inv = inventory || [];
+  const lineas = (formula && Array.isArray(formula.ingredientes) ? formula.ingredientes : []).map(i => {
+    const id = String(i && i.id != null ? i.id : '').trim();
+    let desc = String((i && i.desc) || '').trim();
+    if (!desc || desc.toUpperCase() === id.toUpperCase()) { const it = inv.find(x => envPtCodigo(x).toUpperCase() === id.toUpperCase()); if (it && it.desc) desc = String(it.desc); }
+    return { id, desc, pct: opReqNum(i && i.pct) };
+  });
+  const totalPct = lineas.reduce((s, l) => s + l.pct, 0);
+  const kgs = cargaKg > 0 ? opReqReparto(lineas.map(l => l.pct), cargaKg) : lineas.map(() => 0);
+  lineas.forEach((l, i) => { l.kg = kgs[i]; });
+  const totalKg = Math.round(kgs.reduce((s, k) => s + k, 0) * 100) / 100;
+  const dest = String(r.productoDestinoId || '').trim();
+  return {
+    id: String(r.id || ''),
+    numero: String(r.id || '').replace('OP-', '').padStart(5, '0'),
+    fecha: opReqFechaTxt(r.fecha) || (r.timestamp ? frmFechaTxt(r.timestamp) : ''),
+    estado: String(r.status || ''),
+    tipo: esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS', esTermo,
+    cliente: String(r.client || ''), vendedor: String(r.vendedor || ''), desc: String(r.desc || ''), categoria,
+    color: String(r.color || ''), tratamiento: String(r.tratamiento || ''),
+    esMillar, cantidad, pesoMillar, netoKg, mermaKg, mermaPct, cargaKg,
+    ancho: opReqNum(r.ancho), fuelles: opReqNum(r.fuelles), largo: opReqNum(r.largo), micras: opReqNum(r.micras),
+    producto: prod ? { codigo: envPtCodigo(prod), desc: String(prod.desc || '') } : (dest ? { codigo: dest.split('___')[0], desc: '' } : null),
+    formula: formula ? { id: formula.id || '', categoria: String(formula.categoria || ''), lineas, totalPct, totalKg, balanceOk: lineas.length > 0 && Math.abs(totalPct - 100) < 0.1 } : null,
+    fases, fasesPorDefecto: !hayFases,
+  };
+};
+const OPREQ_CSS = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;background:#eef2f6;padding:16px;font-size:11px;color:#111827;}.reporte-wrap{max-width:820px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.12);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 26px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.btn-print{display:block;margin:12px 26px 0;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 52px);}.contenido{padding:14px 26px 20px;}` +
+  `.titulo{display:flex;justify-content:space-between;align-items:stretch;gap:14px;}.t-izq{flex:1;display:flex;flex-direction:column;justify-content:center;}.t-kick{font-size:8.5px;font-weight:900;letter-spacing:2.2px;color:#f97316;text-transform:uppercase;}.t-main{font-size:21px;font-weight:900;text-transform:uppercase;letter-spacing:.2px;color:#0f172a;line-height:1.1;margin:2px 0 7px;}.tags{display:flex;flex-wrap:wrap;gap:7px;align-items:center;}.tag{display:inline-block;padding:3px 11px;border-radius:5px;font-size:9px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;color:#fff;}.tag.est{background:#fff;border:1.5px solid currentColor;padding:1.5px 10px;}.t-fecha{font-size:9.5px;color:#475569;}.t-fecha b{color:#0f172a;}.t-num{min-width:124px;background:#0f172a;color:#fff;border-radius:8px;padding:8px 14px;text-align:center;display:flex;flex-direction:column;justify-content:center;}.t-num span{font-size:8.5px;letter-spacing:2.4px;color:#fdba74;font-weight:900;text-transform:uppercase;}.t-num b{font-size:28px;font-weight:900;letter-spacing:1.5px;line-height:1.1;}` +
+  `.sec{margin-top:10px;break-inside:avoid;page-break-inside:avoid;}.sec-t{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:9px;font-weight:900;letter-spacing:1.1px;text-transform:uppercase;color:#0f172a;border-left:4px solid #f97316;padding-left:7px;margin-bottom:6px;}.sec-t small{font-size:8.5px;font-weight:700;letter-spacing:0;text-transform:none;color:#64748b;text-align:right;}.nd{color:#94a3b8;font-weight:400;}.cod{color:#ea580c;}` +
+  `table.kv{width:100%;border-collapse:collapse;border:1px solid #cbd5e1;}table.kv th{width:14%;background:#f1f5f9;color:#475569;font-size:7.5px;letter-spacing:.7px;text-transform:uppercase;font-weight:900;text-align:left;padding:5px 8px;border:1px solid #e2e8f0;vertical-align:middle;}table.kv td{width:36%;padding:5px 8px;font-size:10.5px;font-weight:700;color:#0f172a;border:1px solid #e2e8f0;vertical-align:middle;}` +
+  `.specs{display:flex;gap:8px;}.spec{flex:1;border:1.5px solid #0f172a;border-radius:8px;padding:6px 6px;text-align:center;}.spec span{display:block;font-size:7.5px;font-weight:900;letter-spacing:.9px;color:#64748b;text-transform:uppercase;}.spec b{display:block;font-size:16px;font-weight:900;color:#1d4ed8;margin-top:3px;}` +
+  `.calc{display:flex;align-items:stretch;gap:6px;}.cb{flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:6px 6px;text-align:center;display:flex;flex-direction:column;justify-content:center;}.cb span{display:block;font-size:7.5px;font-weight:900;letter-spacing:.8px;color:#64748b;text-transform:uppercase;}.cb b{display:block;font-size:14px;font-weight:900;color:#0f172a;margin-top:3px;}.cb small{display:block;font-size:8px;color:#94a3b8;font-weight:700;margin-top:2px;}.cb.total{flex:1.4;background:#fff7ed;border:2px solid #f97316;}.cb.total span{color:#c2410c;}.cb.total b{font-size:22px;color:#ea580c;}.op{display:flex;align-items:center;font-size:17px;font-weight:900;color:#94a3b8;}` +
+  `table.fml{width:100%;border-collapse:collapse;font-size:10px;}table.fml th{background:#0f172a;color:#fff;padding:6px 8px;text-align:left;font-size:7.5px;text-transform:uppercase;letter-spacing:.7px;font-weight:700;}table.fml td{padding:5px 8px;border-bottom:1px solid #e2e8f0;vertical-align:middle;}table.fml tbody tr:nth-child(even) td{background:#f8fafc;}tr{break-inside:avoid;page-break-inside:avoid;}.f-n{width:26px;text-align:center;color:#94a3b8;font-weight:900;}.f-id{width:132px;font-weight:900;color:#0f172a;white-space:nowrap;}.f-d{color:#334155;}.f-p{width:66px;text-align:right;font-weight:900;color:#6d28d9;white-space:nowrap;}.f-bar{width:86px;}.bar{height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;}.bar i{display:block;height:100%;background:#7c3aed;}.f-k{width:104px;text-align:right;font-weight:900;color:#ea580c;font-size:11px;white-space:nowrap;}table.fml tfoot td{background:#f1f5f9;border-top:2px solid #0f172a;border-bottom:none;font-weight:900;font-size:10.5px;padding:7px 8px;}table.fml tfoot .bad{color:#dc2626;}.th-r{text-align:right!important;}` +
+  `.aviso{border:1px solid #fcd34d;background:#fffbeb;color:#92400e;border-radius:8px;padding:8px 11px;font-size:9.5px;line-height:1.5;}.aviso.rojo{border-color:#fca5a5;background:#fef2f2;color:#991b1b;margin-top:6px;}.nota{margin-top:5px;font-size:8px;color:#94a3b8;font-style:italic;}` +
+  `.ruta{display:flex;align-items:stretch;}.fase{flex:1;border:1.5px solid #0f172a;border-radius:8px;overflow:hidden;min-width:0;}.fase-h{padding:6px 9px;color:#fff;font-size:9.5px;font-weight:900;letter-spacing:.7px;text-transform:uppercase;display:flex;align-items:center;gap:7px;}.fase-h i{display:inline-flex;width:17px;height:17px;border-radius:50%;background:#fff;color:#0f172a;font-style:normal;font-size:10px;align-items:center;justify-content:center;flex:none;}.fase-b{padding:6px 9px 7px;font-size:9px;color:#334155;line-height:1.55;}.fase-b b{color:#0f172a;}.fase.na{border:1.5px dashed #cbd5e1;background:#f8fafc;}.fase.na .fase-h{background:#e2e8f0;color:#94a3b8;}.fase.na .fase-h i{background:#f8fafc;color:#94a3b8;}.fase.na .fase-b{color:#94a3b8;text-align:center;font-weight:900;letter-spacing:1px;padding:16px 9px;}.flecha{display:flex;align-items:center;justify-content:center;width:22px;font-size:16px;font-weight:900;color:#f97316;flex:none;}.flecha.off{color:#cbd5e1;}` +
+  `.obs{border:1px solid #cbd5e1;border-radius:8px;padding:4px 12px 2px;}.obs i{display:block;height:18px;border-bottom:1px solid #cbd5e1;}.obs i:last-child{border-bottom:none;}` +
+  `.cierre{break-inside:avoid;page-break-inside:avoid;}.firmas{display:flex;gap:28px;margin-top:26px;break-inside:avoid;page-break-inside:avoid;}.firma{flex:1;text-align:center;border-top:1.5px solid #0f172a;padding-top:5px;font-size:9px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;}.firma small{display:block;font-size:8px;font-weight:700;color:#64748b;text-transform:none;letter-spacing:0;margin-top:1px;}` +
+  `.pie{margin-top:12px;padding-top:6px;border-top:1px solid #e5e7eb;font-size:8px;color:#94a3b8;display:flex;justify-content:space-between;gap:10px;}` +
+  `@page{size:letter portrait;margin:8mm 9mm 11mm;}@page{@bottom-right{content:"Página " counter(page) " de " counter(pages);font-family:Arial,sans-serif;font-size:8px;color:#94a3b8;}}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}.membrete{padding:6px 4px 7px;}.contenido{padding:8px 4px 4px;}}`;
+const opReqDoc = (D, emp, opts) => {
+  const esc = rhCierreEsc, o = opts || {}, e = emp || {};
+  const nd = '<span class="nd">—</span>';
+  const t = (v) => (String(v == null ? '' : v).trim() ? esc(String(v).trim()) : nd);
+  const kg = (n) => `${formatNum(n)} kg`;
+  const cm = (n) => `${opReqDec(n)} cm`;
+  const mic = D.micras > 0 ? `${opReqDec(D.micras < 1 ? D.micras * 1000 : D.micras, 1)} MIC` : '';
+  const cant = D.esMillar ? `${formatNum(D.cantidad)} ${D.cantidad === 1 ? 'millar' : 'millares'}` : kg(D.cantidad);
+  const tipoCol = D.esTermo ? '#15803d' : '#1d4ed8';
+  const estU = String(D.estado || '').toUpperCase();
+  const estCol = estU === 'ANULADA' ? '#dc2626' : estU === 'COMPLETADO' ? '#15803d' : estU === 'EN PROCESO' ? '#b45309' : '#475569';
+  const tit = (txt, der) => `<div class="sec-t"><span>${txt}</span>${der ? `<small>${der}</small>` : ''}</div>`;
+  // ── Datos del pedido ──
+  const kv = (a, b) => `<tr><th>${a[0]}</th><td>${a[1]}</td><th>${b[0]}</th><td>${b[1]}</td></tr>`;
+  const prodTxt = D.producto ? `<span class="cod">${esc(D.producto.codigo)}</span>${D.producto.desc ? ' — ' + esc(D.producto.desc) : ''}` : '<span class="nd">Sin producto vinculado</span>';
+  const pedido = `<table class="kv">${kv(['Cliente', t(D.cliente)], ['Vendedor', t(D.vendedor)])}${kv(['Producto', t(D.desc)], ['Categoría', t(D.categoria)])}${kv(['Color', t(D.color)], ['Tratamiento', t(D.tratamiento)])}${kv(['Presentación', D.esMillar ? 'Millares' : 'Kilos'], ['Producto en inventario', prodTxt])}</table>`;
+  // ── Especificaciones (el termoencogible solo lleva ancho y micras) ──
+  const sp = [['Ancho', D.ancho > 0 ? cm(D.ancho) : '—']];
+  if (!D.esTermo || D.fuelles > 0) sp.push(['Fuelles', cm(D.fuelles)]);
+  if (!D.esTermo || D.largo > 0) sp.push(['Largo', D.largo > 0 ? cm(D.largo) : '—']);
+  sp.push(['Micras', mic || '—']);
+  if (!D.esTermo) sp.push(['Peso por millar', D.pesoMillar > 0 ? kg(D.pesoMillar) : '—']);
+  const specs = `<div class="specs">${sp.map(([l, v]) => `<div class="spec"><span>${l}</span><b>${esc(v)}</b></div>`).join('')}</div>`;
+  // ── Cantidad → producto neto → merma → carga total a planta ──
+  const cel = (l, v, s, cls) => `<div class="cb${cls ? ' ' + cls : ''}"><span>${l}</span><b>${v}</b>${s ? `<small>${s}</small>` : ''}</div>`;
+  const op = (c) => `<div class="op">${c}</div>`;
+  const hayNeto = D.netoKg > 0;
+  const piezas = [];
+  if (hayNeto && D.esMillar && D.pesoMillar > 0) piezas.push(cel('Cantidad solicitada', esc(cant)), op('×'), cel('Peso por millar', esc(kg(D.pesoMillar))), op('='), cel('Producto neto', esc(kg(D.netoKg))));
+  else if (hayNeto) piezas.push(cel('Producto neto solicitado', esc(kg(D.netoKg))));
+  else piezas.push(cel('Cantidad solicitada', esc(cant)));
+  if (D.mermaKg > 0) piezas.push(op('+'), cel('Merma estimada', esc(kg(D.mermaKg)), `${opReqDec(D.mermaPct, 1)} % de la carga`));
+  // Si la carga de la OP quedó por debajo del producto neto (OP editada a mano) no se pone el «=» y se avisa en rojo
+  const cargaFloja = hayNeto && D.cargaKg > 0 && D.cargaKg < D.netoKg - 0.005;
+  if (hayNeto && !cargaFloja) piezas.push(op('='));
+  piezas.push(cel('Carga total planta', D.cargaKg > 0 ? esc(kg(D.cargaKg)) : '—', D.cargaKg > 0 ? 'kg a cargar en planta' : 'sin dato en la OP', 'total'));
+  // ── Fórmula ──
+  const F = D.formula;
+  let secF;
+  if (!F) {
+    secF = `<div class="sec">${tit('Fórmula de producción')}<div class="aviso">${D.categoria ? `No hay una fórmula registrada para la categoría <b>${esc(D.categoria)}</b>. Créela en Producción → Fórmulas y aparecerá aquí con los kg por materia prima.` : 'Esta OP no tiene categoría asignada, por eso no se puede mostrar su fórmula. Asigne la categoría editando la OP.'}</div></div>`;
+  } else if (!F.lineas.length) {
+    secF = `<div class="sec">${tit(`Fórmula de producción · ${esc(F.categoria)}`)}<div class="aviso">La fórmula <b>${esc(F.categoria)}</b> no tiene materias primas cargadas. Complétela en Producción → Fórmulas.</div></div>`;
+  } else {
+    const filas = F.lineas.map((l, i) => `<tr><td class="f-n">${i + 1}</td><td class="f-id">${esc(l.id)}</td><td class="f-d">${esc(l.desc)}</td><td class="f-p">${opReqDec(l.pct, 3)} %</td><td class="f-bar"><div class="bar"><i style="width:${Math.max(0, Math.min(100, l.pct))}%"></i></div></td><td class="f-k">${D.cargaKg > 0 ? esc(kg(l.kg)) : '—'}</td></tr>`).join('');
+    const avisos = (!F.balanceOk ? `<div class="aviso rojo">La fórmula suma <b>${opReqDec(F.totalPct, 3)} %</b> (debe sumar 100 %). Revísela en Producción → Fórmulas.</div>` : '')
+      + (D.cargaKg > 0 ? `<div class="nota">Kg por materia prima = % de la fórmula × carga total planta (${esc(kg(D.cargaKg))}), en centésimas de kg.</div>` : '<div class="aviso rojo">La OP no tiene carga total planta: no se pueden calcular los kg por materia prima.</div>');
+    secF = `<div class="sec">${tit(`Fórmula de producción · ${esc(F.categoria)}`, D.cargaKg > 0 ? `Base de cálculo: ${esc(kg(D.cargaKg))}` : '')}<table class="fml"><thead><tr><th style="text-align:center">N°</th><th>Código</th><th>Materia prima</th><th class="th-r">%</th><th></th><th class="th-r">Kg a cargar</th></tr></thead><tbody>${filas}</tbody><tfoot><tr><td colspan="3">TOTAL</td><td class="f-p ${F.balanceOk ? '' : 'bad'}">${opReqDec(F.totalPct, 3)} %</td><td></td><td class="f-k">${D.cargaKg > 0 ? esc(kg(F.totalKg)) : '—'}</td></tr></tfoot></table>${avisos}</div>`;
+  }
+  // ── Ruta de producción: solo llevan número las fases que aplican; las demás salen «No aplica» ──
+  const activas = OPREQ_FASES.filter(([k]) => D.fases[k]);
+  const ultima = activas.length ? activas[activas.length - 1][0] : '';
+  const cuerpo = (k) => {
+    const L = [];
+    if (k === 'extrusion') {
+      L.push(D.esTermo ? 'Extrusión de la película termoencogible.' : 'Extrusión de la película tubular.');
+      L.push(`Ancho <b>${esc(D.ancho > 0 ? cm(D.ancho) : '—')}</b>${!D.esTermo && D.fuelles > 0 ? ` · Fuelles <b>${esc(cm(D.fuelles))}</b>` : ''} · Calibre <b>${esc(mic || '—')}</b>`);
+      L.push(`Color <b>${t(D.color)}</b> · Tratamiento <b>${t(D.tratamiento)}</b>`);
+      L.push(`Carga a planta <b>${D.cargaKg > 0 ? esc(kg(D.cargaKg)) : '—'}</b>`);
+    } else if (k === 'impresion') {
+      L.push('Impresión (pintura) sobre la película extruida.');
+      L.push(`Color de película <b>${t(D.color)}</b>`);
+    } else {
+      L.push('Sellado y corte de la bolsa.');
+      const med = [D.largo > 0 ? `Largo <b>${esc(cm(D.largo))}</b>` : '', D.fuelles > 0 ? `Fuelles <b>${esc(cm(D.fuelles))}</b>` : ''].filter(Boolean).join(' · ');
+      if (med) L.push(med);
+    }
+    if (k === ultima) L.push(`Entrega producto terminado <b>${esc(cant)}</b>`);
+    return L.map(x => `<div>${x}</div>`).join('');
+  };
+  let n = 0;
+  const cajas = OPREQ_FASES.map(([k, nombre, col], idx) => {
+    const act = !!D.fases[k];
+    const caja = act
+      ? `<div class="fase"><div class="fase-h" style="background:${col}"><i>${++n}</i>${nombre}</div><div class="fase-b">${cuerpo(k)}</div></div>`
+      : `<div class="fase na"><div class="fase-h"><i>–</i>${nombre}</div><div class="fase-b">NO APLICA</div></div>`;
+    return (idx ? `<div class="flecha${act ? '' : ' off'}">→</div>` : '') + caja;
+  }).join('');
+  const notaFases = D.fasesPorDefecto ? `<div class="nota">${F ? 'La fórmula no tiene fases marcadas: se muestran las fases habituales de este tipo de producto.' : 'Sin fórmula asociada: se muestran las fases habituales de este tipo de producto.'}</div>` : '';
+  const secRuta = `<div class="sec">${tit(`Ruta de producción · ${D.esTermo ? 'Termoencogible' : 'Bolsas'}`, esc(activas.map(a => a[1]).join(' → ')))}<div class="ruta">${cajas}</div>${notaFases}</div>`;
+  const obs = `<div class="sec">${tit('Observaciones')}<div class="obs"><i></i><i></i><i></i></div></div>`;
+  const firmas = '<div class="firmas"><div class="firma">Ventas<small>Emite la OP</small></div><div class="firma">Planta<small>Recibe y programa</small></div><div class="firma">Almacén<small>Despacha la materia prima</small></div></div>';
+  const pie = `<div class="pie"><span>Emitido el ${esc(frmAhoraTxt())}${e.usuario ? ' · ' + esc(e.usuario) : ''}</span><span>${esc(e.empresa || '')} · OP N° ${esc(D.numero)}</span></div>`;
+  const titulo = `<div class="titulo"><div class="t-izq"><div class="t-kick">Orden de producción</div><div class="t-main">Requisición de Producción</div><div class="tags"><span class="tag" style="background:${tipoCol}">${esc(D.tipo)}</span>${D.estado ? `<span class="tag est" style="color:${estCol}">${esc(D.estado)}</span>` : ''}<span class="t-fecha">Fecha: <b>${esc(D.fecha || '—')}</b></span></div></div><div class="t-num"><span>N°</span><b>${esc(D.numero)}</b></div></div>`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Requisicion_${esc(D.id || ('OP-' + D.numero))}</title><style>${OPREQ_CSS}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(e.empresa || '')}</h2><p>RIF: ${esc(e.rif || '')}</p><p>${esc(e.direccion || '')}</p>${e.tel ? `<p>Tel: ${esc(e.tel)}</p>` : ''}</div></div>${o.preview ? '' : '<button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button>'}<div class="contenido">${titulo}<div class="sec">${tit('Datos del pedido')}${pedido}</div><div class="sec">${tit('Especificaciones del producto')}${specs}</div><div class="sec">${tit('Cantidad y carga a planta')}<div class="calc">${piezas.join('')}</div>${cargaFloja ? `<div class="aviso rojo">La carga total planta (${esc(kg(D.cargaKg))}) es menor que el producto neto (${esc(kg(D.netoKg))}). Revise la cantidad o la carga de la OP.</div>` : ''}</div>${secF}${secRuta}<div class="cierre">${obs}${firmas}${pie}</div></div></div></body></html>`;
+};
+// == FIN OPREQ ==
 const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false, filaExtra='') => {
   const showUSD = currency!=='bs'; const showBS = currency!=='usd';
   const rows = ccFlattenArbol(tree, 0, [], totalBase, getDetalle, mostrarDetalle);
@@ -41390,21 +41564,30 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
 
     if (showSingleReqReport) {
       const req = (requirements || []).find(r => r?.id === showSingleReqReport); if (!req) return null;
+      // Documento profesional: datos del pedido, cantidad → neto → merma → carga a planta, FÓRMULA (kg por materia prima) y RUTA de fases (extrusión / impresión / sellado según la fórmula y el tipo: bolsa o termoencogible)
+      const empReq = {
+        empresa: settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.',
+        rif: settings?.empresaRif || settings?.empresaRIF || 'J-412309374',
+        direccion: settings?.empresaDireccion || settings?.direccion || 'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA',
+        tel: settings?.empresaTelefono || '',
+        usuario: appUser?.name || '',
+      };
+      const datosReq = opReqDatos(req, formulas, inventory);
+      const imprimirReq = () => {
+        const w = window.open('', '_blank');
+        if (!w) return setDialog({ title: 'Aviso', text: 'El navegador bloqueó la ventana del PDF. Permita las ventanas emergentes de este sitio e inténtelo de nuevo.', type: 'alert' });
+        try { w.document.write(opReqDoc(datosReq, empReq, {})); w.document.close(); }
+        catch (e) { try { w.close(); } catch (_) {} setDialog({ title: 'Error', text: 'No se pudo generar el PDF: ' + (e && e.message ? e.message : String(e)), type: 'alert' }); }
+      };
       return (
-        <div id="pdf-content" className="bg-white p-8 min-h-0 text-black shadow-xl bg-white">
-          <div data-html2canvas-ignore="true" className="flex justify-between mb-8 no-pdf"><button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button><button onClick={() => handleExportPDF(`Requisicion_${req.id}`, false)} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Imprimir</button></div>
-          <div className="hidden pdf-header mb-6"><ReportHeader /></div>
-          <div className="text-center my-4"><span className="text-xl font-black uppercase border-b-4 border-orange-500 pb-1">REQUISICIÓN DE PRODUCCIÓN N° {String(req.id).replace('OP-', '').padStart(5, '0')}</span></div>
-          <div className="grid grid-cols-2 gap-4 mb-4 font-bold text-sm uppercase"><div><p>CLIENTE: {req.client}</p><p className="mt-1">VENDEDOR: {req.vendedor || 'N/A'}</p></div><div className="text-right"><p>FECHA: {req.fecha}</p><p className="mt-1">TIPO: {req.tipoProducto}</p>{req.categoria && <p className="mt-1 text-orange-600">CATEGORÍA: {req.categoria}</p>}</div></div>
-          <div className="border-2 border-black p-4 grid grid-cols-4 gap-4 text-center text-xs font-black uppercase mb-4 rounded-2xl"><div>ANCHO<br/><span className="text-sm text-blue-600">{req.ancho} CM</span></div><div>FUELLES<br/><span className="text-sm text-blue-600">{req.fuelles || '0'} CM</span></div><div>LARGO<br/><span className="text-sm text-blue-600">{req.largo} CM</span></div><div>MICRAS<br/><span className="text-sm text-blue-600">{req.micras}</span></div></div>
-          
-          <div className="bg-gray-50 p-4 flex justify-between border-2 border-black rounded-2xl mb-4">
-             <div><span className="block text-[10px] font-black uppercase">Cant. Solicitada</span><span className="text-xl font-black text-blue-600">{formatNum(req.cantidad)} {req.presentacion}</span></div>
-             <div><span className="block text-[10px] font-black uppercase">Peso Millar Est.</span><span className="text-xl font-black">{req.pesoMillar || 'N/A'}</span></div>
-             <div className="text-right"><span className="block text-[10px] font-black uppercase">Carga Total Planta</span><span className="text-3xl font-black text-orange-600">{formatNum(req.requestedKg)} KG</span></div>
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 space-y-4 animate-in fade-in">
+          <div className="flex justify-between items-center gap-3 flex-wrap">
+            <button onClick={() => setShowSingleReqReport(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver</button>
+            <button onClick={imprimirReq} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Imprimir / Guardar PDF</button>
           </div>
-          
-          <div className="mt-16 grid grid-cols-2 gap-24 text-center font-black text-xs uppercase border-t-2 border-black pt-4"><div>FIRMA VENTAS</div><div>RECIBE PLANTA</div></div>
+          <iframe title={`Requisición de Producción ${datosReq.numero}`} srcDoc={opReqDoc(datosReq, empReq, { preview: true })}
+            onLoad={e => { try { const d = e.target.contentDocument; if (d && d.body) e.target.style.height = (d.body.scrollHeight + 4) + 'px'; } catch (_) {} }}
+            className="w-full rounded-2xl border border-gray-200 bg-white" style={{ height: 1180 }} />
         </div>
       );
     }
@@ -56972,6 +57155,28 @@ ${resumen}
   const renderFormulasModule = () => {
     const totalPctActual = (formulaForm.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
     const pctRestante = Math.max(0, 100 - totalPctActual);
+    // Materias primas del selector = TODO lo que está activo en Inventario General › «Materia Prima», con o sin existencia (mismo criterio que esa pantalla: sin desactivadas ni códigos FG-).
+    // `inventory` es en vivo (onSnapshot), así que un producto nuevo aparece aquí al instante. Las que ya están en esta fórmula quedan marcadas (ya) para no repetirlas, pero NO desaparecen de la lista.
+    const mpCleanOf = (i) => (i.displayId||(i.id||'').split('___')[0]||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
+    const mpEnFormula = new Set((formulaForm.ingredientes||[]).map(fi=>String(fi.id||'').toUpperCase()));
+    const mpLista = !showFormulaPanel ? [] : (() => {
+      const porCodigo = new Map();
+      (inventory||[]).forEach(i => {
+        if(!i || i.activo === false) return;
+        const code = mpCleanOf(i);
+        if(!code || code.toUpperCase().startsWith('FG-')) return;
+        const cat = String(i.category||'').toLowerCase().replace(/[_\s]+/g,' ').trim();
+        if(!(cat === 'materia prima' || cat === 'materias primas' || code.toUpperCase().startsWith('MP-'))) return;
+        const k = code.toUpperCase();
+        const g = porCodigo.get(k);
+        if(!g) porCodigo.set(k, { code, desc: i.desc||'', ids: [String(i.id||'').toUpperCase()] });
+        else { if(!g.desc && i.desc) g.desc = i.desc; g.ids.push(String(i.id||'').toUpperCase()); }
+      });
+      return [...porCodigo.values()]
+        .map(m => ({ ...m, ya: mpEnFormula.has(m.code.toUpperCase()) || m.ids.some(x => mpEnFormula.has(x)) }))
+        .sort((a,b)=>a.code.localeCompare(b.code, undefined, {numeric:true}));
+    })();
+    const mpYa = mpLista.filter(m=>m.ya).length;
     // Filtrar y agrupar fórmulas
     const formulasFiltradas = (formulas||[]).filter(f => {
       const tipoOk = formulaFilter === 'TODOS' || (f.tipoProducto||'BOLSAS') === formulaFilter;
@@ -57102,26 +57307,12 @@ ${resumen}
                     </span>
                   </div>
 
-                  {/* Selector de ingrediente */}
-                  <div className="flex gap-2 mb-4">
+                  {/* Selector de ingrediente: TODAS las materias primas activas del Inventario General (con o sin existencia). Las que ya están en esta fórmula salen marcadas y no se pueden repetir. Se actualiza solo: un producto nuevo del inventario aparece aquí al instante. */}
+                  <div className="flex gap-2 mb-1">
                     <select value={formulaIngId} onChange={e=>setFormulaIngId(e.target.value)}
                       className="flex-1 border-2 border-gray-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-purple-500 bg-white">
                       <option value="">Seleccione materia prima...</option>
-                      {(() => {
-                        const cleanOf = (i) => (i.displayId||(i.id||'').split('___')[0]||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-                        const esMP = (i) => {
-                          const cat = String(i.category||'').toLowerCase().replace(/[_\s]+/g,' ').trim();
-                          return cat === 'materia prima' || cat === 'materias primas' || String(cleanOf(i)).toUpperCase().startsWith('MP-');
-                        };
-                        const yaAgregadas = new Set((formulaForm.ingredientes||[]).map(fi=>String(fi.id||'').toUpperCase()));
-                        const vistos = new Set();
-                        return (inventory||[])
-                          .filter(esMP)
-                          .filter(i => { const cc = cleanOf(i).toUpperCase(); if(vistos.has(cc)) return false; vistos.add(cc); return true; })
-                          .filter(i => !yaAgregadas.has(cleanOf(i).toUpperCase()) && !yaAgregadas.has(String(i.id||'').toUpperCase()))
-                          .sort((a,b)=>cleanOf(a).localeCompare(cleanOf(b), undefined, {numeric:true}))
-                          .map(i => (<option key={i.id} value={cleanOf(i)}>{cleanOf(i)} — {i.desc}</option>));
-                      })()}
+                      {mpLista.map(m => (<option key={m.code} value={m.code} disabled={m.ya}>{m.code} — {m.desc}{m.ya ? '   ✓ ya agregada' : ''}</option>))}
                     </select>
                     <input type="number" step="0.1" min="0.1" max="100" value={formulaIngPct}
                       onChange={e=>setFormulaIngPct(e.target.value)}
@@ -57129,14 +57320,20 @@ ${resumen}
                       placeholder="%" />
                     <button type="button" onClick={()=>{
                       if(!formulaIngId||!formulaIngPct) return;
-                      const cleanOf=(i)=>(i.displayId||(i.id||'').split('___')[0]||'').replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-                      const invItem=(inventory||[]).find(i=>i.id===formulaIngId) || (inventory||[]).find(i=>cleanOf(i).toUpperCase()===String(formulaIngId).toUpperCase());
+                      const mp = mpLista.find(m=>m.code===formulaIngId);
+                      if(mp && mp.ya) return setDialog({title:'Aviso',text:`${mp.code} ya está en esta fórmula. Cambie su porcentaje en la lista de abajo.`,type:'alert'});
+                      const invItem=(inventory||[]).find(i=>i.id===formulaIngId) || (inventory||[]).find(i=>mpCleanOf(i).toUpperCase()===String(formulaIngId).toUpperCase());
                       const nuevoTotal=totalPctActual+parseNum(formulaIngPct);
                       if(nuevoTotal>100.1) return setDialog({title:'Aviso',text:`Supera 100%. Máximo disponible: ${pctRestante.toFixed(1)}%`,type:'alert'});
-                      setFormulaForm({...formulaForm, ingredientes:[...(formulaForm.ingredientes||[]),{id:formulaIngId,pct:parseNum(formulaIngPct),desc:invItem?.desc||formulaIngId,category:invItem?.category||'Materia Prima'}]});
+                      setFormulaForm({...formulaForm, ingredientes:[...(formulaForm.ingredientes||[]),{id:formulaIngId,pct:parseNum(formulaIngPct),desc:mp?.desc||invItem?.desc||formulaIngId,category:invItem?.category||'Materia Prima'}]});
                       setFormulaIngId('');setFormulaIngPct('');
                     }} className="bg-purple-600 text-white px-4 py-3 rounded-xl font-black hover:bg-purple-700 flex items-center"><Plus size={16}/></button>
                   </div>
+                  <p className="text-[9px] font-bold text-gray-400 mb-4">
+                    {mpLista.length===0
+                      ? 'No hay materias primas activas en el Inventario General (categoría «Materia Prima»). Créelas en Inventario y aparecerán aquí al instante.'
+                      : `${mpLista.length} materia${mpLista.length!==1?'s':''} prima${mpLista.length!==1?'s':''} del Inventario General (con o sin existencia)${mpYa>0?` · ${mpYa} ya agregada${mpYa!==1?'s':''} a esta fórmula`:''} · se actualiza solo`}
+                  </p>
 
                   {/* Lista ingredientes */}
                   {(formulaForm.ingredientes||[]).length > 0 ? (
