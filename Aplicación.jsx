@@ -21436,7 +21436,8 @@ const db = getFirestore(app, "us-central");
 let _sandboxMode = false;
 const activateSandbox = (v) => { _sandboxMode = v; };
 const getColRef = (colName) => collection(db, _sandboxMode ? `sandbox_${colName}` : colName);
-const getDocRef = (colName, docId) => doc(db, _sandboxMode ? `sandbox_${colName}` : colName, String(docId));
+// Un id de documento NO puede llevar "/": Firestore lo toma como ruta (con número par de tramos guarda el documento en una subcolección oculta y no sale en las listas; con impar da error). Se cambia por "∕" (U+2215) para que siempre sea un id válido.
+const getDocRef = (colName, docId) => doc(db, _sandboxMode ? `sandbox_${colName}` : colName, String(docId).replace(/\//g, '\u2215'));
 
 // ── Normalización de categoría/subcategoría de inventario ──
 // Distintos acentos/mayúsculas/singular-plural (p.ej. 'QUIMICOS' vs 'Químicos' vs 'Quimicos')
@@ -23403,6 +23404,304 @@ const invExportMovimientosXLSX = async ({ rows, isEntradas, filtros, empresa, ri
   a.href = url; a.download = nombreArchivo;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+
+// ===== Fórmulas / Recetas de Producción: PDF y Excel (lo que se ve en pantalla es lo que baja) =====
+// `grupos` = [[tipo, [fórmulas]], ...] tal como se listan en pantalla: ya con el filtro de tipo y la búsqueda aplicados y en el mismo orden.
+const FRM_FASES = [['extrusion', 'Extrusión'], ['impresion', 'Impresión'], ['sellado', 'Sellado']];
+const FRM_TIPO_COLOR = { BOLSAS: ['FF1D4ED8', '#1d4ed8'], TERMOENCOGIBLE: ['FF15803D', '#15803d'] }; // [Excel, CSS]
+const frmTipoColor = tipo => FRM_TIPO_COLOR[tipo] || ['FF475569', '#475569'];
+const frmFechaTxt = ts => { const d = ts ? new Date(ts) : null; return d && !isNaN(d) ? `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}` : ''; };
+const frmAhoraTxt = () => { const d = new Date(); return `${frmFechaTxt(d.getTime())} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+// Mismos cálculos que la pantalla: balance = suma de los % (OK si queda a menos de 0,1 de 100) y KG/Mill. = (Ancho + Fuelle) × Largo × Micras
+const frmPrepararFormulas = (grupos) => {
+  const n0 = v => { const n = parseNum(v); return Number.isFinite(n) ? n : 0; };
+  const mpMap = new Map();
+  const gs = (grupos || []).filter(g => g && (g[1] || []).length).map(([tipo, lista]) => ({
+    tipo,
+    formulas: lista.map(f => {
+      const ings = (f.ingredientes || []).map(i => ({ id: String(i.id == null ? '' : i.id).trim(), desc: String(i.desc || '').trim(), pct: n0(i.pct) }));
+      const total = ings.reduce((s, i) => s + i.pct, 0);
+      const hasDims = !!(f.ancho || f.largo || f.micras);
+      const peso = hasDims ? (n0(f.ancho) + n0(f.fuelles)) * n0(f.largo) * n0(f.micras) : 0;
+      const cat = String(f.categoria || '');
+      ings.forEach(i => {
+        const k = i.id.toUpperCase();
+        if (!mpMap.has(k)) mpMap.set(k, { id: i.id, desc: i.desc, usos: [] });
+        const m = mpMap.get(k);
+        if (!m.desc && i.desc) m.desc = i.desc;
+        m.usos.push({ cat, pct: i.pct });
+      });
+      return {
+        id: f.id, categoria: cat, tipo, hasDims, peso, ingredientes: ings, total, balanceOk: Math.abs(total - 100) < 0.1,
+        fases: FRM_FASES.filter(([k]) => (f.fases && f.fases[k]) || (!f.fases && k === 'extrusion')).map(([, l]) => l),
+        dim: { ancho: f.ancho ? n0(f.ancho) : null, fuelles: n0(f.fuelles) > 0 ? n0(f.fuelles) : null, largo: f.largo ? n0(f.largo) : null, micras: f.micras ? n0(f.micras) : null },
+        raw: { ancho: f.ancho, fuelles: f.fuelles, largo: f.largo, micras: f.micras },
+        usuario: String(f.user || ''), ts: Number(f.timestamp) || 0,
+      };
+    }),
+  }));
+  const todas = gs.reduce((a, g) => a.concat(g.formulas), []);
+  const mps = [...mpMap.values()].map(m => {
+    const ps = m.usos.map(u => u.pct);
+    return { id: m.id, desc: m.desc, n: m.usos.length, min: Math.min(...ps), max: Math.max(...ps), prom: ps.reduce((s, p) => s + p, 0) / ps.length, formulas: m.usos.map(u => u.cat) };
+  }).sort((a, b) => b.n - a.n || a.id.localeCompare(b.id, undefined, { numeric: true }));
+  const resumen = {
+    total: todas.length, porTipo: gs.map(g => [g.tipo, g.formulas.length]),
+    ok: todas.filter(x => x.balanceOk).length, lineas: todas.reduce((s, x) => s + x.ingredientes.length, 0), nMps: mps.length,
+  };
+  resumen.revisar = resumen.total - resumen.ok;
+  return { grupos: gs, todas, mps, resumen };
+};
+const frmFiltrosTxt = (f, n) => {
+  const p = [];
+  if (f.tipo) p.push(`Tipo: ${f.tipo}`);
+  if (f.texto) p.push(`Búsqueda: "${f.texto}"`);
+  return p.length ? `Mostrando ${n} de ${f.total != null ? f.total : n} fórmulas (filtros: ${p.join(' · ')})` : `${n} fórmula${n !== 1 ? 's' : ''} (listado completo)`;
+};
+
+// ── Excel (ExcelJS): 3 hojas — «Fórmulas» (como en pantalla), «Composición» (una fila por materia prima, con filtros) y «Materias primas» (en qué fórmulas se usa cada una) ──
+const frmExportXLSX = async ({ grupos, filtros, empresa, rif, direccion, usuario }) => {
+  const EJ = await ccLoadExcelJS();
+  const f = filtros || {};
+  const D = frmPrepararFormulas(grupos);
+  const R = D.resumen;
+  if (!R.total) throw new Error('No hay fórmulas para exportar.');
+  const INK = 'FF0F172A', ORANGE = 'FFF97316', WHITE = 'FFFFFFFF', GRID = 'FFD1D5DB', SLATE = 'FFF1F5F9', ZEBRA = 'FFF8FAFC', PURPLE = 'FF6D28D9', MUTED = 'FF64748B', GREEN = 'FF15803D', RED = 'FFB91C1C';
+  const NF_PCT = '0.0#%', NF_PESO = '#,##0.00';
+  const fill = a => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: a } });
+  const thin = { style: 'thin', color: { argb: GRID } };
+  const bd = { top: thin, left: thin, bottom: thin, right: thin };
+  const AR = (size, color, bold, italic) => ({ name: 'Arial', size, bold: !!bold, italic: !!italic, color: { argb: color } });
+  const hoy = frmFechaTxt(Date.now());
+  const hayF = !!(f.tipo || f.texto);
+  const infoTxt = `${frmFiltrosTxt(f, R.total)}  ·  Emitido el ${frmAhoraTxt()}${usuario ? '  ·  ' + usuario : ''}`;
+  const nombreArchivo = `Formulas_Produccion${hayF ? '_filtrado' : ''}_${getTodayDate()}.xlsx`;
+  const fechaCell = ts => { const d = ts ? new Date(ts) : null; return d && !isNaN(d) ? new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())) : null; };
+  const fr = v => Math.round(v * 1e4) / 1e6; // % -> fracción (100 -> 1)
+
+  const wb = new EJ.Workbook();
+  wb.creator = String(empresa || ''); wb.created = new Date(); wb.title = 'Fórmulas / Recetas de Producción'; wb.company = String(empresa || '');
+  const mkSheet = (nombre, tab, ySplit) => wb.addWorksheet(nombre, {
+    properties: { tabColor: { argb: tab } },
+    views: [{ state: 'frozen', ySplit, showGridLines: false }],
+    pageSetup: { paperSize: 1, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true,
+      margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.55, header: 0.2, footer: 0.25 }, printTitlesRow: `${ySplit}:${ySplit}` },
+    headerFooter: { oddFooter: `&L&8&"Arial,Regular"Fórmulas / Recetas de Producción — ${nombre}&C&8&"Arial,Regular"Página &P de &N&R&8&"Arial,Regular"Generado el ${hoy}` },
+  });
+  const put = (ws, r, c1, c2, val, font, al) => { if (c2 > c1) ws.mergeCells(r, c1, r, c2); const cell = ws.getCell(r, c1); cell.value = val; cell.font = font; cell.alignment = al || { vertical: 'middle', horizontal: 'left', indent: 1 }; return cell; };
+  const headRow = (ws, row, heads) => {
+    heads.forEach((t, i) => {
+      const c = ws.getCell(row, i + 1);
+      c.value = t; c.font = AR(9, WHITE, true); c.fill = fill(INK);
+      c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      c.border = { left: { style: 'thin', color: { argb: WHITE } }, right: { style: 'thin', color: { argb: WHITE } }, bottom: { style: 'medium', color: { argb: ORANGE } } };
+    });
+    ws.getRow(row).height = 30;
+  };
+  const CENTER = { vertical: 'middle', horizontal: 'center' };
+
+  // ═══ Hoja 1: «Fórmulas» — como en pantalla: una fila por materia prima y los datos de la fórmula combinados ═══
+  const NC = 12, HR = 7;
+  const ws = mkSheet('Fórmulas', PURPLE, HR);
+  [36, 9, 9, 9, 9, 11, 26, 26, 46, 11, 11, 12].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  put(ws, 1, 1, 8, String(empresa || ''), AR(15, INK, true));
+  put(ws, 2, 1, 8, `RIF: ${rif || ''}`, AR(9, 'FF475569'));
+  put(ws, 3, 1, 8, String(direccion || ''), AR(8, MUTED));
+  put(ws, 4, 1, 8, 'FÓRMULAS / RECETAS DE PRODUCCIÓN', AR(17, ORANGE, true));
+  put(ws, 1, 9, 12, 'PRODUCCIÓN  ·  FÓRMULAS', AR(9, 'FFEA580C', true), CENTER).fill = fill(SLATE);
+  put(ws, 2, 9, 12, `FÓRMULAS:  ${R.total}  (${R.porTipo.map(([t, n]) => `${t} ${n}`).join(' · ')})`, AR(10, INK, true), CENTER).fill = fill(SLATE);
+  put(ws, 3, 9, 12, `TIPO:  ${f.tipo || 'TODOS'}`, AR(10, INK, true), CENTER).fill = fill(SLATE);
+  put(ws, 4, 9, 12, `BÚSQUEDA:  ${f.texto ? `"${f.texto}"` : '—'}`, AR(9, 'FF475569'), CENTER).fill = fill(SLATE);
+  [24, 15, 14, 28].forEach((h, i) => { ws.getRow(i + 1).height = h; });
+  for (let c = 1; c <= NC; c++) ws.getCell(5, c).fill = fill(ORANGE);
+  ws.getRow(5).height = 4;
+  put(ws, 6, 1, NC, infoTxt, AR(9, MUTED, false, true));
+  ws.getRow(6).height = 18;
+  headRow(ws, HR, ['CATEGORÍA', 'ANCHO (cm)', 'FUELLE (cm)', 'LARGO (cm)', 'MICRAS', 'KG / MILL.', 'FASES', 'CÓDIGO MP', 'MATERIA PRIMA', '% EN FÓRMULA', 'BALANCE', 'ESTADO']);
+
+  let r = HR + 1, fi = 0;
+  D.grupos.forEach(g => {
+    ws.mergeCells(r, 1, r, NC);
+    const bn = ws.getCell(r, 1);
+    bn.value = `${g.tipo}  —  ${g.formulas.length} fórmula${g.formulas.length !== 1 ? 's' : ''}`;
+    bn.font = AR(10, WHITE, true); bn.fill = fill(frmTipoColor(g.tipo)[0]); bn.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(r).height = 20;
+    r++;
+    g.formulas.forEach(fo => {
+      const n = Math.max(1, fo.ingredientes.length), r0 = r, r1 = r + n - 1;
+      const bg = fi % 2 ? ZEBRA : WHITE;
+      for (let rr = r0; rr <= r1; rr++) {
+        ws.getRow(rr).height = n === 1 ? 28 : 16;
+        for (let c = 1; c <= NC; c++) {
+          const cell = ws.getCell(rr, c);
+          cell.fill = fill(bg); cell.font = AR(9, INK); cell.alignment = { vertical: 'middle', horizontal: 'left' };
+          cell.border = rr === r0 ? { ...bd, top: { style: 'medium', color: { argb: 'FF94A3B8' } } } : bd;
+        }
+      }
+      if (r1 > r0) [1, 7, 11, 12].forEach(c => ws.mergeCells(r0, c, r1, c));
+      if (fo.hasDims) { if (r1 > r0) [2, 3, 4, 5, 6].forEach(c => ws.mergeCells(r0, c, r1, c)); } else ws.mergeCells(r0, 2, r1, 6);
+      // Categoría
+      const a = ws.getCell(r0, 1);
+      a.value = fo.categoria; a.font = AR(10, PURPLE, true); a.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      // Dimensiones estándar + KG/Mill.
+      if (fo.hasDims) {
+        [[2, fo.dim.ancho], [3, fo.dim.fuelles], [4, fo.dim.largo], [5, fo.dim.micras]].forEach(([c, v]) => {
+          const cell = ws.getCell(r0, c);
+          cell.value = v; cell.font = AR(9, 'FF1E40AF', true); cell.alignment = CENTER;
+          if (c === 5) cell.numFmt = '0.000#';
+        });
+        if (fo.peso > 0) {
+          const pc = ws.getCell(r0, 6);
+          pc.value = { formula: `(B${r0}+C${r0})*D${r0}*E${r0}`, result: fo.peso };
+          pc.numFmt = NF_PESO; pc.font = AR(9, 'FFEA580C', true); pc.alignment = CENTER;
+        }
+      } else {
+        const sd = ws.getCell(r0, 2);
+        sd.value = 'Sin dimensiones'; sd.font = AR(8, 'FF9CA3AF', false, true); sd.alignment = CENTER;
+      }
+      // Fases
+      const gc = ws.getCell(r0, 7);
+      gc.value = fo.fases.join(' · '); gc.font = AR(9, 'FF475569', true); gc.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      // Composición
+      fo.ingredientes.forEach((ing, i) => {
+        const rr = r0 + i;
+        const h = ws.getCell(rr, 8); h.value = ing.id || null; h.font = AR(9, 'FFEA580C', true); h.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        const m = ws.getCell(rr, 9); m.value = ing.desc || null; m.font = AR(9, 'FF4B5563'); m.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        const p = ws.getCell(rr, 10); p.value = ing.pct / 100; p.numFmt = NF_PCT; p.font = AR(9, PURPLE, true); p.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+      });
+      if (!fo.ingredientes.length) { const m = ws.getCell(r0, 9); m.value = 'Sin ingredientes'; m.font = AR(9, 'FF9CA3AF', false, true); m.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 }; }
+      // Balance y estado (con fórmula: si se corrige un % en Excel se recalcula)
+      const bal = ws.getCell(r0, 11);
+      bal.value = { formula: `SUM(J${r0}:J${r1})`, result: fr(fo.total) };
+      bal.numFmt = '0.0%'; bal.font = AR(10, fo.balanceOk ? GREEN : RED, true); bal.alignment = CENTER;
+      const est = ws.getCell(r0, 12);
+      est.value = { formula: `IF(ABS(K${r0}-1)<0.001,"✓ OK","✗ Revisar")`, result: fo.balanceOk ? '✓ OK' : '✗ Revisar' };
+      est.font = AR(9, fo.balanceOk ? GREEN : RED, true); est.alignment = CENTER;
+      r = r1 + 1; fi++;
+    });
+  });
+  // Totales
+  const T = r;
+  ws.mergeCells(T, 1, T, 7);
+  ws.mergeCells(T, 8, T, NC);
+  for (let c = 1; c <= NC; c++) { const cell = ws.getCell(T, c); cell.fill = fill(SLATE); cell.border = { top: { style: 'medium', color: { argb: INK } } }; }
+  const tl = ws.getCell(T, 1);
+  tl.value = `TOTAL  —  ${R.total} fórmula${R.total !== 1 ? 's' : ''}  ·  ${R.lineas} líneas de composición  ·  ${R.nMps} materias primas distintas`;
+  tl.font = AR(10, INK, true); tl.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+  const tr2 = ws.getCell(T, 8);
+  tr2.value = `${R.ok} con balance 100 %${R.revisar ? `  ·  ${R.revisar} por revisar` : ''}`;
+  tr2.font = AR(10, R.revisar ? RED : GREEN, true); tr2.alignment = { horizontal: 'right', vertical: 'middle', indent: 1 };
+  ws.getRow(T).height = 22;
+  put(ws, T + 2, 1, NC, 'KG / MILL. = (Ancho + Fuelle) × Largo × Micras, el mismo cálculo que muestra la pantalla. El balance de cada fórmula debe sumar 100 %.', AR(8, MUTED, false, true));
+
+  // ═══ Hoja 2: «Composición» — una fila por materia prima, con filtros de Excel (para ordenar, filtrar o hacer tablas dinámicas) ═══
+  const NC2 = 15;
+  const ws2 = mkSheet('Composición', ORANGE, 4);
+  [44, 17, 9, 9, 9, 9, 11, 26, 26, 44, 11, 11, 11, 13, 18].forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
+  put(ws2, 1, 1, 8, String(empresa || ''), AR(14, INK, true)); ws2.getRow(1).height = 22;
+  put(ws2, 2, 1, 8, 'FÓRMULAS / RECETAS DE PRODUCCIÓN — COMPOSICIÓN POR MATERIA PRIMA', AR(12, ORANGE, true)); ws2.getRow(2).height = 20;
+  put(ws2, 3, 1, NC2, infoTxt, AR(9, MUTED, false, true)); ws2.getRow(3).height = 16;
+  headRow(ws2, 4, ['CATEGORÍA', 'TIPO', 'ANCHO (cm)', 'FUELLE (cm)', 'LARGO (cm)', 'MICRAS', 'KG / MILL.', 'FASES', 'CÓDIGO MP', 'MATERIA PRIMA', '% EN FÓRMULA', 'TOTAL FÓRMULA', 'ESTADO', 'ACTUALIZADA', 'USUARIO']);
+  const AL2 = ['left', 'center', 'center', 'center', 'center', 'center', 'right', 'left', 'left', 'left', 'right', 'right', 'center', 'center', 'left'];
+  let r2 = 5;
+  D.todas.forEach((fo, i) => {
+    const lineas = fo.ingredientes.length ? fo.ingredientes : [{ id: '', desc: '', pct: null }];
+    lineas.forEach(ing => {
+      const vals = [fo.categoria, fo.tipo, fo.dim.ancho, fo.dim.fuelles, fo.dim.largo, fo.dim.micras, fo.peso > 0 ? fo.peso : null, fo.fases.join(' · '),
+        ing.id || null, ing.desc || null, ing.pct == null ? null : ing.pct / 100, fr(fo.total), fo.balanceOk ? 'OK' : 'REVISAR', fechaCell(fo.ts), fo.usuario || null];
+      vals.forEach((v, ci) => {
+        const col = ci + 1, c = ws2.getCell(r2, col);
+        c.value = v;
+        let color = INK, bold = false;
+        if (col === 1) { color = PURPLE; bold = true; }
+        if (col === 9) { color = 'FFEA580C'; bold = true; }
+        if (col === 10) color = 'FF4B5563';
+        if (col === 11) { color = PURPLE; bold = true; }
+        if (col === 12) { color = fo.balanceOk ? GREEN : RED; bold = true; }
+        if (col === 13) { color = fo.balanceOk ? GREEN : RED; bold = true; }
+        c.font = AR(9, color, bold);
+        c.fill = fill(i % 2 ? ZEBRA : WHITE); c.border = bd;
+        c.alignment = { vertical: 'middle', horizontal: AL2[ci], indent: (AL2[ci] === 'left' || AL2[ci] === 'right') ? 1 : 0 };
+        if (col === 6) c.numFmt = '0.000#';
+        if (col === 7) c.numFmt = NF_PESO;
+        if (col === 11) c.numFmt = NF_PCT;
+        if (col === 12) c.numFmt = '0.0%';
+        if (col === 14) c.numFmt = 'dd/mm/yyyy';
+      });
+      ws2.getRow(r2).height = 16;
+      r2++;
+    });
+  });
+  ws2.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r2 - 1, 5), column: NC2 } };
+
+  // ═══ Hoja 3: «Materias primas» — en cuántas fórmulas se usa cada una y con qué porcentaje ═══
+  const NC3 = 7;
+  const ws3 = mkSheet('Materias primas', 'FF0891B2', 4);
+  [28, 48, 11, 11, 11, 12, 96].forEach((w, i) => { ws3.getColumn(i + 1).width = w; });
+  put(ws3, 1, 1, 4, String(empresa || ''), AR(14, INK, true)); ws3.getRow(1).height = 22;
+  put(ws3, 2, 1, 4, 'FÓRMULAS / RECETAS DE PRODUCCIÓN — USO DE MATERIAS PRIMAS', AR(12, ORANGE, true)); ws3.getRow(2).height = 20;
+  put(ws3, 3, 1, NC3, infoTxt, AR(9, MUTED, false, true)); ws3.getRow(3).height = 16;
+  headRow(ws3, 4, ['CÓDIGO MP', 'MATERIA PRIMA', 'FÓRMULAS', '% MÍNIMO', '% MÁXIMO', '% PROMEDIO', 'USADA EN']);
+  const AL3 = ['left', 'left', 'center', 'right', 'right', 'right', 'left'];
+  let r3 = 5;
+  D.mps.forEach((m, i) => {
+    const usada = m.formulas.join(' · ');
+    const vals = [m.id, m.desc || null, m.n, m.min / 100, m.max / 100, m.prom / 100, usada];
+    vals.forEach((v, ci) => {
+      const col = ci + 1, c = ws3.getCell(r3, col);
+      c.value = v;
+      c.font = AR(col === 7 ? 8 : 9, col === 1 ? 'FFEA580C' : col === 7 ? 'FF4B5563' : INK, col === 1 || col === 3);
+      c.fill = fill(i % 2 ? ZEBRA : WHITE); c.border = bd;
+      c.alignment = { vertical: 'middle', horizontal: AL3[ci], wrapText: col === 2 || col === 7, indent: (AL3[ci] === 'left' || AL3[ci] === 'right') ? 1 : 0 };
+      if (col >= 4 && col <= 6) c.numFmt = NF_PCT;
+    });
+    ws3.getRow(r3).height = Math.max(16, Math.ceil(usada.length / 120) * 11 + 5);
+    r3++;
+  });
+  ws3.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r3 - 1, 5), column: NC3 } };
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const aEl = document.createElement('a');
+  aEl.href = url; aEl.download = nombreArchivo;
+  document.body.appendChild(aEl); aEl.click(); document.body.removeChild(aEl);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+};
+
+// ── PDF (ventana de impresión con el membrete de la empresa, igual que los demás reportes) ──
+const FRM_CSS_PDF = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;background:#f5f5f5;padding:16px;font-size:11px;color:#111;}.reporte-wrap{max-width:1150px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.1);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 24px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.btn-print{display:block;margin:0 24px 16px;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 48px);}.contenido{padding:16px 24px 24px;}.rep-titulo{font-size:16px;font-weight:900;text-transform:uppercase;color:#111;letter-spacing:.3px;}.rep-sub{font-size:10px;color:#6b7280;margin:2px 0 12px;}.resumen{display:flex;flex-wrap:wrap;gap:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:10.5px;}.resumen span{display:block;font-size:8.5px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;}.resumen b{font-size:12px;}.filtros{font-size:9.5px;color:#475569;margin:0 0 10px;font-style:italic;}.ok{color:#059669;}.bad{color:#dc2626;}.tipo{display:flex;align-items:center;gap:10px;margin:16px 0 6px;page-break-after:avoid;break-after:avoid;}.tipo b{color:#fff;padding:4px 14px;border-radius:6px;font-size:10px;letter-spacing:.6px;text-transform:uppercase;}.tipo i{flex:1;height:1px;background:#e5e7eb;}.tipo span{font-size:9px;color:#6b7280;font-weight:700;}table{width:100%;border-collapse:collapse;font-size:10px;}th{background:#0f172a;color:#fff;padding:7px 8px;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}table.frm>tbody>tr>td{padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top;}table.frm>tbody>tr:nth-child(even)>td{background:#f8fafc;}tr{page-break-inside:avoid;break-inside:avoid;}.c-cat{width:19%;}.c-cat b{display:block;font-size:11px;color:#6d28d9;text-transform:uppercase;line-height:1.25;}.c-cat small{display:block;margin-top:2px;font-size:8px;font-weight:700;color:#9ca3af;}.c-dim{width:17%;text-align:center;}.c-fas{width:8%;text-align:center;}.c-comp{width:46%;}.c-bal{width:10%;text-align:center;}.chip{display:inline-block;padding:2px 5px;border-radius:5px;font-size:8.5px;font-weight:700;margin:1px;white-space:nowrap;}.cb{background:#dbeafe;color:#1d4ed8;}.ci{background:#e0e7ff;color:#4338ca;}.cg{background:#dcfce7;color:#15803d;}.cp{background:#f3e8ff;color:#7e22ce;}.peso{margin-top:4px;font-size:9px;font-weight:900;color:#ea580c;}.nodim{font-size:9px;color:#cbd5e1;font-weight:700;}table.ing{font-size:9.5px;}table.ing td{border:none;padding:2px 4px;vertical-align:middle;}.i-id{width:88px;font-weight:900;color:#374151;white-space:nowrap;}.i-desc{color:#6b7280;}.i-pct{width:46px;text-align:right;font-weight:900;color:#6d28d9;white-space:nowrap;}.i-bar{width:64px;}.bar{height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;}.bar i{display:block;height:100%;background:#7c3aed;}.c-bal b{display:block;font-size:13px;}.c-bal small{display:block;font-size:8.5px;font-weight:700;}.anexo-tit{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:#0f172a;margin:22px 0 6px;page-break-after:avoid;break-after:avoid;}table.mp td{padding:5px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top;}table.mp tbody tr:nth-child(even) td{background:#f8fafc;}.m-id{width:150px;font-weight:900;color:#ea580c;white-space:nowrap;}.m-d{width:24%;}.m-n{width:64px;text-align:center;font-weight:900;}.m-r{width:106px;text-align:center;white-space:nowrap;}.m-u{font-size:8px;color:#6b7280;line-height:1.4;}.pie{margin-top:18px;padding-top:8px;border-top:1px solid #e5e7eb;font-size:8.5px;color:#9ca3af;text-align:center;}@page{size:landscape;margin:8mm 8mm 12mm;}@page{@bottom-right{content:"Página " counter(page) " de " counter(pages);font-family:Arial,sans-serif;font-size:8px;color:#94a3b8;}}@media print{body{background:#fff;padding:0;}.reporte-wrap{box-shadow:none;border-radius:0;max-width:100%;}.btn-print{display:none!important;}*{-webkit-print-color-adjust:exact;print-color-adjust:exact;}table{font-size:9px;}th{font-size:7.5px;padding:5px 6px;}.membrete{padding:8px 14px 6px;}.contenido{padding:8px 14px 14px;}.rep-titulo{font-size:13px;}.resumen{padding:6px 10px;gap:12px;}.resumen b{font-size:10.5px;}table.frm>tbody>tr>td{padding:5px 6px;}table.ing{font-size:8.5px;}}`;
+const frmDocPdf = ({ grupos, filtros, empresa, rif, direccion, tel, usuario }) => {
+  const esc = rhCierreEsc;
+  const f = filtros || {};
+  const D = frmPrepararFormulas(grupos);
+  const R = D.resumen;
+  const chip = (txt, cls) => `<span class="chip ${cls}">${esc(txt)}</span>`;
+  const pctTxt = v => String(Math.round(v * 1000) / 1000);
+  const filas = g => g.formulas.map(fo => {
+    const w = fo.raw;
+    const dims = fo.hasDims
+      ? `<div>${w.ancho ? chip(`A: ${w.ancho} cm`, 'cb') : ''}${w.fuelles && parseNum(w.fuelles) > 0 ? chip(`F: ${w.fuelles} cm`, 'cb') : ''}${w.largo ? chip(`L: ${w.largo} cm`, 'ci') : ''}${w.micras ? chip(`M: ${w.micras}`, 'cg') : ''}</div>${fo.peso > 0 ? `<div class="peso">${formatNum(fo.peso)} KG/Mill.</div>` : ''}`
+      : '<span class="nodim">Sin dimensiones</span>';
+    const fases = fo.fases.map(l => `<div>${chip(l, l === 'Extrusión' ? 'cb' : l === 'Impresión' ? 'cp' : 'cg')}</div>`).join('');
+    const comp = fo.ingredientes.length
+      ? `<table class="ing">${fo.ingredientes.map(i => `<tr><td class="i-id">${esc(i.id)}</td><td class="i-desc">${esc(i.desc)}</td><td class="i-pct">${pctTxt(i.pct)}%</td><td class="i-bar"><div class="bar"><i style="width:${Math.max(0, Math.min(100, i.pct))}%"></i></div></td></tr>`).join('')}</table>`
+      : '<span class="nodim">Sin ingredientes</span>';
+    const cl = fo.balanceOk ? 'ok' : 'bad';
+    return `<tr><td class="c-cat"><b>${esc(fo.categoria)}</b><small>${esc(fo.tipo)}</small></td><td class="c-dim">${dims}</td><td class="c-fas">${fases}</td><td class="c-comp">${comp}</td><td class="c-bal"><b class="${cl}">${fo.total.toFixed(1)}%</b><small class="${cl}">${fo.balanceOk ? '✓ OK' : '✗ Revisar'}</small></td></tr>`;
+  }).join('');
+  const secciones = D.grupos.map(g =>
+    `<div class="tipo"><b style="background:${frmTipoColor(g.tipo)[1]}">${esc(g.tipo)}</b><i></i><span>${g.formulas.length} fórmula${g.formulas.length !== 1 ? 's' : ''}</span></div>` +
+    `<table class="frm"><thead><tr><th>Categoría</th><th style="text-align:center">Dimensiones estándar</th><th style="text-align:center">Fases</th><th>Composición de materias primas</th><th style="text-align:center">Balance</th></tr></thead><tbody>${filas(g)}</tbody></table>`
+  ).join('');
+  const rango = m => (m.min === m.max ? `${pctTxt(m.min)}%` : `${pctTxt(m.min)}% – ${pctTxt(m.max)}%`);
+  const anexo = D.mps.length
+    ? `<div class="anexo-tit">Anexo — Uso de materias primas en las fórmulas</div><table class="mp"><thead><tr><th>Código</th><th>Materia prima</th><th style="text-align:center">Fórmulas</th><th style="text-align:center">% mín. – máx.</th><th>Usada en</th></tr></thead><tbody>${D.mps.map(m => `<tr><td class="m-id">${esc(m.id)}</td><td class="m-d">${esc(m.desc)}</td><td class="m-n">${m.n}</td><td class="m-r">${rango(m)}</td><td class="m-u">${esc(m.formulas.join(' · '))}</td></tr>`).join('')}</tbody></table>`
+    : '';
+  const hayF = !!(f.tipo || f.texto);
+  const resumen = `<div class="resumen"><div><span>Fórmulas</span><b>${R.total}</b></div>${R.porTipo.map(([t, n]) => `<div><span>${esc(t)}</span><b>${n}</b></div>`).join('')}<div><span>Líneas de composición</span><b>${R.lineas}</b></div><div><span>Materias primas distintas</span><b>${R.nMps}</b></div><div><span>Balance 100 %</span><b class="${R.revisar ? 'bad' : 'ok'}">${R.revisar ? `${R.ok} OK · ${R.revisar} por revisar` : `✓ ${R.ok} de ${R.total}`}</b></div><div style="margin-left:auto;text-align:right"><span>Emitido</span><b style="font-size:10px;font-weight:700">${esc(frmAhoraTxt())}${usuario ? ' · ' + esc(usuario) : ''}</b></div></div>${hayF ? `<div class="filtros">${esc(frmFiltrosTxt(f, R.total))}</div>` : ''}`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Formulas_Produccion_${getTodayDate()}</title><style>${FRM_CSS_PDF}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(empresa)}</h2><p>RIF: ${esc(rif)}</p><p>${esc(direccion)}</p>${tel ? `<p>Tel: ${esc(tel)}</p>` : ''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">Fórmulas / Recetas de Producción</div><div class="rep-sub">Composición de materias primas por categoría de producto</div>${resumen}${secciones}${anexo}<div class="pie">KG/Mill. = (Ancho + Fuelle) × Largo × Micras, el mismo cálculo que muestra la pantalla · El balance de cada fórmula debe sumar 100 % · ${esc(empresa)}</div></div></div></body></html>`;
 };
 
 const ccExportExcelHTML = (titulo, subtitulo, tree, currency, totalBase=0, getDetalle=null, mostrarDetalle=false, filaExtra='') => {
@@ -31276,6 +31575,7 @@ function App() {
   // Estados Fórmulas / Recetas
   const [formulas, setFormulas] = useState([]);
   const [formulaFilter, setFormulaFilter] = useState('TODOS');
+  const [exportandoFormulas, setExportandoFormulas] = useState(false);
   const [formulaSearch, setFormulaSearch] = useState('');
   const [showFormulaPanel, setShowFormulaPanel] = useState(false);
   const [editingFormulaId, setEditingFormulaId] = useState(null);
@@ -56642,7 +56942,9 @@ ${resumen}
     if (!activeFases.extrusion && !activeFases.impresion && !activeFases.sellado) return setDialog({title:'Aviso', text:'Seleccione al menos una fase de producción.', type:'alert'});
     const totalPct = (formulaForm.ingredientes||[]).reduce((s,i)=>s+parseNum(i.pct),0);
     if (Math.abs(totalPct - 100) > 0.1) return setDialog({title:'Aviso', text:`Los porcentajes suman ${totalPct.toFixed(1)}%. Deben sumar 100%.`, type:'alert'});
-    const id = editingFormulaId || `FORM-${formulaForm.categoria.toUpperCase().replace(/\s+/g,'-')}-${Date.now()}`;
+    // El id del documento solo lleva letras, números y guiones (si la categoría trae "/", p. ej. «1/2KG» o «S/IMP», Firestore la tomaba como ruta y la receta se guardaba en un sitio oculto sin salir en la lista)
+    const slugCat = formulaForm.categoria.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]+/g,'-').replace(/^-+|-+$/g,'').substring(0,60) || 'SIN-NOMBRE';
+    const id = editingFormulaId || `FORM-${slugCat}-${Date.now()}`;
     try {
       await setDoc(getDocRef('formulas', id), { ...formulaForm, id, categoria: formulaForm.categoria.toUpperCase(), fases: activeFases, timestamp: Date.now(), user: appUser?.name });
       setFormulaForm({ categoria: '', tipoProducto: 'BOLSAS', fases: { extrusion: true, impresion: false, sellado: false }, ingredientes: [] });
@@ -56678,6 +56980,35 @@ ${resumen}
     });
     const grouped = {};
     formulasFiltradas.forEach(f => { const t=f.tipoProducto||'BOLSAS'; if(!grouped[t])grouped[t]=[]; grouped[t].push(f); });
+    // PDF y Excel: lo que se ve en pantalla es lo que baja (mismo filtro de tipo, misma búsqueda y mismo orden)
+    const datosFormulasExp = () => ({
+      grupos: Object.entries(grouped),
+      filtros: { tipo: formulaFilter!=='TODOS'?formulaFilter:'', texto: String(formulaSearch||'').trim(), total: (formulas||[]).length },
+      usuario: appUser?.name||'',
+      empresa: settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.',
+      rif: settings?.empresaRif||settings?.empresaRIF||'J-412309374',
+      direccion: settings?.empresaDireccion||settings?.direccion||'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA',
+      tel: settings?.empresaTelefono||'',
+    });
+    const exportarFormulasExcel = async () => {
+      if(exportandoFormulas) return;
+      if(formulasFiltradas.length===0) return setDialog({title:'Aviso',text:'No hay fórmulas para exportar con los filtros actuales.',type:'alert'});
+      setExportandoFormulas(true);
+      try{
+        await frmExportXLSX(datosFormulasExp());
+      }catch(e){
+        setDialog({title:'Error',text:'No se pudo generar el Excel: '+(e&&e.message?e.message:String(e)),type:'alert'});
+      }finally{
+        setExportandoFormulas(false);
+      }
+    };
+    const exportarFormulasPDF = () => {
+      if(formulasFiltradas.length===0) return setDialog({title:'Aviso',text:'No hay fórmulas para imprimir con los filtros actuales.',type:'alert'});
+      const w = window.open('','_blank');
+      if(!w) return setDialog({title:'Aviso',text:'El navegador bloqueó la ventana del PDF. Permita las ventanas emergentes de este sitio e inténtelo de nuevo.',type:'alert'});
+      try{ w.document.write(frmDocPdf(datosFormulasExp())); w.document.close(); }
+      catch(e){ try{w.close();}catch(_){} setDialog({title:'Error',text:'No se pudo generar el PDF: '+(e&&e.message?e.message:String(e)),type:'alert'}); }
+    };
 
     return (
       <div className="space-y-6 animate-in fade-in">
@@ -56690,10 +57021,20 @@ ${resumen}
               </h2>
               <p className="text-[10px] font-bold text-purple-600 mt-1 uppercase">Defina la composición de materias primas por categoría de producto</p>
             </div>
-            <button onClick={()=>{setShowFormulaPanel(!showFormulaPanel);setFormulaForm({categoria:'',tipoProducto:'BOLSAS',ingredientes:[]});setEditingFormulaId(null);}}
-              className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md flex items-center gap-2 transition-all ${showFormulaPanel?'bg-gray-200 text-gray-700':'bg-purple-600 text-white hover:bg-purple-700'}`}>
-              {showFormulaPanel ? <><X size={16}/> CANCELAR</> : <><Plus size={16}/> NUEVA FÓRMULA</>}
-            </button>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <button onClick={exportarFormulasExcel} disabled={exportandoFormulas||formulasFiltradas.length===0} title={formulasFiltradas.length===0?'No hay fórmulas para exportar':`Descargar en Excel ${formulasFiltradas.length} fórmula${formulasFiltradas.length!==1?'s':''} (lo que se ve en pantalla)`}
+                className="bg-white border-2 border-emerald-200 text-emerald-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-emerald-50 hover:border-emerald-400 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                {exportandoFormulas ? <Loader2 size={14} className="animate-spin"/> : <FileSpreadsheet size={14} className="text-emerald-600"/>} {exportandoFormulas ? 'Generando...' : 'Excel'}
+              </button>
+              <button onClick={exportarFormulasPDF} disabled={formulasFiltradas.length===0} title={formulasFiltradas.length===0?'No hay fórmulas para imprimir':`Imprimir o guardar en PDF ${formulasFiltradas.length} fórmula${formulasFiltradas.length!==1?'s':''} (lo que se ve en pantalla)`}
+                className="bg-white border-2 border-red-200 text-red-700 px-4 py-3 rounded-2xl text-[10px] font-black uppercase hover:bg-red-50 hover:border-red-400 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                <Printer size={14} className="text-red-500"/> PDF
+              </button>
+              <button onClick={()=>{setShowFormulaPanel(!showFormulaPanel);setFormulaForm({categoria:'',tipoProducto:'BOLSAS',ingredientes:[]});setEditingFormulaId(null);}}
+                className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase shadow-md flex items-center gap-2 transition-all ${showFormulaPanel?'bg-gray-200 text-gray-700':'bg-purple-600 text-white hover:bg-purple-700'}`}>
+                {showFormulaPanel ? <><X size={16}/> CANCELAR</> : <><Plus size={16}/> NUEVA FÓRMULA</>}
+              </button>
+            </div>
           </div>
 
           {/* Formulario nueva/editar fórmula */}
