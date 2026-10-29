@@ -51,7 +51,9 @@ const BG     = '#ffffff';
 
 // BANCO MODULE — Utility functions & shared components (prefixed with B_)
 // ============================================================================
-const bancoFmt   = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0);
+// Un solo formateador reutilizado: crear un Intl.NumberFormat en CADA llamada es lento (se llama miles de veces por pantalla).
+const _bancoNF   = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const bancoFmt   = (n) => _bancoNF.format(Number(n) || 0);
 const bancoDd    = (s) => { if (!s) return '—'; const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
 const bancoGid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const bancoNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
@@ -229,7 +231,7 @@ const buildArbolContable = (cuentasArr, saldoCuentaFn, hastaFecha, gruposIncluir
   root.forEach(cat=>{ if(cat.c&&cat.c.length) cxsSortTreeNodes(cat.c); });
   return root;
 };
-const cxsFmtR = (v) => new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(v||0));
+const cxsFmtR = (v) => _bancoNF.format(Math.abs(v||0));
 
 // Fila de árbol expandible — igual patrón visual que el resto de BancoApp (BTh/BTd/etc.)
 const ArbolContableRow = ({ node, level=0, totalBase, currency='both' }) => {
@@ -3506,7 +3508,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       {label:'💳 Cuentas Electrónicas',             tipos:['Electronica']},
       {label:'🪪 Tarjetas de Débito Internacionales', tipos:['Tarjeta-Debito-Intl']},
     ];
-    const CuentaSelector = ({value, onChange, label, excluirId}) => {
+    // Identidad ESTABLE (igual que MovimientosView): antes CuentaSelector se redefinía en cada render (o sea, en cada tecla) y React lo
+    // trataba como un componente NUEVO: desmontaba y volvía a montar el buscador de banco (perdía el foco tras cada letra) y todo lo de adentro.
+    // Con useRef la referencia queda fija y por dentro siempre se ejecuta la versión más reciente.
+    const _cuentaSelectorImpl = useRef(null);
+    _cuentaSelectorImpl.current = ({value, onChange, label, excluirId}) => {
       const matchBusca = c => !searchBanco||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchBanco.toUpperCase());
       const gruposConCuentas = GRUPOS_CUENTA.map(g=>({
         ...g, items: cuentas.filter(c=>g.tipos.includes(c.tipoBanco)&&c.id!==excluirId&&esBancario(c)&&matchBusca(c))
@@ -3533,6 +3539,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </BFG>
       );
     };
+    const CuentaSelector = useRef((props)=>_cuentaSelectorImpl.current(props)).current;
     const initF = ()=>({fecha:getTodayDate(),tipo:'Ingreso',cuentaId:'',cuentaDestinoId:'',
       monedaOp:'BS',montoOp:'',
       aplicaComision:false,tasaDestino:'',comisionCtaId:'',
@@ -3573,6 +3580,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       return contCuentas.filter(c=>c.nombre?.toUpperCase().includes('PAGAR')||c.nombre?.toUpperCase().includes('GASTO'));
     };
     const sugs = sugerirContra();
+
+    // Plan de cuentas ordenado por código: se ordena solo cuando cambia el plan (antes se reordenaba entero —con localeCompare— en cada tecla
+    // y por cada línea de contrapartida).
+    const contCuentasOrd = useMemo(()=>[...contCuentas].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))),[contCuentas]);
 
     const save = async()=>{
       if(!form.cuentaId) return alert('Seleccione una cuenta bancaria');
@@ -3883,7 +3894,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         // duplicar ni perder el ajuste.
         {
           const oldAntId = movOriginal?.anticipoVinculadoId||'';
-          const oldMontoAnt = Number(movOriginal?.anticipoAplicadoMonto||0); // movimientos viejos sin este campo = nunca se aplic  al anticipo
+          const oldMontoAnt = Number(movOriginal?.anticipoAplicadoMonto||0); // movimientos viejos sin este campo = nunca se aplicó al anticipo
           const newAntId = (form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'';
           if(oldAntId===newAntId){
             if(newAntId){
@@ -4209,7 +4220,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     };
 
     // ── Panel info del banco seleccionado ─────────────────────────────
-    const BancoInfoPanel = ({ cuentaId }) => {
+    const _bancoInfoPanelImpl = useRef(null);
+    _bancoInfoPanelImpl.current = ({ cuentaId }) => {
       const cuenta = cuentas.find(c=>c.id===cuentaId);
       if(!cuenta) return null;
       const bs = cuenta.moneda==='BS';
@@ -4258,6 +4270,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </div>
       );
     };
+    const BancoInfoPanel = useRef((props)=>_bancoInfoPanelImpl.current(props)).current;
 
     const movFiltAll = useMemo(()=>movBanco.filter(m=>{
       if(filtC     && m.cuentaId!==filtC)   return false;
@@ -4293,6 +4306,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // ningún movimiento) y avanza HACIA ADELANTE sumando/restando lo ocurrido hasta el inicio
     // del mes que se está viendo. Antes se calculaba "hacia atrás" desde el saldo vivo actual,
     // lo cual además tenía un error de signo (sumaba en vez de restar lo posterior al mes).
+    // Índice de asientos: se arma UNA vez cuando cambian los asientos (no en cada tecla). Buscar el asiento ligado a un movimiento ya no
+    // recorre todos los asientos por cada movimiento (antes: movimientos × asientos × varias pasadas, y todo eso por cada letra escrita).
+    // Devuelve lo mismo que el find() anterior: el PRIMER asiento de la lista que cumpla cualquiera de las 5 condiciones.
+    const asientoIdx = useMemo(()=>{
+      const lista=asientos||[]; const porId=new Map(), porBanco=new Map(), porCaja=new Map();
+      lista.forEach((a,i)=>{
+        if(!porId.has(a.id)) porId.set(a.id,i);
+        if(!porBanco.has(a.movimientoBancoId)) porBanco.set(a.movimientoBancoId,i);
+        if(!porCaja.has(a.movimientoCajaId)) porCaja.set(a.movimientoCajaId,i);
+      });
+      const min=(x,y)=>x===undefined?y:(y===undefined?x:(y<x?y:x));
+      return { buscar:(m)=>{ const ix=min(min(min(min(porId.get(m.asientoContableId),porBanco.get(m.id)),porBanco.get(m._docId)),porCaja.get(m.id)),porCaja.get(m._docId)); return ix===undefined?undefined:lista[ix]; } };
+    },[asientos]);
     const cuentasBalanceFiltro = filtC ? cuentas.filter(c=>c.id===filtC) : cuentas;
     const primerDiaMesBalance = `${filtMesBalance}-01`;
     const calcCuentaBalance = (c) => {
@@ -4301,7 +4327,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       // propio movimiento si alguna vez se corrigió el asiento directamente. Antes este cálculo
       // solo miraba el monto crudo, así que podía no coincidir con lo que ya se veía bien ahí.
       const montoRealCta = (m, campo) => {
-        const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
+        const asientoLigado = asientoIdx.buscar(m);
         if(!asientoLigado || !asientoLigado.lineas || !asientoLigado.lineas.length) return Number(m[campo]||0);
         const campoLinea = campo==='montoBs' ? (m.tipo==='Ingreso'||m.tipo==='Nota de Crédito'?'debeBs':'haberBs') : (m.tipo==='Ingreso'||m.tipo==='Nota de Crédito'?'debeUSD':'haberUSD');
         const propia = (asientoLigado.lineas||[]).find(l=>Number(l[campoLinea]||0)>0);
@@ -4342,8 +4368,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       entradasUSD:a.entradasUSD+r.entradasUSD, entradasBs:a.entradasBs+r.entradasBs,
       salidasUSD:a.salidasUSD+r.salidasUSD, salidasBs:a.salidasBs+r.salidasBs,
     }),{saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0});
-    const balBs  = sumarGrupo(cuentasBsGrp);
-    const balUsd = sumarGrupo(cuentasUsdGrp);
+    // Estos balances recorren los movimientos de todas las cuentas: se recalculan solo cuando cambia algo que los afecta
+    // (movimientos, asientos, cuentas, cuenta filtrada, mes o tasa) y NO en cada tecla que se escribe en el formulario.
+    const {balBs,balUsd} = useMemo(()=>({balBs:sumarGrupo(cuentasBsGrp),balUsd:sumarGrupo(cuentasUsdGrp)}),[movBanco,asientoIdx,cuentas,filtC,filtMesBalance,tasaActiva]);
     const dispBs  = {usd:balBs.saldoInicialUSD+balBs.entradasUSD-balBs.salidasUSD,  bs:balBs.saldoInicialBs+balBs.entradasBs-balBs.salidasBs};
     const dispUsd = {usd:balUsd.saldoInicialUSD+balUsd.entradasUSD-balUsd.salidasUSD, bs:balUsd.saldoInicialBs+balUsd.entradasBs-balUsd.salidasBs};
     const fmtBs  = (usd,bs) => `Bs.${bancoFmt(bs)}`;
@@ -4351,7 +4378,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const fmtUsd = (usd,bs) => `$${bancoFmt(usd)}`;
     const fmtUsdSub = () => '';
 
-    const PanelBalance = ({titulo,cards,fmt,fmtSub,accentIcon}) => (
+    const _panelBalanceImpl = useRef(null);
+    _panelBalanceImpl.current = ({titulo,cards,fmt,fmtSub,accentIcon}) => (
       <div className="mb-5">
         <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
           <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">{titulo}</p>
@@ -4365,6 +4393,126 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </div>
       </div>
     );
+    const PanelBalance = useRef((props)=>_panelBalanceImpl.current(props)).current;
+
+    // Tablas de movimientos: se arman UNA vez (cuando cambian los movimientos, los filtros, las cuentas, la moneda o los favoritos) y NO en
+    // cada tecla escrita en el formulario. Antes, cada letra volvía a crear y comparar miles de filas (hasta ~17.000 nodos) aunque nada de la
+    // tabla hubiera cambiado. Los botones de cada fila (favorito / editar / eliminar) llaman, vía accMov, a la versión más reciente de la función.
+    const accMov = useRef(null);
+    accMov.current = {toggleFavoritoMov, abrirEdicion, pedirEliminar};
+    const tablasMov = useMemo(()=>(<>
+        {/* ── TABLA NACIONALES — Bs. ── */}
+        {(()=>{const movRows=filtC?movFiltAll.filter(m=>m.cuentaId===filtC):movFiltBS; return(
+          <BCard title={`🇻🇪 Cuentas Nacionales — Bolívares`} subtitle={`${movRows.length} movimiento(s)`}>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>Bs.</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
+                <tbody>
+                  {movRows.length===0&&<tr><td colSpan={9}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos nacionales" desc="Registre transacciones en cuentas Bs."/></td></tr>}
+                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
+                  <BTd>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={e=>{e.stopPropagation();accMov.current.toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
+                      {bancoDd(m.fecha)}
+                    </div>
+                  </BTd>
+                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
+                  <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
+                  <BTd className="max-w-[200px]">
+                    <p className="text-slate-800 text-[11px] font-medium truncate">{m.concepto}</p>
+                    {m.aplicaTercero&&m.terceroNombre&&<p className="text-[10px] text-blue-600 font-black truncate">{m.terceroNombre}</p>}
+                  </BTd>
+                  <BTd className="text-[10px] text-slate-400 font-mono">{m.referencia||'—'}</BTd>
+                  <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{monedaVista==='AMBAS'?`$${bancoFmt(m.montoUSD)} / Bs.${bancoFmt(m.montoBs)}`:monedaVista==='BS'?`Bs.${bancoFmt(m.montoBs)}`:`$${bancoFmt(m.montoUSD)}`}</BTd>
+                  <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
+                  <BTd><BBadge v={m.estatus==='Conciliado'?'green':'gray'}>{m.estatus==='Conciliado'?'✓ Conc.':'Pend.'}</BBadge></BTd>
+                  <BTd>
+                    <div className="flex gap-1" onClick={e=>e.stopPropagation()}>
+                      <button onClick={()=>setDetalle(m._docId||m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
+                      <button onClick={()=>accMov.current.abrirEdicion(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
+                      <button onClick={e=>{e.stopPropagation();accMov.current.pedirEliminar(m);}} disabled={m.estatus==='Conciliado'} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title="Eliminar (clave admin)"><Trash2 size={12}/></button>
+                    </div>
+                  </BTd>
+                </tr>)}
+                </tbody>
+                              {movRows.length>0&&<tfoot><tr style={{background:'#0f172a'}}>
+                <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
+                <td className="px-4 py-3 text-right font-mono font-black text-white">
+                  {monedaVista==='AMBAS'?(
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
+                  ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
+                    if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    return a;
+                  },0))}
+                </td>
+                <td colSpan={3}></td>
+              </tr></tfoot>}
+              </table>
+            </div>
+          </BCard>
+        );})()}
+
+        {/* ── TABLAS POR CATEGORÍA (Moneda Extranjera / Internacionales / Electrónicas / Tarjetas Débito Intl.) ── */}
+        {!filtC&&[
+          {tipo:'Nacional-Ext', titulo:'💵 Cuentas Moneda Extranjera', vacio:'Sin movimientos en moneda extranjera'},
+          {tipo:'Internacional', titulo:'🌐 Cuentas Internacionales', vacio:'Sin movimientos internacionales'},
+          {tipo:'Electronica', titulo:'💳 Cuentas Electrónicas', vacio:'Sin movimientos en cuentas electrónicas'},
+          {tipo:'Tarjeta-Debito-Intl', titulo:'🪪 Tarjetas de Débito Internacionales', vacio:'Sin movimientos en tarjetas de débito internacionales'},
+        ].map(grp=>{
+          const movRows=movFiltUSD.filter(m=>{const c=cuentas.find(x=>x.id===m.cuentaId);return c?.tipoBanco===grp.tipo;});
+          if(movRows.length===0) return null;
+          return (
+          <BCard key={grp.tipo} title={grp.titulo} subtitle={`${movRows.length} movimiento(s)`}>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>$</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
+                <tbody>
+                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
+                  <BTd>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={e=>{e.stopPropagation();accMov.current.toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
+                      {bancoDd(m.fecha)}
+                    </div>
+                  </BTd>
+                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
+                  <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
+                  <BTd className="max-w-[200px]">
+                    <p className="text-slate-800 text-[11px] font-medium truncate">{m.concepto}</p>
+                    {m.aplicaTercero&&m.terceroNombre&&<p className="text-[10px] text-blue-600 font-black truncate">{m.terceroNombre}</p>}
+                  </BTd>
+                  <BTd className="text-[10px] text-slate-400 font-mono">{m.referencia||'—'}</BTd>
+                  <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{monedaVista==='AMBAS'?`$${bancoFmt(m.montoUSD)} / Bs.${bancoFmt(m.montoBs)}`:monedaVista==='BS'?`Bs.${bancoFmt(m.montoBs)}`:`$${bancoFmt(m.montoUSD)}`}</BTd>
+                  <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
+                  <BTd><BBadge v={m.estatus==='Conciliado'?'green':'gray'}>{m.estatus==='Conciliado'?'✓ Conc.':'Pend.'}</BBadge></BTd>
+                  <BTd>
+                    <div className="flex gap-1" onClick={e=>e.stopPropagation()}>
+                      <button onClick={()=>setDetalle(m._docId||m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
+                      <button onClick={()=>accMov.current.abrirEdicion(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
+                      <button onClick={e=>{e.stopPropagation();accMov.current.pedirEliminar(m);}} disabled={m.estatus==='Conciliado'} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title="Eliminar (clave admin)"><Trash2 size={12}/></button>
+                    </div>
+                  </BTd>
+                </tr>)}
+                </tbody>
+                <tfoot><tr style={{background:'#0f172a'}}>
+                <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
+                <td className="px-4 py-3 text-right font-mono font-black text-white">
+                  {monedaVista==='AMBAS'?(
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
+                  ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
+                    if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    return a;
+                  },0))}
+                </td>
+                <td colSpan={3}></td>
+              </tr></tfoot>
+              </table>
+            </div>
+          </BCard>
+          );
+        })}
+        </>),[movFiltAll,movFiltBS,movFiltUSD,filtC,monedaVista,cuentas,favoritosMov]);
 
     return (
       <div>
@@ -4501,7 +4649,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                         <select className={form.ctaContraId?sel:`${sel} border-amber-300`} value={form.ctaContraId} onChange={e=>{const c=contCuentas.find(x=>x.id===e.target.value);setForm({...form,ctaContraId:e.target.value,ctaContraNombre:c?`${c.codigo} · ${c.nombre}`:''})}}>
                           <option value="">— Seleccionar del Plan de Cuentas —</option>
                           {sugs.length>0&&<optgroup label="✨ Sugeridas">{sugs.slice(0,8).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}</optgroup>}
-                          <optgroup label="Todas">{[...contCuentas].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}</optgroup>
+                          <optgroup label="Todas">{contCuentasOrd.map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}</optgroup>
                         </select>
                       </BFG>
                     </div>
@@ -4790,117 +4938,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </BModal>
         )}
 
-        {/* ── TABLA NACIONALES — Bs. ── */}
-        {(()=>{const movRows=filtC?movFiltAll.filter(m=>m.cuentaId===filtC):movFiltBS; return(
-          <BCard title={`🇻🇪 Cuentas Nacionales — Bolívares`} subtitle={`${movRows.length} movimiento(s)`}>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>Bs.</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
-                <tbody>
-                  {movRows.length===0&&<tr><td colSpan={9}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos nacionales" desc="Registre transacciones en cuentas Bs."/></td></tr>}
-                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
-                  <BTd>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={e=>{e.stopPropagation();toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
-                      {bancoDd(m.fecha)}
-                    </div>
-                  </BTd>
-                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
-                  <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
-                  <BTd className="max-w-[200px]">
-                    <p className="text-slate-800 text-[11px] font-medium truncate">{m.concepto}</p>
-                    {m.aplicaTercero&&m.terceroNombre&&<p className="text-[10px] text-blue-600 font-black truncate">{m.terceroNombre}</p>}
-                  </BTd>
-                  <BTd className="text-[10px] text-slate-400 font-mono">{m.referencia||'—'}</BTd>
-                  <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{monedaVista==='AMBAS'?`$${bancoFmt(m.montoUSD)} / Bs.${bancoFmt(m.montoBs)}`:monedaVista==='BS'?`Bs.${bancoFmt(m.montoBs)}`:`$${bancoFmt(m.montoUSD)}`}</BTd>
-                  <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
-                  <BTd><BBadge v={m.estatus==='Conciliado'?'green':'gray'}>{m.estatus==='Conciliado'?'✓ Conc.':'Pend.'}</BBadge></BTd>
-                  <BTd>
-                    <div className="flex gap-1" onClick={e=>e.stopPropagation()}>
-                      <button onClick={()=>setDetalle(m._docId||m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
-                      <button onClick={()=>abrirEdicion(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
-                      <button onClick={e=>{e.stopPropagation();pedirEliminar(m);}} disabled={m.estatus==='Conciliado'} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title="Eliminar (clave admin)"><Trash2 size={12}/></button>
-                    </div>
-                  </BTd>
-                </tr>)}
-                </tbody>
-                              {movRows.length>0&&<tfoot><tr style={{background:'#0f172a'}}>
-                <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
-                <td className="px-4 py-3 text-right font-mono font-black text-white">
-                  {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
-                  ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
-                    if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    return a;
-                  },0))}
-                </td>
-                <td colSpan={3}></td>
-              </tr></tfoot>}
-              </table>
-            </div>
-          </BCard>
-        );})()}
-
-        {/* ── TABLAS POR CATEGORÍA (Moneda Extranjera / Internacionales / Electrónicas / Tarjetas Débito Intl.) ── */}
-        {!filtC&&[
-          {tipo:'Nacional-Ext', titulo:'💵 Cuentas Moneda Extranjera', vacio:'Sin movimientos en moneda extranjera'},
-          {tipo:'Internacional', titulo:'🌐 Cuentas Internacionales', vacio:'Sin movimientos internacionales'},
-          {tipo:'Electronica', titulo:'💳 Cuentas Electrónicas', vacio:'Sin movimientos en cuentas electrónicas'},
-          {tipo:'Tarjeta-Debito-Intl', titulo:'🪪 Tarjetas de Débito Internacionales', vacio:'Sin movimientos en tarjetas de débito internacionales'},
-        ].map(grp=>{
-          const movRows=movFiltUSD.filter(m=>{const c=cuentas.find(x=>x.id===m.cuentaId);return c?.tipoBanco===grp.tipo;});
-          if(movRows.length===0) return null;
-          return (
-          <BCard key={grp.tipo} title={grp.titulo} subtitle={`${movRows.length} movimiento(s)`}>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>$</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
-                <tbody>
-                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
-                  <BTd>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={e=>{e.stopPropagation();toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
-                      {bancoDd(m.fecha)}
-                    </div>
-                  </BTd>
-                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':m.tipo==='Egreso'?'red':(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'gold':m.tipo==='Nota de Débito'?'red':m.tipo==='Nota de Crédito'?'green':'blue'}>{(m.tipo==='Traslado Banco→Caja'||m.tipo==='Traslado de Fondo')?'Traslado':m.tipo==='Nota de Débito'?'N.Débito':m.tipo==='Nota de Crédito'?'N.Crédito':m.tipo}</BBadge></BTd>
-                  <BTd className="font-semibold text-[11px] max-w-[90px] truncate">{m.cuentaNombre}</BTd>
-                  <BTd className="max-w-[200px]">
-                    <p className="text-slate-800 text-[11px] font-medium truncate">{m.concepto}</p>
-                    {m.aplicaTercero&&m.terceroNombre&&<p className="text-[10px] text-blue-600 font-black truncate">{m.terceroNombre}</p>}
-                  </BTd>
-                  <BTd className="text-[10px] text-slate-400 font-mono">{m.referencia||'—'}</BTd>
-                  <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>{monedaVista==='AMBAS'?`$${bancoFmt(m.montoUSD)} / Bs.${bancoFmt(m.montoBs)}`:monedaVista==='BS'?`Bs.${bancoFmt(m.montoBs)}`:`$${bancoFmt(m.montoUSD)}`}</BTd>
-                  <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
-                  <BTd><BBadge v={m.estatus==='Conciliado'?'green':'gray'}>{m.estatus==='Conciliado'?'✓ Conc.':'Pend.'}</BBadge></BTd>
-                  <BTd>
-                    <div className="flex gap-1" onClick={e=>e.stopPropagation()}>
-                      <button onClick={()=>setDetalle(m._docId||m.id)} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver detalle"><Search size={12}/></button>
-                      <button onClick={()=>abrirEdicion(m)} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg" title="Editar"><Settings size={12}/></button>
-                      <button onClick={e=>{e.stopPropagation();pedirEliminar(m);}} disabled={m.estatus==='Conciliado'} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title="Eliminar (clave admin)"><Trash2 size={12}/></button>
-                    </div>
-                  </BTd>
-                </tr>)}
-                </tbody>
-                <tfoot><tr style={{background:'#0f172a'}}>
-                <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
-                <td className="px-4 py-3 text-right font-mono font-black text-white">
-                  {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
-                  ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
-                    if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    return a;
-                  },0))}
-                </td>
-                <td colSpan={3}></td>
-              </tr></tfoot>
-              </table>
-            </div>
-          </BCard>
-          );
-        })}
+        {tablasMov}
 
         {/* ── COMPROBANTE IMPRIMIBLE ── */}
         {comprobante&&(
@@ -5195,9 +5233,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       </div>
                       <select className={sel} value={form.cuentaAjusteId} onChange={e=>setForm({...form,cuentaAjusteId:e.target.value})}>
                         <option value="">— Seleccione la cuenta contable —</option>
-                        {[...contCuentas]
+                        {contCuentasOrd
                           .filter(c=>!busqCtas['ajuste']||(c.codigo+' '+c.nombre).toUpperCase().includes((busqCtas['ajuste']||'').toUpperCase()))
-                          .sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)))
                           .map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}
                       </select>
                     </BFG>
@@ -5233,7 +5270,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       {form.lineasContra.map((l,i)=>{
                         const busqCta=busqCtas[i]||'';
                         const setBusqCta=(v)=>setBusqCtas(prev=>({...prev,[i]:v}));
-                        const ctasFiltradas=[...contCuentas].filter(c=>!busqCta||(c.codigo+' '+c.nombre).toUpperCase().includes(busqCta.toUpperCase())).sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
+                        const ctasFiltradas=contCuentasOrd.filter(c=>!busqCta||(c.codigo+' '+c.nombre).toUpperCase().includes(busqCta.toUpperCase()));
                         return (
                           <div key={i} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
                             <div className="relative">
@@ -6292,7 +6329,11 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     // Selector de Caja — mismo patrón visual que el CuentaSelector de Banco; las cajas no
     // tienen sub-categorías (Nacional-Bs, Internacional, etc.), así que el listado es simple.
-    const CajaSelector = ({value, onChange, label, excluirId}) => {
+    // Identidad ESTABLE (igual que en Banco): si CajaSelector se redefine en cada tecla, React lo desmonta y lo monta de nuevo (el buscador
+    // de caja pierde el foco tras cada letra y se rehace todo lo de adentro). Con useRef la referencia queda fija y por dentro se ejecuta
+    // siempre la versión más reciente.
+    const _cajaSelectorImpl = useRef(null);
+    _cajaSelectorImpl.current = ({value, onChange, label, excluirId}) => {
       const matchBusca = c => !searchCaja||c.nombre.toUpperCase().includes(searchCaja.toUpperCase());
       const opciones = cajas.filter(c=>c.id!==excluirId&&matchBusca(c));
       return (
@@ -6313,6 +6354,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </BFG>
       );
     };
+    const CajaSelector = useRef((props)=>_cajaSelectorImpl.current(props)).current;
 
     const cuentaSel       = cajas.find(c=>c.id===form.cuentaId);
     const cuentaDestBanco = cuentas.find(c=>c.id===form.cuentaDestinoId);
@@ -6477,6 +6519,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                    - movDesdePagosCaja.filter(m=>m.moneda==='USD').reduce((a,m)=>a+Number(m.montoUSD||0),0);
 
 
+
+    // Plan de cuentas ordenado por código: se ordena solo cuando cambia el plan (antes se reordenaba entero en cada tecla y por cada línea de contrapartida).
+    const contCuentasOrd = useMemo(()=>[...contCuentas].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))),[contCuentas]);
 
     const save = async()=>{
       if(!form.cuentaId) return alert('Seleccione una caja');
@@ -6665,7 +6710,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // Panel derecho "Estado Operativo" — equivalente a BancoInfoPanel pero para cajas:
     // el saldo de una caja no es un campo fijo, es saldoInicial + movimientos, por eso
     // se apoya en getSaldoCajaActual en vez de leer un campo .saldo directo.
-    const CajaInfoPanel = ({ cajaId }) => {
+    const _cajaInfoPanelImpl = useRef(null);
+    _cajaInfoPanelImpl.current = ({ cajaId }) => {
       const caja = cajas.find(c=>c.id===cajaId);
       if(!caja) return null;
       const bsMon = caja.moneda==='BS';
@@ -6708,6 +6754,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </div>
       );
     };
+    const CajaInfoPanel = useRef((props)=>_cajaInfoPanelImpl.current(props)).current;
 
     const abrirEditCaja = (m) => {
       setCajaDet(m); setCajaEdit(false); // siempre abre en modo vista; editar solo manual
@@ -6752,7 +6799,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         // Reconciliar el saldo del anticipo vinculado (agregado, quitado o cambiado en esta edición).
         {
           const oldAntId = cajaDet.anticipoVinculadoId||'';
-          const oldMontoAnt = Number(cajaDet.anticipoAplicadoMonto||0); // movimientos viejos sin este campo = nunca se aplic  al anticipo
+          const oldMontoAnt = Number(cajaDet.anticipoAplicadoMonto||0); // movimientos viejos sin este campo = nunca se aplicó al anticipo
           const newAntId = (form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'';
           if(oldAntId===newAntId){
             if(newAntId){
@@ -7038,6 +7085,52 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       finally{ setBusy(false); }
     };
 
+    // Tabla de movimientos de caja: se arma UNA vez (cuando cambian los movimientos, los favoritos o las conciliaciones) y NO en cada tecla escrita
+    // en el formulario (antes cada letra recreaba y comparaba todas las filas). Favorito y PDF llaman, vía accCaja, a la versión más reciente de la función.
+    const accCaja = useRef(null);
+    accCaja.current = {toggleFavoritoMov, generarPDFMovCaja};
+    const tablaMovCaja = useMemo(()=>(
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh><BTh>Acciones</BTh></tr></thead>
+              <tbody>
+                {allMovsCaja.length===0&&<tr><td colSpan={10}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
+                {allMovsCaja.map(m=><tr key={m.id} className={`hover:bg-slate-50 ${m._fromBanco?(m.tipo==='Egreso'?'bg-red-50/20':'bg-green-50/20'):''}`}>
+                  <BTd>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={e=>{e.stopPropagation();accCaja.current.toggleFavoritoMov(m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
+                      {bancoDd(m.fecha)}
+                    </div>
+                  </BTd>
+                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':'red'}>{m.tipo}</BBadge></BTd>
+                  <BTd><BPill usd={m.moneda==='USD'}>{m.moneda==='BS'?'Bs':'USD'}</BPill></BTd>
+                  <BTd className="max-w-[220px]">
+                    <div className="truncate font-semibold" title={m._concepto||m.concepto}>{m._concepto||m.concepto}</div>
+                    {m._facturaInfo&&<div className="text-[8px] text-blue-600 font-black truncate" title={m._facturaInfo}>📄 {m._facturaInfo}</div>}
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {m._cajaNombre&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded bg-slate-700">🏦 {m._cajaNombre}</span>}
+                      {m._fromBanco&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded" style={{background:m.tipo==='Egreso'?'#ea580c':'#16a34a'}}>{m.origen==='CxP'?'CxP':'CxC'}</span>}
+                      {(m.estatus==='Conciliado'||concilCajaIds.has(m.id))&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded bg-emerald-600">&#10003; CONC.</span>}
+                    </div>
+                  </BTd>
+                  <BTd className="text-[10px] max-w-[120px] truncate">{m._tercero||m.terceroNombre||m.proveedor||m.clientName||'—'}</BTd>
+                  <BTd mono className="text-slate-400 text-[10px]">{m.referencia||'—'}</BTd>
+                  <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>Bs.{bancoFmt(m.montoBs)}</BTd>
+                  <BTd right mono className={`text-xs ${m.tipo==='Ingreso'?'text-emerald-500':'text-red-400'}`}>{'$'+bancoFmt(m.montoUSD)}</BTd>
+                  <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
+                  <BTd>
+                    <div className="flex items-center gap-1">
+                      <button onClick={()=>accCaja.current.generarPDFMovCaja(m)} className="p-1.5 text-slate-700 hover:bg-slate-100 rounded-lg" title="Comprobante PDF"><FileText size={12}/></button>
+                      <button onClick={()=>{setCajaDet(m);setCajaEdit(false);}} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver / Editar"><Settings size={12}/></button>
+                      <button onClick={()=>{setCajaPwdModal(m);setCajaPwd('');}} disabled={m.estatus==='Conciliado'||concilCajaIds.has(m.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title={(m.estatus==='Conciliado'||concilCajaIds.has(m.id))?'Conciliado: elimine primero la conciliaci\u00f3n':'Eliminar'}><Trash2 size={12}/></button>
+                    </div>
+                  </BTd>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+    ),[allMovsCaja,favoritosMov,concilCajaIds]);
+
     return (
       <div className="space-y-5">
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -7180,45 +7273,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               )}
             </BModal>
           )}
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh><BTh>Acciones</BTh></tr></thead>
-              <tbody>
-                {allMovsCaja.length===0&&<tr><td colSpan={10}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
-                {allMovsCaja.map(m=><tr key={m.id} className={`hover:bg-slate-50 ${m._fromBanco?(m.tipo==='Egreso'?'bg-red-50/20':'bg-green-50/20'):''}`}>
-                  <BTd>
-                    <div className="flex items-center gap-1.5">
-                      <button onClick={e=>{e.stopPropagation();toggleFavoritoMov(m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
-                      {bancoDd(m.fecha)}
-                    </div>
-                  </BTd>
-                  <BTd><BBadge v={m.tipo==='Ingreso'?'green':'red'}>{m.tipo}</BBadge></BTd>
-                  <BTd><BPill usd={m.moneda==='USD'}>{m.moneda==='BS'?'Bs':'USD'}</BPill></BTd>
-                  <BTd className="max-w-[220px]">
-                    <div className="truncate font-semibold" title={m._concepto||m.concepto}>{m._concepto||m.concepto}</div>
-                    {m._facturaInfo&&<div className="text-[8px] text-blue-600 font-black truncate" title={m._facturaInfo}>📄 {m._facturaInfo}</div>}
-                    <div className="flex items-center gap-1 mt-0.5">
-                      {m._cajaNombre&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded bg-slate-700">🏦 {m._cajaNombre}</span>}
-                      {m._fromBanco&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded" style={{background:m.tipo==='Egreso'?'#ea580c':'#16a34a'}}>{m.origen==='CxP'?'CxP':'CxC'}</span>}
-                      {(m.estatus==='Conciliado'||concilCajaIds.has(m.id))&&<span className="text-[7px] font-black text-white px-1 py-0.5 rounded bg-emerald-600">&#10003; CONC.</span>}
-                    </div>
-                  </BTd>
-                  <BTd className="text-[10px] max-w-[120px] truncate">{m._tercero||m.terceroNombre||m.proveedor||m.clientName||'—'}</BTd>
-                  <BTd mono className="text-slate-400 text-[10px]">{m.referencia||'—'}</BTd>
-                  <BTd right mono className={`font-black ${m.tipo==='Ingreso'?'text-emerald-600':'text-red-500'}`}>Bs.{bancoFmt(m.montoBs)}</BTd>
-                  <BTd right mono className={`text-xs ${m.tipo==='Ingreso'?'text-emerald-500':'text-red-400'}`}>{'$'+bancoFmt(m.montoUSD)}</BTd>
-                  <BTd right mono className="text-slate-400 text-[10px]">{m.tasa}</BTd>
-                  <BTd>
-                    <div className="flex items-center gap-1">
-                      <button onClick={()=>generarPDFMovCaja(m)} className="p-1.5 text-slate-700 hover:bg-slate-100 rounded-lg" title="Comprobante PDF"><FileText size={12}/></button>
-                      <button onClick={()=>{setCajaDet(m);setCajaEdit(false);}} className="p-1.5 text-blue-400 hover:bg-blue-50 rounded-lg" title="Ver / Editar"><Settings size={12}/></button>
-                      <button onClick={()=>{setCajaPwdModal(m);setCajaPwd('');}} disabled={m.estatus==='Conciliado'||concilCajaIds.has(m.id)} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg disabled:opacity-30" title={(m.estatus==='Conciliado'||concilCajaIds.has(m.id))?'Conciliado: elimine primero la conciliaci\u00f3n':'Eliminar'}><Trash2 size={12}/></button>
-                    </div>
-                  </BTd>
-                </tr>)}
-              </tbody>
-            </table>
-          </div>
+          {tablaMovCaja}
         </BCard>
 
         {/* ── MODAL VER / EDITAR MOVIMIENTO CAJA ── */}
@@ -7296,7 +7351,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <BFG label="Cuenta Contrapartida (PUC)">
                       <select className={sel} value={form.ctaContraId} onChange={e=>{const c=contCuentas.find(x=>x.id===e.target.value);setForm({...form,ctaContraId:e.target.value,ctaContraNombre:c?`${c.codigo} · ${c.nombre}`:''})}}>
                         <option value="">— Seleccionar del Plan de Cuentas —</option>
-                        {[...contCuentas].sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo))).map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}
+                        {contCuentasOrd.map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}
                       </select>
                     </BFG>
                   </div>
@@ -7637,9 +7692,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       </div>
                       <select className={sel} value={form.cuentaAjusteId} onChange={e=>setForm({...form,cuentaAjusteId:e.target.value})}>
                         <option value="">— Seleccione la cuenta contable —</option>
-                        {[...contCuentas]
+                        {contCuentasOrd
                           .filter(c=>!busqCtas['ajuste']||(c.codigo+' '+c.nombre).toUpperCase().includes((busqCtas['ajuste']||'').toUpperCase()))
-                          .sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)))
                           .map(c=><option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>)}
                       </select>
                     </BFG>
@@ -7674,7 +7728,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       {form.lineasContra.map((l,i)=>{
                         const busqCta=busqCtas[i]||'';
                         const setBusqCta=(v)=>setBusqCtas(prev=>({...prev,[i]:v}));
-                        const ctasFiltradas=[...contCuentas].filter(c=>!busqCta||(c.codigo+' '+c.nombre).toUpperCase().includes(busqCta.toUpperCase())).sort((a,b)=>String(a.codigo).localeCompare(String(b.codigo)));
+                        const ctasFiltradas=contCuentasOrd.filter(c=>!busqCta||(c.codigo+' '+c.nombre).toUpperCase().includes(busqCta.toUpperCase()));
                         return (
                           <div key={i} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
                             <div className="relative">
