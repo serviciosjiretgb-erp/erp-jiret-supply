@@ -16322,6 +16322,52 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
 };
 
 
+// ══════════════════════════════════════════════════════════════════════════
+// NC / ND de COMPRAS dentro de CxP y del Estado de Cuenta de Proveedores (espejo de Ventas)
+//  · Nota FISCAL: se aplica con su TOTAL (base + exento + IVA — el mismo de su PDF y del Libro de Compras) y se le restan las
+//    retenciones que se le aplicaron (Ret. IVA y Ret. ISLR: comprobantes de procura_ret_iva / procura_ret_islr ligados por notaId).
+//  · Nota NO fiscal: su monto, sin IVA ni retención.
+//  La ND suma a lo que se le debe al proveedor y la NC lo resta; la retención de una NC se guarda en negativo (devuelve la retención).
+// ══════════════════════════════════════════════════════════════════════════
+const ncpNum = (v) => { if(!v&&v!==0) return 0; const x=parseFloat(String(v).replace(/[^0-9.\-]/g,'')); return isNaN(x)?0:x; };
+// notaId → { iva:[comprobantes de Ret. IVA], islr:[comprobantes de Ret. ISLR] }; con fecha de corte solo entran los de ese día o anteriores
+const ncpRetsPorNota = (retIVAList, retISLRList, hasta) => {
+  const m = new Map();
+  const add = (k, r) => {
+    if(!r || !r.notaId || r.facturaId) return; // los comprobantes de una nota se guardan con facturaId vacío; si trajera factura, ya se descuenta como retención de esa factura (no contarla dos veces)
+    if(hasta && (r.fecha||'') > hasta) return;
+    let e = m.get(r.notaId); if(!e){ e = {iva:[], islr:[]}; m.set(r.notaId, e); }
+    e[k].push(r);
+  };
+  (retIVAList||[]).forEach(r=>add('iva', r));
+  (retISLRList||[]).forEach(r=>add('islr', r));
+  return m;
+};
+// Desglose de una nota ligada a una factura, en Bs. y en USD. tasaFact: tasa de la factura; tasaBCV: respaldo; rets: lo que devuelve ncpRetsPorNota para esa nota.
+//   efectoUSD > 0 suma a lo que se debe (ND) · < 0 lo resta (NC): signo × (total − retenciones)
+const ncpDesglose = (n, tasaFact, tasaBCV, rets) => {
+  const esND = n.tipo === 'ND', signo = esND ? 1 : -1;
+  const t = ncpNum(n.tasaFactura||0) || ncpNum(tasaFact||0) || tasaBCV || 1;
+  const fiscal = n.naturaleza === 'FISCAL';
+  const montoBs = ncpNum(n.monto||0);
+  let totalBs = montoBs, ivaBs = 0;
+  if(fiscal){
+    // mismo criterio que el PDF de la nota y el Libro de Compras: IVA y total propios de la nota; si faltan, 16 % de la base
+    const exeBs = ncpNum(n.exentoBs||0);
+    const baseBs = (n.baseGravadaBs!=null && n.baseGravadaBs!=='') ? ncpNum(n.baseGravadaBs) : Math.max(0, montoBs - exeBs);
+    ivaBs = ncpNum(n.ivaBs||0) || (n.tieneIva===false ? 0 : baseBs*0.16);
+    totalBs = ncpNum(n.totalBs||0) || (baseBs + exeBs + ivaBs);
+  }
+  const aUsd = (bs, respaldo) => t>1 ? bs/t : respaldo;
+  const baseUSD = aUsd(montoBs, ncpNum(n.montoUSD||0));
+  const totalUSD = aUsd(totalBs, baseUSD);
+  const lin = (r) => { const bs = Math.abs(ncpNum(r.montoBs||0)); return {r, bs, usd: aUsd(bs, Math.abs(ncpNum(r.monto||0)))}; };
+  const retIva = ((rets&&rets.iva)||[]).map(lin), retIslr = ((rets&&rets.islr)||[]).map(lin);
+  const retUSD = retIva.reduce((a,x)=>a+x.usd,0) + retIslr.reduce((a,x)=>a+x.usd,0);
+  return { esND, signo, t, fiscal, montoBs, ivaBs, totalBs, baseUSD, totalUSD, ivaUSD: Math.max(0, totalUSD-baseUSD), retIva, retIslr, retUSD,
+           netoUSD: totalUSD - retUSD, efectoUSD: signo * (totalUSD - retUSD) };
+};
+
 // ══════════════════════════════════════════════════════════════════════
 // MÓDULO 5: CUENTAS POR PAGAR (CxP)
 // ══════════════════════════════════════════════════════════════════════
@@ -16758,14 +16804,14 @@ const CxPView = ({
     }
     return m;
   },[notasCompraCD]);
-  // Neto NC/ND en USD de una factura: NC resta del saldo (ya pagó de menos / le deben menos), ND suma.
+  // Retenciones (IVA / ISLR) que se le aplicaron a cada NC/ND (comprobantes con notaId) y desglose de cada nota (total, retenciones, efecto en USD)
+  const _retsPorNota = useMemo(()=>ncpRetsPorNota(retIVACompra, retISLR),[retIVACompra,retISLR]);
+  const notaDesg = (n, tasaF) => ncpDesglose(n, tasaF, tasaBCV, _retsPorNota.get(n.id));
+  // Neto NC/ND en USD de una factura (lo que RESTA de su saldo): NC resta (ya pagó de menos / le deben menos), ND suma.
+  // Una nota FISCAL entra con su TOTAL (base + IVA) menos las retenciones que se le aplicaron; una NO fiscal, con su monto.
   // Todas las NC/ND (fiscales o no) afectan CxP, Estado de Cuenta y Contabilidad por igual —
   // lo fiscal/no-fiscal solo decide si además entran al Libro de Compras (ver LibroComprasView).
-  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
-    const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
-    const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
-    return s + usd*(n.tipo==='NC'?1:-1);
-  },0);
+  const getNetoNCND = (facturaId, tasaFactura) => 0 - (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>s+notaDesg(n,tasaFactura).efectoUSD,0);
 
   // Anticipos a proveedores aún no aplicados a ninguna factura — mismo criterio que
   // Estado de Cuenta de Proveedor: pagos con esAnticipo=true cuyo saldo (monto-montoAplicado)
@@ -16950,7 +16996,7 @@ const CxPView = ({
 ${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#16a34a">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''} · ${p.banco||''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#16a34a;font-family:monospace;font-weight:700">-$${fN(pN(p.monto||0))}</td><td></td><td style="padding:2px 6px;color:#16a34a;font-style:italic">${p.concepto||'—'}</td></tr>`).join('')}
 ${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#dc2626">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasaF)}</td><td></td><td></td></tr>`).join('')}
 ${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''} · Bs.${fN(pN(r.montoBs||0))}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}
-${(_ncPorFact.get(f.id)||[]).map(n=>{const tN=pN(n.tasaFactura||0)||tasaF||1;const uN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(uN)}</td><td></td><td></td></tr>`;}).join('')}`;
+${(_ncPorFact.get(f.id)||[]).map(n=>{const d=notaDesg(n,tasaF);const nm=(n.tipo==='NC'?'NC':'ND')+' '+(n.nroDocumento||'—');return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${nm} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}${(d.fiscal&&d.ivaUSD>0.004)?' · Base $'+fN(d.baseUSD)+' + IVA $'+fN(d.ivaUSD):''}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(d.totalUSD)}</td><td></td><td></td></tr>`+d.retIva.map(x=>`<tr style="background:#fff1f2;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#dc2626">↳ Ret. IVA ${x.r.pctRetencion||75}% · Comp. ${x.r.nroComprobante||'—'} · ${nm} · Bs.${fN(x.bs)}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#dc2626;font-family:monospace">${d.signo>0?'-':'+'}$${fN(x.usd)}</td><td></td><td></td></tr>`).join('')+d.retIslr.map(x=>`<tr style="background:#f5f3ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ Ret. ISLR ${x.r.pct||0}% · ${x.r.codConcepto||''} ${x.r.concepto||''} · ${nm} · Bs.${fN(x.bs)}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${d.signo>0?'-':'+'}$${fN(x.usd)}</td><td></td><td></td></tr>`).join('');}).join('')}`;
       }).join('');
       const ncRows = ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasa;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="5" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.descripcion||'Proveedor directo'}</td><td colspan="4" style="padding:2px 6px;text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-':'+'}$${fN(u)}</td><td></td><td></td></tr>`;}).join('');
       const anticipoRows = anticiposG.length===0?'':(`<tr style="background:#f0fdfa"><td colspan="11" style="padding:3px 6px;font-weight:900;color:#0f766e;font-size:8px;text-transform:uppercase">💰 Anticipos pendientes por aplicar</td></tr>`+
@@ -17011,8 +17057,10 @@ ${body}
         </tr>`;
         // Notas de crédito/débito LIGADAS a esta factura: se ven bajo su factura (ya están restadas en su saldo) y una sola vez.
         (_ncPorFact.get(f.id)||[]).forEach(n=>{
-          const tN=pN(n.tasaFactura||0)||tasaF||1; const uN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);
-          filas+=`<tr style="background:#faf5ff"><td colspan="4" style="padding:3px 6px;color:#7c3aed">↳ ${n.tipo==='NC'?'NC':'ND'} ${n.nroDocumento||'—'} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#7c3aed;font-family:monospace;mso-number-format:'#,##0.00'">${n.tipo==='NC'?'-':''}${uN.toFixed(2)}</td><td colspan="2"></td></tr>`;
+          const d=notaDesg(n,tasaF); const nm=(n.tipo==='NC'?'NC':'ND')+' '+(n.nroDocumento||'—');
+          filas+=`<tr style="background:#faf5ff"><td colspan="4" style="padding:3px 6px;color:#7c3aed">↳ ${nm} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}${(d.fiscal&&d.ivaUSD>0.004)?' · Base '+d.baseUSD.toFixed(2)+' + IVA '+d.ivaUSD.toFixed(2):''}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#7c3aed;font-family:monospace;mso-number-format:'#,##0.00'">${n.tipo==='NC'?'-':''}${d.totalUSD.toFixed(2)}</td><td colspan="2"></td></tr>`;
+          d.retIva.forEach(x=>{ filas+=`<tr style="background:#fff1f2"><td colspan="4" style="padding:3px 6px;color:#dc2626">↳ Ret. IVA ${x.r.pctRetencion||75}% · Comp. ${x.r.nroComprobante||'—'} · ${nm}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#dc2626;font-family:monospace;mso-number-format:'#,##0.00'">${d.signo>0?'-':''}${x.usd.toFixed(2)}</td><td colspan="2"></td></tr>`; });
+          d.retIslr.forEach(x=>{ filas+=`<tr style="background:#f5f3ff"><td colspan="4" style="padding:3px 6px;color:#7c3aed">↳ Ret. ISLR ${x.r.pct||0}% · ${x.r.codConcepto||''} ${x.r.concepto||''} · ${nm}</td><td></td><td colspan="4" style="padding:3px 6px;text-align:right;color:#7c3aed;font-family:monospace;mso-number-format:'#,##0.00'">${d.signo>0?'-':''}${x.usd.toFixed(2)}</td><td colspan="2"></td></tr>`; });
         });
       });
       const ncNDsX=g.ncDir||[]; // solo las notas directas de este proveedor (las de factura van bajo su factura)
@@ -17396,15 +17444,32 @@ ${body}
                                       </tr>
                                     ))}
                                     {ncsF.map((n,ni)=>{
-                                      const tN=pN(n.tasaFactura||0)||tasaF||1;
-                                      const usdN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);
+                                      const d=notaDesg(n,tasaF);
                                       return(
-                                      <tr key={'nc'+ni} className="bg-purple-50 border-b border-purple-100">
-                                        <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {n.tipo} {n.nroDocumento||''} · {n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}{n.descripcion?' · '+n.descripcion:''}</td>
+                                      <React.Fragment key={'nc'+ni}>
+                                      <tr className="bg-purple-50 border-b border-purple-100">
+                                        <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ {n.tipo} {n.nroDocumento||''} · {n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}{n.descripcion?' · '+n.descripcion:''}{(d.fiscal&&d.ivaUSD>0.004)?` · Base $${fN(d.baseUSD)} + IVA $${fN(d.ivaUSD)}`:''}</td>
                                         <td colSpan={4}></td>
-                                        <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{n.tipo==='NC'?'-':'+'}${fN(usdN)}</td>
+                                        <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{n.tipo==='NC'?'-':'+'}${fN(d.totalUSD)}</td>
                                         <td></td>
                                       </tr>
+                                      {d.retIva.map((x,xi)=>(
+                                        <tr key={'nri'+xi} className="bg-red-50 border-b border-red-100">
+                                          <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-red-700">↳ Ret. IVA {x.r.pctRetencion||75}% · Comp. {x.r.nroComprobante||'—'} · {n.tipo} {n.nroDocumento||''} · Bs.{fN(x.bs)}</td>
+                                          <td colSpan={4}></td>
+                                          <td className="py-1.5 px-3 text-right font-mono font-black text-red-700 text-[8px]">{d.signo>0?'-':'+'}${fN(x.usd)}</td>
+                                          <td></td>
+                                        </tr>
+                                      ))}
+                                      {d.retIslr.map((x,xi)=>(
+                                        <tr key={'nrs'+xi} className="bg-purple-50 border-b border-purple-100">
+                                          <td colSpan={5} className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ Ret. ISLR {x.r.pct||0}% · {x.r.codConcepto||''} {x.r.concepto||''} · {n.tipo} {n.nroDocumento||''} · Bs.{fN(x.bs)}</td>
+                                          <td colSpan={4}></td>
+                                          <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{d.signo>0?'-':'+'}${fN(x.usd)}</td>
+                                          <td></td>
+                                        </tr>
+                                      ))}
+                                      </React.Fragment>
                                     );})}
                                     {(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0).map((r,ri)=>(
                                       <tr key={ri} className="bg-purple-50 border-b border-purple-100">
@@ -19081,7 +19146,7 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
 // ESTADO DE CUENTA — PROVEEDOR (espejo de EC Ventas)
 // ══════════════════════════════════════════════════════════════════════════
 const EstadoCuentaProvView = ({
-  facturasCompra, pagosCxP, proveedores, retIVACompra, notasCompraCD,
+  facturasCompra, pagosCxP, proveedores, retIVACompra, retISLR, notasCompraCD,
   tasaBCV, settings, dialog, setDialog
 }) => {
   const [ecSearch, setEcSearch] = useState('');
@@ -19129,11 +19194,10 @@ const EstadoCuentaProvView = ({
   const _retsPorFact = useMemo(()=>{ const m=new Map(); (retIVACompra||[]).filter(r=>!ecHasta||(r.fecha||'')<=ecHasta).forEach(r=>{if(!m.has(r.facturaId))m.set(r.facturaId,[]);m.get(r.facturaId).push(r);}); return m; },[retIVACompra,ecHasta]);
   const _ncPorProv = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).forEach(n=>{let r=(n.provRif||'').trim();if(!r&&n.facturaId){const fc=(facturasCompra||[]).find(f=>f.id===n.facturaId);r=(fc?.rif||'').trim();}if(!r)return;if(!m.has(r))m.set(r,[]);m.get(r).push(n);}); return m; },[notasCompraCD, facturasCompra, ecHasta]);
   const _ncPorFact = useMemo(()=>{ const m=new Map(); (notasCompraCD||[]).filter(n=>!ecHasta||(n.fecha||'')<=ecHasta).forEach(n=>{if(!n.facturaId)return;if(!m.has(n.facturaId))m.set(n.facturaId,[]);m.get(n.facturaId).push(n);}); return m; },[notasCompraCD,ecHasta]);
-  const getNetoNCND = (facturaId, tasaFactura) => (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>{
-    const t = pN(n.tasaFactura||0)||pN(tasaFactura||0)||tasaBCV||1;
-    const usd = t>1?pN(n.monto||0)/t:pN(n.montoUSD||0);
-    return s + usd*(n.tipo==='NC'?1:-1);
-  },0);
+  // Retenciones que se le aplicaron a cada NC/ND (comprobantes con notaId): una nota FISCAL entra con su total (base + IVA) menos esas retenciones
+  const _retsPorNota = useMemo(()=>ncpRetsPorNota(retIVACompra, retISLR, ecHasta),[retIVACompra,retISLR,ecHasta]);
+  const notaDesg = (n, tasaF) => ncpDesglose(n, tasaF, tasaBCV, _retsPorNota.get(n.id));
+  const getNetoNCND = (facturaId, tasaFactura) => 0 - (_ncPorFact.get(facturaId)||[]).reduce((s,n)=>s+notaDesg(n,tasaFactura).efectoUSD,0);
 
   const getSaldoFact = (f) => {
     const total = pN(f.total||0);
@@ -19257,13 +19321,24 @@ const EstadoCuentaProvView = ({
           sub.push({nivel:1,tono:'retx',cat:'RET',doc:'Ret. ISLR',fecha:f.fecha||'',tipoTxt:'Ret. ISLR',detalle:'ISLR '+(r.pct||0)+'% · '+[r.codigo,r.concepto].filter(Boolean).join(' '),
             tasa:null,cargo:null,ncret:bs?ecbIslrBs(r,f.tasa):R(pN(r.monto||0)),abono:null});
         });
-        // NC / ND ligadas a esta factura: NC resta, ND suma
+        // NC / ND ligadas a esta factura: NC resta, ND suma. Una nota FISCAL va con su TOTAL (base + IVA) y, debajo, las retenciones que se le aplicaron.
         (_ncPorFact.get(f.id)||[]).forEach(n=>{
           const esNC=n.tipo==='NC';
-          const t=pN(n.tasaFactura||0)||pN(f.tasa||0)||tasaBCV||1;
-          const v=bs?R(pN(n.monto||0)):R(t>1?pN(n.monto||0)/t:pN(n.montoUSD||0));
+          const d=notaDesg(n,f.tasa);
+          const v=bs?R(d.totalBs):R(d.totalUSD);
+          const detIva=(d.fiscal&&d.ivaBs>0.004)?(bs?' · Base Bs. '+ecbFmt(d.montoBs)+' · IVA Bs. '+ecbFmt(d.ivaBs):' · Base '+ecbMoney('USD',d.baseUSD)+' + IVA '+ecbMoney('USD',d.ivaUSD)):'';
+          const nmN=(n.tipo||'NC')+' '+(n.nroDocumento||'—');
           sub.push({nivel:1,tono:'nc',cat:'NOTA',doc:(n.tipo||'NC')+' · '+(n.nroDocumento||'—'),fecha:n.fecha||'',tipoTxt:(esNC?'Nota de Crédito':'Nota de Débito')+(n.naturaleza==='FISCAL'?'':' (no fiscal)'),
-            detalle:n.descripcion||(esNC?'Nota de Crédito':'Nota de Débito'),tasa:null,cargo:esNC?null:v,ncret:esNC?v:null,abono:null});
+            detalle:(n.descripcion||(esNC?'Nota de Crédito':'Nota de Débito'))+detIva,tasa:null,cargo:esNC?null:v,ncret:esNC?v:null,abono:null});
+          // Retenciones de la nota (su comprobante ya trae el monto en Bs.). En una NC se guardan en negativo: devuelven la retención.
+          d.retIva.forEach(x=>{
+            sub.push({nivel:1,tono:'ret',cat:'RET',doc:'Ret. IVA',fecha:x.r.fecha||n.fecha||'',tipoTxt:'Ret. IVA',detalle:'IVA '+(x.r.pctRetencion||75)+'% · Comp. '+(x.r.nroComprobante||'—')+' · '+nmN,
+              tasa:bs?(pN(x.r.tasa||0)>1?pN(x.r.tasa):(d.t>1?d.t:null)):null,cargo:null,ncret:bs?R(d.signo*x.bs):R(d.signo*x.usd),abono:null});
+          });
+          d.retIslr.forEach(x=>{
+            sub.push({nivel:1,tono:'retx',cat:'RET',doc:'Ret. ISLR',fecha:x.r.fecha||n.fecha||'',tipoTxt:'Ret. ISLR',detalle:'ISLR '+(x.r.pct||0)+'% · '+[x.r.codConcepto,x.r.concepto].filter(Boolean).join(' ')+' · '+nmN,
+              tasa:null,cargo:null,ncret:bs?R(d.signo*x.bs):R(d.signo*x.usd),abono:null});
+          });
         });
         const suma=(k)=>sub.reduce((s,r)=>s+(r[k]||0),0);
         const cargoDoc=bs?fc.totalBs:R(pN(f.total||0));
@@ -19308,8 +19383,8 @@ const EstadoCuentaProvView = ({
     const haySinTasa=terceros.some(t=>t.rows.some(r=>(r.aviso||'').indexOf('Sin tasa')>=0));
     const notas=[];
     if(bs){
-      notas.push('Cada documento se expresa con sus propios datos en Bs.: la factura con su total del Libro de Compras, la retención de IVA con el monto en Bs. de su comprobante, la de ISLR con su monto en Bs., las notas de crédito/débito con el monto de la nota y cada pago con los Bs. de ese pago (USD × la tasa registrada en el pago). Nada se convierte con una tasa de corte.');
-      notas.push('Saldo Bs. = Facturado + notas de débito − notas de crédito − retenciones − pagado ± anticipos y ajustes. Las notas se aplican con su monto (sin IVA), igual que en Cuentas por Pagar.');
+      notas.push('Cada documento se expresa con sus propios datos en Bs.: la factura con su total del Libro de Compras, la retención de IVA con el monto en Bs. de su comprobante, la de ISLR con su monto en Bs., las notas de crédito/débito fiscales con su total (base + IVA) y las retenciones que se les aplicaron (las no fiscales, con su monto) y cada pago con los Bs. de ese pago (USD × la tasa registrada en el pago). Nada se convierte con una tasa de corte.');
+      notas.push('Saldo Bs. = Facturado + notas de débito − notas de crédito − retenciones − pagado ± anticipos y ajustes. Las notas fiscales se aplican con su total (base + IVA) y se muestran con las retenciones que se les aplicaron; las no fiscales, con su monto — igual que en Cuentas por Pagar.');
       notas.push('El estado (Pendiente / Saldado / A favor) y el «Saldo USD (ref.)» son los que lleva el sistema en dólares. El saldo en Bs. puede diferir por la variación de la tasa entre la factura y cada pago (diferencial cambiario).');
       if(terceros.some(t=>t.sinFactura)) notas.push('Los documentos sin datos en Bs. (por ejemplo, saldos iniciales cargados sin tasa) se muestran solo en USD y no suman al saldo en Bs.');
     } else {
@@ -19356,7 +19431,7 @@ const EstadoCuentaProvView = ({
 ${pagos.map(p=>`<tr style="background:#f0fdf4;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#16a34a" colspan="3">↳ Pago ${fD(p.fecha)} · ${p.metodo||'—'} ${p.referencia?'#'+p.referencia:''}</td><td style="color:#16a34a">${p.banco||''}</td><td colspan="3" style="text-align:right;color:#16a34a;font-family:monospace">-$${fN(pN(p.monto||0))}</td><td></td><td style="color:#16a34a;font-style:italic">${p.concepto||'—'}</td></tr>`).join('')}
 ${rets.map(r=>`<tr style="background:#fff1f2;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#dc2626" colspan="3">↳ Ret. IVA ${r.pctRetencion||75}% · Comp. ${r.nroComprobante||'—'}</td><td></td><td colspan="3" style="text-align:right;color:#dc2626;font-family:monospace">-$${fN(pN(r.montoBs||r.montoRetenido||0)/tasa)}</td><td></td><td></td></tr>`).join('')}
 ${(f.retISLRLista||[]).filter(r=>pN(r.monto||0)>0.001).map(r=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${r.pct||0}% · ${r.codigo||''} ${r.concepto||''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">-$${fN(pN(r.monto||0))}</td><td></td><td></td></tr>`).join('')}
-${(_ncPorFact.get(f.id)||[]).map(n=>{const tN=pN(n.tasaFactura||0)||tasa||1;const uN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'+$'}${fN(uN)}</td><td></td><td></td></tr>`;}).join('')}`;
+${(_ncPorFact.get(f.id)||[]).map(n=>{const d=notaDesg(n,tasa);const nm=n.tipo+' '+(n.nroDocumento||'—');return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${nm} · ${n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}${n.descripcion?' · '+n.descripcion:''}${(d.fiscal&&d.ivaUSD>0.004)?' · Base $'+fN(d.baseUSD)+' + IVA $'+fN(d.ivaUSD):''}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'+$'}${fN(d.totalUSD)}</td><td></td><td></td></tr>`+d.retIva.map(x=>`<tr style="background:#fff1f2;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#dc2626" colspan="3">↳ Ret. IVA ${x.r.pctRetencion||75}% · Comp. ${x.r.nroComprobante||'—'} · ${nm}</td><td></td><td colspan="3" style="text-align:right;color:#dc2626;font-family:monospace">${d.signo>0?'-$':'+$'}${fN(x.usd)}</td><td></td><td></td></tr>`).join('')+d.retIslr.map(x=>`<tr style="background:#f5f3ff;font-size:8px"><td style="padding:2px 6px 2px 20px;color:#7c3aed" colspan="3">↳ Ret. ISLR ${x.r.pct||0}% · ${x.r.codConcepto||''} ${x.r.concepto||''} · ${nm}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${d.signo>0?'-$':'+$'}${fN(x.usd)}</td><td></td><td></td></tr>`).join('');}).join('')}`;
       }).join('');
       const ncRows=ncNDs.map(n=>{const t=pN(n.tasaFactura||0)||tasaBCV||1;const u=t>1?pN(n.monto||0)/t:0;return `<tr style="background:#faf5ff;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#7c3aed">↳ ${n.tipo} ${n.nroDocumento||'—'} · ${n.descripcion||'Ajuste directo'}</td><td></td><td colspan="3" style="text-align:right;color:#7c3aed;font-family:monospace">${n.tipo==='NC'?'-$':'$'}${fN(u)}</td><td></td><td></td></tr>`;}).join('');
       const anticipoRows=anticiposG.map(a=>`<tr style="background:#ecfdf5;font-size:8px"><td colspan="3" style="padding:2px 6px 2px 20px;color:#0f766e">↳ 💰 Anticipo ${fD(a.fecha)} · ${a.metodo||'—'} ${a.referencia?'#'+a.referencia:''}</td><td style="color:#0f766e">${a.banco||''}</td><td colspan="3" style="text-align:right;color:#0f766e;font-family:monospace">-$${fN(a._saldoAnt)}</td><td></td><td style="color:#0f766e;font-style:italic">${a.concepto||'Anticipo a proveedor'}</td></tr>`).join('');
@@ -19555,19 +19630,44 @@ ${body}
                               </tr>
                             ))}
                             {(_ncPorFact.get(f.id)||[]).map((n,ni)=>{
-                              const tN=pN(n.tasaFactura||0)||tasa||1;
-                              const usdN=tN>1?pN(n.monto||0)/tN:pN(n.montoUSD||0);
+                              const d=notaDesg(n,tasa);
                               return(
-                              <tr key={'nc'+ni} className="bg-indigo-50/80 border-b border-indigo-100">
+                              <React.Fragment key={'nc'+ni}>
+                              <tr className="bg-indigo-50/80 border-b border-indigo-100">
                                 <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-indigo-700">↳ {n.tipo}</td>
                                 <td className="py-1.5 px-3 text-[8px] text-indigo-600">{fD(n.fecha)}</td>
                                 <td className="py-1.5 px-3"><span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[8px] font-black">{n.naturaleza==='FISCAL'?'Fiscal':'No fiscal'}</span></td>
                                 <td className="py-1.5 px-3 text-[8px] text-indigo-600">{n.nroDocumento||''}</td>
-                                <td className="py-1.5 px-3 text-[8px] text-gray-500">{n.descripcion||(n.tipo==='NC'?'Nota de Crédito':'Nota de Débito')}</td>
+                                <td className="py-1.5 px-3 text-[8px] text-gray-500">{(n.descripcion||(n.tipo==='NC'?'Nota de Crédito':'Nota de Débito'))+((d.fiscal&&d.ivaUSD>0.004)?` · Base $${fN(d.baseUSD)} + IVA $${fN(d.ivaUSD)}`:'')}</td>
                                 <td></td>
-                                <td className="py-1.5 px-3 text-right font-mono font-black text-indigo-700 text-[8px]">{n.tipo==='NC'?'-':'+'}${fN(usdN)}</td>
+                                <td className="py-1.5 px-3 text-right font-mono font-black text-indigo-700 text-[8px]">{n.tipo==='NC'?'-':'+'}${fN(d.totalUSD)}</td>
                                 <td colSpan={3}></td>
                               </tr>
+                              {d.retIva.map((x,xi)=>(
+                                <tr key={'nri'+xi} className="bg-red-50/80 border-b border-red-100">
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-red-700">↳ Ret. IVA · {n.tipo}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-red-600">{fD(x.r.fecha)}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[8px] font-black">Ret.</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-red-600">Comp. {x.r.nroComprobante||'—'}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">IVA {x.r.pctRetencion||75}% · Bs.{fN(x.bs)} · {n.tipo} {n.nroDocumento||''}</td>
+                                  <td></td>
+                                  <td className="py-1.5 px-3 text-right font-mono font-black text-red-700 text-[8px]">{d.signo>0?'-':'+'}${fN(x.usd)}</td>
+                                  <td colSpan={3}></td>
+                                </tr>
+                              ))}
+                              {d.retIslr.map((x,xi)=>(
+                                <tr key={'nrs'+xi} className="bg-purple-50/80 border-b border-purple-100">
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-purple-700">↳ Ret. ISLR · {n.tipo}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-purple-600">{fD(x.r.fecha||n.fecha)}</td>
+                                  <td className="py-1.5 px-3"><span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[8px] font-black">ISLR</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-purple-600">{x.r.codConcepto||''}</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">ISLR {x.r.pct||0}% · {x.r.concepto||''} · Bs.{fN(x.bs)} · {n.tipo} {n.nroDocumento||''}</td>
+                                  <td></td>
+                                  <td className="py-1.5 px-3 text-right font-mono font-black text-purple-700 text-[8px]">{d.signo>0?'-':'+'}${fN(x.usd)}</td>
+                                  <td colSpan={3}></td>
+                                </tr>
+                              ))}
+                              </React.Fragment>
                             );})}
                             {(pagosF.length>0||retsF.length>0||(f.retISLRLista||[]).some(r=>pN(r.monto||0)>0.001)||(_ncPorFact.get(f.id)||[]).length>0)&&(
                               <tr className={`border-b-2 ${saldo<-0.01?'bg-teal-100/70 border-teal-200':saldo<0.01?'bg-green-100/70 border-green-200':'bg-orange-100/60 border-orange-200'}`}>
@@ -31608,6 +31708,92 @@ function App() {
     return m;
   },[movBancoApp,movCajaApp]);
   const reintegroAnticipoHasta = (antId, fechaCorte) => (_reintegrosPorAnticipo.get(antId)||[]).filter(x=>!fechaCorte||(x.fecha||'')<=fechaCorte).reduce((t,x)=>t+(parseFloat(x.montoUSD)||0),0);
+  // ── Reintegros a clientes (Banco / Caja · «ajuste a CxC» · Egreso) ─────────────────────────────────────────────────────
+  // Un reintegro devuelve dinero al cliente y DESHACE algo que él tenía «a favor»: suma a lo que nos debe (cancela ese «a favor»).
+  // Se cruza con el documento del que sale (lo elige quien lo registra en Banco / Caja):
+  //   · RETENCION → la NE de esa retención (su «a favor» vuelve a cero)     · PAGO → la NE de ese pago (vuelve a deber lo reintegrado)
+  //   · sin documento (LIBRE / saldo a favor / otro) → baja el saldo a favor del CLIENTE, en una partida aparte
+  // Los reintegros de antes de este vínculo (sin documento elegido) se ligan solos a la retención del mismo cliente cuyo monto en Bs.
+  // sea EXACTAMENTE el reintegrado (si hay una sola y no está ya reintegrada); si no, quedan a nivel del cliente.
+  // Los vinculados a un ANTICIPO ya descuentan el saldo de ese anticipo (_reintegrosPorAnticipo): aquí no se cuentan otra vez.
+  // retsPorNE = retenciones por NE de la vista que llama (CxC o Estado de Cuenta; con _peso / _grupo / _montoUSD).
+  // Devuelve { porNE: NE.id → [ítem], libres: clave del cliente → [ítem] }; cada ítem trae su fecha para aplicar la fecha de corte.
+  const resolverReintegrosCxc = (retsPorNE) => {
+    const porNE = new Map(), libres = new Map();
+    const movs = [...(movBancoApp||[]),...(movCajaApp||[])]
+      .filter(a=>a&&a.esAjusteCxC&&a.terceroId&&!a.anticipoVinculadoId&&a.reintegroTipo!=='ANTICIPO'&&a.tipo!=='Ingreso')
+      .sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||''))||String(a._docId||a.id||'').localeCompare(String(b._docId||b.id||'')));
+    if(!movs.length) return {porNE,libres};
+    const nz=(v)=>String(v==null?'':v).toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const cliById=new Map((clients||[]).map(c=>[c.id,c]));
+    const neById=new Map(), claveCli=new Map(); // claveCli: RIF normalizado → la clave con la que las NE agrupan a ese cliente
+    (notasEntrega||[]).forEach(n=>{
+      if(!n||n.status==='ANULADA') return;
+      neById.set(n.id,n);
+      const k=n.clientRif||n.clientName||'SIN-RIF';
+      if(!claveCli.has(nz(k))) claveCli.set(nz(k),k);
+    });
+    const cobroById=new Map((cobrosCxc||[]).map(c=>[c.id,c]));
+    const retIdx=new Map(); // id de la retención → [{neId, r}] (una por NE cuando la factura junta varias)
+    for(const [neId,arr] of (retsPorNE||[])) for(const r of arr){
+      if(!r||!r.id||r.tipo==='IGTF') continue;
+      if(!retIdx.has(r.id)) retIdx.set(r.id,[]);
+      retIdx.get(r.id).push({neId,r});
+    }
+    const retUsadas=new Set(movs.filter(a=>a.reintegroTipo==='RETENCION'&&a.reintegroDocId).map(a=>a.reintegroDocId));
+    for(const a of movs){
+      const cli=cliById.get(a.terceroId);
+      const rifDir=((cli&&cli.rif)||a.terceroNombre||'').trim();
+      if(!rifDir) continue;
+      const fecha=String(a.fecha||'').substring(0,10);
+      const mBs=parseFloat(a.montoBs)||0, mUsd=parseFloat(a.montoUSD)||0;
+      const enBs=String(a.moneda||'').toUpperCase()==='BS';
+      let tipo=a.reintegroTipo||'', docId=a.reintegroDocId||'', inferido=false;
+      if(!tipo&&mBs>0){ // reintegro anterior al vínculo: se liga solo si coincide en Bs. EXACTO con una sola retención de ese cliente
+        const cands=[];
+        for(const [rid,ents] of retIdx){
+          if(retUsadas.has(rid)) continue;
+          const r0=ents[0].r, rBs=parseFloat(r0.montoRetenido)||0;
+          if(!(rBs>0)||Math.abs(rBs-mBs)>0.01) continue;
+          const fr=String(r0.fechaComprobante||r0.fecha||'').substring(0,10);
+          if(fr&&fecha&&fr>fecha) continue;
+          const ne0=neById.get(ents[0].neId);
+          if(nz((ne0&&ne0.clientRif)||r0.clientRif||r0._manualRif)!==nz(rifDir)) continue;
+          cands.push(rid);
+        }
+        if(cands.length===1){ tipo='RETENCION'; docId=cands[0]; inferido=true; retUsadas.add(docId); }
+      }
+      if(tipo==='RETENCION'&&docId&&retIdx.has(docId)){
+        const ents=retIdx.get(docId), r0=ents[0].r;
+        const rBs=parseFloat(r0.montoRetenido)||0;
+        const rUsd=ents.reduce((t,e)=>t+(parseFloat(e.r._montoUSD)||0),0);
+        const sinTasa=!(rUsd>0);
+        // los MISMOS Bs. de la retención la dejan exactamente en cero (con la tasa de la retención, no la del día del reintegro)
+        const aplic=sinTasa?0:((enBs&&mBs>0&&rBs>0)?mBs*rUsd/rBs:(parseFloat(a.reintegroUSD)||mUsd));
+        const docRef='Ret. '+(r0.nroRetencion||r0.nroComprobante||r0.id)+(r0.nroFactura?' · Fac. '+r0.nroFactura:'');
+        ents.forEach(e=>{
+          if(!porNE.has(e.neId)) porNE.set(e.neId,[]);
+          porNE.get(e.neId).push({mov:a,fecha,tipo:'RETENCION',docRef,docId,inferido,sinTasa,usd:aplic*(e.r._peso==null?1:e.r._peso),grupo:e.r._grupo||null});
+        });
+        continue;
+      }
+      if(tipo==='PAGO'&&docId){
+        const c=cobroById.get(docId);
+        if(c&&c.neId&&neById.has(c.neId)){
+          const cUsd=parseFloat(c.monto)||parseFloat(c.montoUSD)||0, cBs=parseFloat(c.montoBs)||0;
+          const aplic=(enBs&&mBs>0&&cUsd>0&&cBs>0)?mBs*cUsd/cBs:(parseFloat(a.reintegroUSD)||mUsd);
+          if(!porNE.has(c.neId)) porNE.set(c.neId,[]);
+          porNE.get(c.neId).push({mov:a,fecha,tipo:'PAGO',docRef:'Pago '+(c.metodo||'')+(c.referencia?' Ref '+c.referencia:'')+' · '+(c.neDocumento||c.neId),docId,inferido:false,sinTasa:false,usd:aplic,grupo:null});
+          continue;
+        }
+      }
+      // sin documento de origen (o el documento ya no existe): baja el saldo a favor del cliente
+      const rif=claveCli.get(nz(rifDir))||rifDir;
+      if(!libres.has(rif)) libres.set(rif,[]);
+      libres.get(rif).push({mov:a,fecha,tipo:'LIBRE',docRef:a.reintegroDocRef||'',docId:'',inferido:false,sinTasa:false,usd:mUsd,grupo:null,clientName:(cli&&(cli.name||cli.razonSocial||cli.nombre||cli.clientName))||a.terceroNombre||rif});
+    }
+    return {porNE,libres};
+  };
   const [cuentasBanco, setCuentasBanco] = useState([]); // banco_cuentas para selector en modal cobro
   const [cajasCuentas, setCajasCuentas] = useState([]); // caja_cuentas para selector en modal cobro
   const [bancoMovsFin, setBancoMovsFin] = useState([]); // banco_movimientos para Reporte de Reciprocidad de Banco (Finanzas)
@@ -49362,7 +49548,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               const peso=parseNum(neTarget.total||neTarget.totalUSD||0)/totalFacturaPeso;
               const key=neTarget.id;
               if(!_retsPorNE.has(key)) _retsPorNE.set(key,[]);
-              _retsPorNE.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:(inv.nroFiscal||inv.documento||'')+(r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:'')});
+              _retsPorNE.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:(inv.nroFiscal||inv.documento||'')+(r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:''),_peso:peso,_grupo:nesTarget});
             });
           }
           const getRetsDetalleNE=(ne)=>{
@@ -49378,6 +49564,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               sinTasa:items.some(r=>r._sinTasa)
             };
           };
+
+          // Reintegros a clientes ligados a su retención o a su pago (Banco / Caja): suman a lo que el cliente nos debe y cancelan su «a favor»
+          const _reint=resolverReintegrosCxc(_retsPorNE);
+          const getReintegrosNE=(ne,fRef)=>(_reint.porNE.get(ne.id)||[]).filter(x=>!fRef||x.fecha<=fRef);
+          const getReintegroUSDNE=(ne,fRef)=>getReintegrosNE(ne,fRef).reduce((t,x)=>t+x.usd,0);
 
           // Mapa: NE id/doc → NC/ND aplicadas
           const _ncsByNe = new Map();
@@ -49416,7 +49607,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // un pago del propio total) — se excluye de Cobrado igual que ya se excluye de
           // Retención, si no la NE queda con saldo "a favor" que no existe de verdad.
           const _cobradoDirectoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
-          const _saldoDirectoNE=(ne,fRef)=>parseNum(ne.total||ne.totalUSD||0)-_cobradoDirectoNEAtFecha(ne,fRef)-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne);
+          const _saldoDirectoNE=(ne,fRef)=>parseNum(ne.total||ne.totalUSD||0)-_cobradoDirectoNEAtFecha(ne,fRef)-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne)+getReintegroUSDNE(ne,fRef);
           const getSaldoNEAtFecha = (ne, fRef) => {
             // ND directa: su saldo es solo su monto menos lo cobrado contra ella (cobros con neId 'ND-<id>',
             // incluidos los que aplican un anticipo), igual que en Estado de Cuenta. No lleva NC, retencion
@@ -49688,6 +49879,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             porCliente[rif]._anticipos=ants;
             porCliente[rif]._totalAnticipos=totalAntUSD;
           }
+          // Reintegros al cliente SIN documento de origen (saldo a favor / otro; o un reintegro viejo que no cruza con una retención):
+          // suman a lo que nos debe (le devolvimos dinero) y cancelan su «a favor».
+          const _reintLibresPorCliente=new Map();
+          for(const [rif,arr] of _reint.libres){
+            const its=arr.filter(x=>!fechaRef||x.fecha<=fechaRef);
+            if(its.length) _reintLibresPorCliente.set(rif,its);
+          }
+          for(const [rif,its] of _reintLibresPorCliente){
+            const _nm=its[0]?.clientName||rif;
+            if(!porCliente[rif] && cxcSearch.trim() && !_nm.toUpperCase().includes(cxcSearch.toUpperCase()) && !rif.toUpperCase().includes(cxcSearch.toUpperCase())) continue;
+            if(!porCliente[rif] && !_pasaFiltroVendedorSinNE(rif)) continue;
+            const totalLibUSD=its.reduce((t,x)=>t+x.usd,0);
+            if(!porCliente[rif]){
+              porCliente[rif]={clientName:_nm,clientRif:rif,corriente:0,v1_30:0,v31_60:0,vMas60:0,total:0,nes:[]};
+            }
+            porCliente[rif].total+=totalLibUSD;
+            porCliente[rif].corriente+=totalLibUSD;
+            porCliente[rif]._reintLibres=its;
+            porCliente[rif]._totalReintLibres=totalLibUSD;
+          }
           // Cuentas por Cobrar: los clientes con deuda cerrada (saldo 0) no se muestran; los saldos a favor (negativos) sí
           const clientesList=Object.values(porCliente).filter(cl=>Math.abs(cl.total)>=0.01)
             .map(cl=>({...cl,estado:cl.total<-0.01?'A FAVOR':cl.vMas60>0?'CRÍTICO':cl.v31_60>0?'VENCIDO':cl.v1_30>0?'POR COBRAR':'AL DÍA'}))
@@ -49814,6 +50025,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const sobrepagoCerradoClPDF=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
                 clSaldo-=manualRetUSDclPDF; clSaldo+=manualNCSignedUSDPDF; clSaldo-=anticiposUSDclPDF; clSaldo+=sobrepagoCerradoClPDF;
                 gTotUSD-=manualRetUSDclPDF; gTotUSD+=manualNCSignedUSDPDF; gTotUSD-=anticiposUSDclPDF;
+                const reintLibresClPDF=(_reintLibresPorCliente.get(cl.clientRif)||[]);
+                const reintLibresUSDclPDF=reintLibresClPDF.reduce((t,x)=>t+x.usd,0);
+                clSaldo+=reintLibresUSDclPDF; gTotUSD+=reintLibresUSDclPDF;
                 const filaNCND=manualNCCl2.map(nc=>{
                   const facNC=(invoices||[]).find(i=>i.id===nc.facturaId);
                   return `<tr style="background:#faf5ff">
@@ -49833,6 +50047,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     <td style="text-align:right;color:#94a3b8">—</td>
                     <td style="text-align:right;font-weight:bold;color:#15803d">-$${formatNum(parseNum(a._saldoAnt||a.monto||0))}</td>
                     <td style="font-size:8px;color:#15803d;font-style:italic">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${parseNum(a.montoBs||0)>0?' · Bs.'+formatNum(a.montoBs):''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td>
+                  </tr>`).join('');
+                const filaReint=reintLibresClPDF.map(x=>`<tr style="background:#ecfeff">
+                    <td style="font-weight:bold;color:#0e7490">↳ ↩️ Reintegro</td>
+                    <td>${x.fecha||'—'}</td>
+                    <td colspan="2" style="color:#94a3b8">—</td>
+                    <td style="color:#94a3b8">—</td>
+                    <td style="text-align:right;color:#94a3b8">—</td>
+                    <td style="text-align:right;font-weight:bold;color:#0e7490">+$${formatNum(x.usd)}</td>
+                    <td style="font-size:8px;color:#0e7490;font-style:italic">${x.mov.concepto||'Reintegro al cliente'}${x.mov.referencia?' · Ref. '+x.mov.referencia:''} · sin documento de origen</td>
                   </tr>`).join('');
                 const notaAjustes=[
                   manualRetsCl2.length>0?'Retención '+(manualRetUSDclPDF<0?'+':'-')+'$'+formatNum(Math.abs(manualRetUSDclPDF)):'',
@@ -49858,7 +50081,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <th style="text-align:right;padding:5px;font-weight:bold">Saldo USD</th>
                       <th style="text-align:left;padding:5px 16px;font-weight:bold">Observación</th>
                     </tr></thead>
-                    <tbody>${neRows}${filaNCND}${filaAnticipos}</tbody>
+                    <tbody>${neRows}${filaNCND}${filaAnticipos}${filaReint}</tbody>
                     <tfoot><tr class="cl-tot" style="display:table-row;background:#f8fafc;border-top:2px solid #cbd5e1">
                       <td colspan="5" style="padding:5px 16px;font-weight:bold">Subtotal ${cl.nes.length} NE${cl.nes.length>1?'s':''}${notaAjustes?' · '+notaAjustes:''}</td>
                       <td style="text-align:right;padding:5px;font-weight:bold">$${formatNum(clTotalUSD)}</td>
@@ -49925,6 +50148,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   if(invVinc){const baseBsA=parseNum(invVinc.baseImponible||invVinc.montoBase||0);const ivaA=parseNum(invVinc.montoIVA||invVinc.iva||0);const totalBsA=parseNum(invVinc.totalBs||0);const tasaA=parseNum(invVinc.tasa||0);detRows+=`<tr style="background:#eef2ff"><td class="left" style="padding-left:16px;color:#4338ca;font-weight:bold">📋 Fac. ${invVinc.nroFiscal||invVinc.documento||'—'}</td><td class="left">${invVinc.fecha||'—'}</td><td class="left" colspan="2">${invVinc.nroControl?'Ctrl. '+invVinc.nroControl:''}</td><td colspan="3"></td><td class="left" style="color:#4338ca">${baseBsA>0?'Base: Bs.'+formatNum(baseBsA):''}${ivaA>0?' IVA: Bs.'+formatNum(ivaA):''}${totalBsA>0?' Tot: Bs.'+formatNum(totalBsA):''}${tasaA>0?' Tasa: '+formatNum(tasaA):''}  </td><td colspan="3"></td></tr>`;}
                   cobrosNE.forEach(cb=>{detRows+=`<tr class="sub"><td class="left" style="padding-left:16px">💰 Pago · ${cb.fecha}</td><td class="left">${cb.referencia||'—'}</td><td class="left">${cb.metodo||'—'} · ${cb.cuentaBancoNombre||'—'}${cb.concepto?' · <i>'+cb.concepto+'</i>':''}</td><td colspan="4"></td><td class="g" style="font-weight:bold">$${formatNum(parseNum(cb.monto))}${parseNum(cb.montoBs||0)>0?' / Bs.'+formatNum(parseNum(cb.montoBs)):''}</td><td colspan="3"></td></tr>`;});
                   retsNE.forEach(r=>{const rb=parseNum(r.montoRetenido||r.monto||0);const lblX=r.tipoExtra?(r.tipoLabel||r.tipo||'Otra Ret.'):'Ret. IVA';const valX=r._sinTasa?'Sin tasa':(r._montoUSD<0?'-':'')+'$'+formatNum(Math.abs(r._montoUSD));detRows+=`<tr class="ret"><td class="left" style="padding-left:16px">🧾 ${lblX} · ${r.fechaComprobante||r.fecha||'—'}</td><td class="left">Comp. ${r.nroRetencion||r.nroComprobante||'—'}</td><td class="left">${r.porcentaje||r.pct?(r.porcentaje||r.pct)+'%':''}${r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:''}</td><td colspan="6"></td><td class="a">${valX}</td><td></td></tr>`;});
+                  getReintegrosNE(ne,fechaRef).forEach(x=>{detRows+=`<tr style="background:#ecfeff"><td class="left" style="padding-left:16px;color:#0e7490;font-weight:bold">↩️ Reintegro · ${x.fecha||'—'}</td><td class="left">${x.mov.referencia||'—'}</td><td class="left">${x.tipo==='PAGO'?'Reintegro de un pago':'Reintegro de una retención'} · ${x.docRef||''}${x.inferido?' (ligado por monto)':''}</td><td colspan="6"></td><td style="color:#0e7490;font-weight:bold">${x.sinTasa?'Sin tasa':'+$'+formatNum(x.usd)}</td><td></td></tr>`;});
                 });
                 const manualRetsClAg=(_manualRetsPorCliente.get(cl.clientRif)||[]);
                 const manualRetUSDclAg=manualRetsClAg.reduce((s,r)=>s+r._montoUSD,0);
@@ -49936,7 +50160,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const anticiposUSDclAg=anticiposClAg.reduce((s,a)=>s+Math.max(0,a._saldoAnt),0);
                 anticiposClAg.forEach(a=>{detRows+=`<tr style="background:#f0fdfa"><td class="left" style="padding-left:16px;color:#0f766e;font-weight:bold">💰 Anticipo · ${a.fecha||'—'}</td><td class="left">${a.referencia||'—'}</td><td class="left">${a.concepto||'Anticipo de cliente'}</td><td colspan="6"></td><td style="color:#0f766e;font-weight:bold">-$${formatNum(Math.max(0,a._saldoAnt))}</td><td></td></tr>`;});
                 const sobrepagoClAg=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
-                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg+manualNCSignedUSDAg-anticiposUSDclAg+sobrepagoClAg;
+                const reintLibresClAg=(_reintLibresPorCliente.get(cl.clientRif)||[]);
+                const reintLibresUSDclAg=reintLibresClAg.reduce((t,x)=>t+x.usd,0);
+                reintLibresClAg.forEach(x=>{detRows+=`<tr style="background:#ecfeff"><td class="left" style="padding-left:16px;color:#0e7490;font-weight:bold">↩️ Reintegro · ${x.fecha||'—'}</td><td class="left">${x.mov.referencia||'—'}</td><td class="left">${x.mov.concepto||'Reintegro al cliente'} · sin documento de origen</td><td colspan="6"></td><td style="color:#0e7490;font-weight:bold">+$${formatNum(x.usd)}</td><td></td></tr>`;});
+                const clTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-manualRetUSDclAg+manualNCSignedUSDAg-anticiposUSDclAg+sobrepagoClAg+reintLibresUSDclAg;
                 detRows+=`<tr style="background:#dbeafe;font-weight:bold"><td class="left" colspan="9">SUBTOTAL</td><td style="color:#dc2626">${clTot<-0.01?'-$'+formatNum(Math.abs(clTot)):'$'+formatNum(clTot)}</td><td></td></tr><tr><td colspan="11"></td></tr>`;
               });
               const html=XH+EMPRESA
@@ -49970,12 +50197,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const sobrepagoCerradoClXls=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);
                 clSaldo-=manualRetUSDclXls; clSaldo+=manualNCSignedUSDXls; clSaldo-=anticiposUSDclXls; clSaldo+=sobrepagoCerradoClXls;
                 gTotUSD-=manualRetUSDclXls; gTotUSD+=manualNCSignedUSDXls; gTotUSD-=anticiposUSDclXls;
+                const reintLibresClXls=(_reintLibresPorCliente.get(cl.clientRif)||[]);
+                const reintLibresUSDclXls=reintLibresClXls.reduce((t,x)=>t+x.usd,0);
+                clSaldo+=reintLibresUSDclXls; gTotUSD+=reintLibresUSDclXls;
                 manualNCClXls.forEach(nc=>{
                   const facNC=(invoices||[]).find(i=>i.id===nc.facturaId);
                   body+=`<tr style="background:#faf5ff"><td class="left" style="font-weight:bold;color:#9d174d">↳ ${nc.tipo||'NC'} ${nc.nroDocumento||''}</td><td class="left">${nc.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#4338ca">${facNC?.nroFiscal||facNC?.documento||'—'}</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#9d174d">${(nc._signedUSD||0)<0?'-':'+'}$${formatNum(Math.abs(nc._signedUSD||0))}</td><td class="left" style="font-style:italic;color:#9d174d">${nc.descripcion||'Ajuste directo'}</td></tr>`;
                 });
                 anticiposClXls.forEach(a=>{
                   body+=`<tr style="background:#f0fdf4"><td class="left" style="font-weight:bold;color:#15803d">↳ Anticipo</td><td class="left">${a.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#94a3b8">—</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#15803d">-$${formatNum(parseNum(a._saldoAnt||a.monto||0))}</td><td class="left" style="font-style:italic;color:#15803d">${a.cuentaBancoNombre||a.metodo||''}${a.referencia?' · Ref. '+a.referencia:''}${parseNum(a.montoBs||0)>0?' · Bs.'+formatNum(a.montoBs):''}${!a.cuentaBancoNombre&&!a.referencia?(a.concepto||'Anticipo pendiente de aplicar'):''}</td></tr>`;
+                });
+                reintLibresClXls.forEach(x=>{
+                  body+=`<tr style="background:#ecfeff"><td class="left" style="font-weight:bold;color:#0e7490">↳ ↩️ Reintegro</td><td class="left">${x.fecha||'—'}</td><td class="left" style="color:#94a3b8">—</td><td class="left" style="color:#94a3b8">—</td><td style="color:#94a3b8">—</td><td style="font-weight:bold;color:#0e7490">+$${formatNum(x.usd)}</td><td class="left" style="font-style:italic;color:#0e7490">${x.mov.concepto||'Reintegro al cliente'}${x.mov.referencia?' · Ref. '+x.mov.referencia:''} · sin documento de origen</td></tr>`;
                 });
                 const notaAjustesXls=[
                   (manualRetUSDclXls>0||manualRetUSDclXls<0)?'Retención '+(manualRetUSDclXls<0?'+':'-')+'$'+formatNum(Math.abs(manualRetUSDclXls)):'',
@@ -51212,6 +51445,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                             <td className="py-1.5 px-2 text-teal-600 font-bold">Saldo a favor del cliente</td>
                                           </tr>
                                         ))}
+                                        {(cl._reintLibres||[]).map((x,xi)=>(
+                                          <tr key={`rei-${xi}`} style={{background:'#ecfeff'}} className="border-b border-cyan-100" data-testid="cxc-reintegro-libre">
+                                            <td className="py-1.5 px-2 font-black text-cyan-700">↩️ REINTEGRO</td>
+                                            <td className="py-1.5 px-2 text-center">{x.fecha}</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">{x.mov.referencia||'—'}</td>
+                                            <td className="py-1.5 px-2 text-right text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-right text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-right text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-right text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-right font-mono font-black text-cyan-700">+${formatNum(x.usd)}</td>
+                                            <td className="py-1.5 px-2 text-center text-gray-400">—</td>
+                                            <td className="py-1.5 px-2 text-cyan-700 font-bold">{x.mov.concepto||'Reintegro al cliente'} · sin documento de origen</td>
+                                          </tr>
+                                        ))}
                                         {cl.nes.map((ne,i)=>{
                                           const saldo=getSaldoNEAtFecha(ne,fechaRef);const cobNE=getCobradoNEAtFecha(ne,fechaRef);
                                           const ncNE=getNCNEAtFecha(ne,fechaRef);const retNE=getRetNE(ne);const retDetalle=getRetsDetalleNE(ne);const tasa=getTasa(ne);
@@ -51382,6 +51631,22 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                                 </tr>
                                                 );
                                               })}
+                                              {getReintegrosNE(ne,fechaRef).map((x,xi)=>(
+                                                <tr key={`rein-${xi}`} className="border-b border-cyan-100" style={{background:'#ecfeff'}} data-testid="cxc-reintegro-ne">
+                                                  <td className="py-1.5 px-2 pl-6 text-[8px] font-black text-cyan-700">↳ ↩️ Reintegro</td>
+                                                  <td className="py-1.5 px-2 text-[8px] font-bold text-cyan-600">{x.fecha||'—'}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-400" colSpan={2}>—</td>
+                                                  <td className="py-1.5 px-2 text-[8px] font-mono text-gray-500">{x.mov.referencia||'—'}</td>
+                                                  <td className="py-1.5 px-2 text-right text-[8px] text-gray-400" colSpan={4}>—</td>
+                                                  <td className={'py-1.5 px-2 text-right text-[8px] font-black '+(x.sinTasa?'text-red-500':'text-cyan-700')}>{x.sinTasa?'⚠ Sin tasa':'+$'+formatNum(x.usd)}</td>
+                                                  <td className="py-1.5 px-2 text-[8px] text-gray-500" colSpan={2}>
+                                                    <span className="font-bold text-cyan-700">{x.tipo==='PAGO'?'Reintegro de un pago':'Reintegro de una retención'}</span>
+                                                    {x.docRef&&<span className="ml-1 text-gray-500">· {x.docRef}</span>}
+                                                    {x.mov.concepto&&<span className="ml-1 text-gray-400">· {x.mov.concepto}</span>}
+                                                    {x.inferido&&<span className="ml-1 text-gray-400">· ligado por monto</span>}
+                                                  </td>
+                                                </tr>
+                                              ))}
                                             </React.Fragment>
                                           );
                                         })}
@@ -51462,13 +51727,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                       </tbody>
                                       <tfoot>
                                         <tr style={{background:'#0f172a'}} className="text-[9px]">
-                                          <td colSpan={5} className="py-2 px-2 text-white font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}{(_manualRetsPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualRetsPorCliente.get(cl.clientRif)||[]).length+' ret. manual':''}{(_manualNCPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualNCPorCliente.get(cl.clientRif)||[]).length+' NC/ND directa':''}{(cl._anticipos||[]).length>0?' + '+(cl._anticipos||[]).length+' anticipo(s)':''}</td>
+                                          <td colSpan={5} className="py-2 px-2 text-white font-black uppercase">Subtotal {cl.nes.length} doc{cl.nes.length>1?'s':''}{(_manualRetsPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualRetsPorCliente.get(cl.clientRif)||[]).length+' ret. manual':''}{(_manualNCPorCliente.get(cl.clientRif)||[]).length>0?' + '+(_manualNCPorCliente.get(cl.clientRif)||[]).length+' NC/ND directa':''}{(cl._anticipos||[]).length>0?' + '+(cl._anticipos||[]).length+' anticipo(s)':''}{(cl._reintLibres||[]).length>0?' + '+(cl._reintLibres||[]).length+' reintegro(s)':''}</td>
                                           <td className="py-2 px-2 text-right text-gray-300 font-bold">${formatNum(cl.nes.reduce((s,ne)=>s+parseNum(ne.total||ne.totalUSD||0),0))}</td>
                                           <td className="py-2 px-2 text-right text-green-400 font-black">{cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)>0?'$'+formatNum(cl.nes.reduce((s,ne)=>s+getCobradoNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-blue-400 font-black">{cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)>0?'-$'+formatNum(cl.nes.reduce((s,ne)=>s+getNCNEAtFecha(ne,fechaRef),0)):'—'}</td>
                                           <td className="py-2 px-2 text-right text-amber-400 font-black">{(()=>{const _tIva=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).ivaUSD,0);return (_tIva>0||_tIva<0)?(_tIva<0?'-':'')+'$'+formatNum(Math.abs(_tIva)):'—';})()}</td>
                                           <td className="py-2 px-2 text-right text-teal-400 font-black">{(()=>{const _tOtras=cl.nes.reduce((s,ne)=>s+getRetsDetalleNE(ne).otrasUSD,0)+(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0);return (_tOtras>0||_tOtras<0)?(_tOtras<0?'-':'')+'$'+formatNum(Math.abs(_tOtras)):'—';})()}</td>
-                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sobrepagoCl=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0)+sobrepagoCl;return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
+                                          <td className="py-2 px-2 text-right text-orange-400 font-black">{(()=>{const sobrepagoCl=nesTotal.filter(ne=>ne.status!=='ANULADA'&&(ne.clientRif||ne.clientName||'SIN-RIF')===cl.clientRif&&getSaldoNEAtFecha(ne,fechaRef)<-0.01).reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0);const sTot=cl.nes.reduce((s,ne)=>s+getSaldoNEAtFecha(ne,fechaRef),0)-(_manualRetsPorCliente.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorCliente.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(cl._totalAnticipos||0)+sobrepagoCl+(cl._totalReintLibres||0);return sTot<-0.01?'-$'+formatNum(Math.abs(sTot)):'$'+formatNum(sTot);})()}</td>
                                           <td colSpan={2}></td>
                                         </tr>
                                       </tfoot>
@@ -51806,6 +52071,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               sinTasa:items.some(r=>r._sinTasa)
             };
           };
+          // Reintegros a clientes ligados a su retención o a su pago (Banco / Caja): suman a lo que el cliente nos debe y cancelan su «a favor»
+          // (al corte, solo cuentan los hechos hasta la fecha «Hasta»)
+          const _reintEc=resolverReintegrosCxc(_retsPorNEec);
+          const getReintegrosNEec=(ne)=>(_reintEc.porNE.get(ne.id)||[]).filter(x=>!despuesDelCorteEc(x.fecha));
+          const getReintegroUSDNEec=(ne)=>getReintegrosNEec(ne).reduce((t,x)=>t+x.usd,0);
           // NC/ND indexadas por TODAS sus claves (NE, documento y factura) — igual que CxC/Registrar Cobro
           const _ncsByKeyEc = new Map();
           for(const n of (notasVentaCD||[])){
@@ -51920,7 +52190,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // igtfUSD se excluye del descuento: el IGTF es un cargo aparte, ya excluido arriba de
             // Cobrado también — contarlo en cualquiera de los dos lados deja un saldo "a favor"
             // que no existe de verdad.
-            return parseNum(ne.total||ne.montoBase||0)-cobrado-nc-retD.ivaUSD-retD.otrasUSD+retD.igtfUSD;
+            return parseNum(ne.total||ne.montoBase||0)-cobrado-nc-retD.ivaUSD-retD.otrasUSD+retD.igtfUSD+getReintegroUSDNEec(ne);
           };
           const getSaldoNE = (ne) => {
             const grupo=getGrupoInvoiceNEsEc(ne);
@@ -52037,6 +52307,33 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               if(okD.length) _manualNCPorClienteEc.set(rifD,okD); else _manualNCPorClienteEc.delete(rifD);
             }
           }
+          // Ajustes a CxC (Banco/Caja marcados como "esAjusteCxC", tercero=Cliente) — movimientos que NO son cobro de factura
+          // ni anticipo formal, pero sí afectan lo que ese cliente nos debe. Se muestran como línea aparte.
+          //  · Ingreso (nos pagó algo fuera de factura): como siempre.
+          //  · Egreso = REINTEGRO (le devolvimos dinero): SUMA a lo que nos debe, porque cancela el «a favor» que tenía. Si el reintegro
+          //    tiene su retención o su pago, ya se descontó en la NE de ese documento (_reintEc.porNE); aquí quedan solo los que NO tienen
+          //    documento de origen (saldo a favor / otro), a nombre del cliente.
+          //  · Los vinculados a un anticipo (anticipoVinculadoId) no se cuentan aquí: ya reducen el saldo de ese anticipo.
+          const _ajustesCxcPorClienteEc=(()=>{
+            const m=new Map();
+            [...(movBancoApp||[]),...(movCajaApp||[])].filter(a=>a.esAjusteCxC && a.terceroId && !a.anticipoVinculadoId && a.tipo==='Ingreso' && !despuesDelCorteEc(a.fecha)).forEach(a=>{
+              // terceroId es el id de Firestore del cliente — se resuelve a su RIF, que es como
+              // este Estado de Cuenta agrupa a los clientes.
+              const rifCliente=(clients.find(c=>c.id===a.terceroId)?.rif||a.terceroNombre||'').trim();
+              if(!rifCliente) return;
+              if(!m.has(rifCliente)) m.set(rifCliente,[]);
+              m.get(rifCliente).push({...a,_montoUSD:Number(a.montoUSD||0),_esReint:false});
+            });
+            for(const [rifCliente,arr] of _reintEc.libres){
+              arr.filter(x=>!despuesDelCorteEc(x.fecha)).forEach(x=>{
+                if(!m.has(rifCliente)) m.set(rifCliente,[]);
+                m.get(rifCliente).push({...x.mov,_montoUSD:x.usd,_esReint:true,clientName:x.clientName});
+              });
+            }
+            m.forEach(arr=>arr.sort((a,b)=>String(a.fecha||'').localeCompare(String(b.fecha||''))));
+            return m;
+          })();
+          if(ecNeFiltro!=='TODAS') _ajustesCxcPorClienteEc.clear(); // los ajustes de banco/caja tampoco pertenecen a una NE
           const porCli={};
           allNEs.forEach(ne=>{
             const k=ne.clientRif||ne.clientName||'SIN-RIF';
@@ -52057,32 +52354,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           for(const [rif,ncs] of _manualNCPorClienteEc){
             if(!porCli[rif]) porCli[rif]={clientName:ncs[0]?.clientName||rif,clientRif:rif,vendedor:_vendedorPorClienteEc.get(rif.toUpperCase())||'—',nes:[]};
           }
+          // Inyectar clientes que solo tienen reintegros / ajustes de Banco o Caja (sin NEs)
+          for(const [rif,ajs] of _ajustesCxcPorClienteEc){
+            if(!porCli[rif]) porCli[rif]={clientName:ajs[0]?.clientName||ajs[0]?.terceroNombre||rif,clientRif:rif,vendedor:_vendedorPorClienteEc.get(rif.toUpperCase())||'—',nes:[]};
+          }
           let cliList=Object.values(porCli).sort((a,b)=>(a.clientName||'').localeCompare(b.clientName||'','es'));
           if(ecSearch) cliList=cliList.filter(cl=>(cl.clientName||'').toLowerCase().includes(ecSearch.toLowerCase())||(cl.clientRif||'').toLowerCase().includes(ecSearch.toLowerCase()));
           if(ecVendedor!=='TODOS') cliList=cliList.filter(cl=>cl.nes.some(ne=>(ne.vendedor||'').toUpperCase()===ecVendedor)||(cl.vendedor||'').toUpperCase()===ecVendedor);
-          // Ajustes a CxC (Banco/Caja marcados como "esAjusteCxC", tercero=Cliente) — movimientos
-          // que NO son cobro de factura ni anticipo formal (ej. reintegro a un cliente), pero sí
-          // afectan lo que ese cliente nos debe. Mismo patrón que Procura usa para CxP: Egreso
-          // (le devolvimos dinero) resta del saldo que nos debe; Ingreso (nos pagó algo fuera de
-          // factura) suma. Se muestran como línea aparte para no duplicar lo que ya cuentan las NE.
-          const _ajustesCxcPorClienteEc=(()=>{
-            const m=new Map();
-            // Los ajustes vinculados a un anticipo (anticipoVinculadoId) NO se cuentan aquí aparte —
-            // ya están reflejados al reducir el saldo disponible de ese anticipo (mismo mecanismo que
-            // aplicar un anticipo a una factura). Contarlos también aquí duplicaría el crédito.
-            [...(movBancoApp||[]),...(movCajaApp||[])].filter(a=>a.esAjusteCxC && a.terceroId && !a.anticipoVinculadoId && !despuesDelCorteEc(a.fecha)).forEach(a=>{
-              // terceroId es el id de Firestore del cliente — se resuelve a su RIF, que es como
-              // este Estado de Cuenta agrupa a los clientes.
-              const rifCliente=(clients.find(c=>c.id===a.terceroId)?.rif||a.terceroNombre||'').trim();
-              if(!rifCliente) return;
-              if(!m.has(rifCliente)) m.set(rifCliente,[]);
-              const esIngreso=a.tipo==='Ingreso';
-              const montoUSD=Number(a.montoUSD||0)*(esIngreso?1:-1);
-              m.get(rifCliente).push({...a,_montoUSD:montoUSD});
-            });
-            return m;
-          })();
-          if(ecNeFiltro!=='TODAS') _ajustesCxcPorClienteEc.clear(); // los ajustes de banco/caja tampoco pertenecen a una NE
+          // Ajustes a CxC a nivel de cliente: ver _ajustesCxcPorClienteEc (se calcula antes de armar la lista de clientes)
           const getAjustesCxcClienteEc=(cl)=>_ajustesCxcPorClienteEc.get(cl.clientRif)||[];
           const getAjustesCxcClienteTotalEc=(cl)=>getAjustesCxcClienteEc(cl).reduce((s,a)=>s+a._montoUSD,0);
           const getSaldoClienteTotalEc=(cl)=>cl.nes.reduce((s,ne)=>s+getSaldoNE(ne),0)-(_manualRetsPorClienteEc.get(cl.clientRif)||[]).reduce((s,r)=>s+r._montoUSD,0)+(_manualNCPorClienteEc.get(cl.clientRif)||[]).reduce((s,n)=>s+n._signedUSD,0)-(_anticiposPorClienteEc.get(cl.clientRif)||[]).reduce((s,a)=>s+Math.max(0,a._saldoAnt),0)+getAjustesCxcClienteTotalEc(cl);
@@ -52175,6 +52454,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     detalle:detCobro(cb,bs?ecbMoney('USD',num(cb.monto))+(mv.via==='tasa de la factura'?' · Bs. a la tasa de la factura':''):''),
                     tasa:bs&&mv.tasa>1?mv.tasa:null,cargo:null,ncret:null,abono:bs?mv.bs:R(num(cb.monto)),aviso:(bs&&mv.sinTasa)?'⚠ Sin tasa':''});
                 });
+                // Reintegros al cliente ligados a la retención o al pago de esta NE: le devolvimos dinero, así que suman a lo que nos debe
+                getReintegrosNEec(ne).forEach((x)=>{
+                  const aj=ecbAjusteBs(x.mov);
+                  const vBs=aj.sinTasa?null:((x.grupo&&x.grupo.length>1)?parteDe(aj.bs,x.grupo,ne):aj.bs);
+                  sub.push({nivel:1,tono:'aju',cat:'OTRO',doc:'Reintegro',fecha:x.fecha||'',tipoTxt:'Reintegro',
+                    detalle:[x.tipo==='PAGO'?'Reintegro de un pago':'Reintegro de una retención',x.docRef,x.mov.concepto,x.mov.referencia?'Ref. '+x.mov.referencia:'',x.inferido?'ligado por monto':''].filter(Boolean).join(' · '),
+                    tasa:bs&&ecbNum(x.mov.tasa)>1?ecbNum(x.mov.tasa):null,cargo:bs?vBs:(x.sinTasa?null:R(x.usd)),ncret:null,abono:null,
+                    aviso:((bs&&aj.sinTasa)||(!bs&&x.sinTasa))?'⚠ Sin tasa':''});
+                });
                 const suma=(k)=>sub.reduce((s,r)=>s+(r[k]||0),0);
                 const cargoDoc=bs?parteDe(fv.totalBs,nesDeInvEc(inv),ne):R(num(ne.total||ne.montoBase));
                 rows.push({...docBase,tono:'doc',cat:'FACT',tipoTxt:'NE',detalle:descNE||'—',tasa:(bs&&fv.tasa>1)?fv.tasa:null,cargo:cargoDoc,ncret:null,abono:null,
@@ -52213,12 +52501,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   tasa:bs&&ecbNum(a.tasa)>1?ecbNum(a.tasa):null,cargo:null,ncret:null,abono:v,saldo:v==null?null:R(-v),saldoUsd:-sAnt,estado:'',aviso:(bs&&ab.sinTasa)?'⚠ Sin tasa':''});
               });
               getAjustesCxcClienteEc(cl).forEach((a)=>{
-                const esReint=a._montoUSD<0;
+                const esReint=!!a._esReint; // reintegro SIN documento de origen: le devolvimos dinero, suma a lo que nos debe (cancela su «a favor»)
                 const aj=ecbAjusteBs(a);
                 const v=bs?(aj.sinTasa?null:aj.bs):R(Math.abs(a._montoUSD));
                 rows.push({nivel:0,esDoc:false,tono:'aju',cat:'OTRO',doc:esReint?'REINTEGRO':'AJUSTE',fecha:a.fecha||'',vence:'',tipoTxt:'Ajuste CxC',
-                  detalle:(a.concepto||(esReint?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' · Ref. '+a.referencia:''),
-                  tasa:bs&&ecbNum(a.tasa)>1?ecbNum(a.tasa):null,cargo:esReint?null:v,ncret:null,abono:esReint?v:null,saldo:v==null?null:R(esReint?-v:v),saldoUsd:ecbNum(a._montoUSD),estado:'',aviso:(bs&&aj.sinTasa)?'⚠ Sin tasa':''});
+                  detalle:(a.concepto||(esReint?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' · Ref. '+a.referencia:'')+(esReint?' · sin documento de origen (saldo a favor / otro)':''),
+                  tasa:bs&&ecbNum(a.tasa)>1?ecbNum(a.tasa):null,cargo:v,ncret:null,abono:null,saldo:v==null?null:R(v),saldoUsd:ecbNum(a._montoUSD),estado:'',aviso:(bs&&aj.sinTasa)?'⚠ Sin tasa':''});
               });
               const saldoUsdCl=getSaldoClienteTotalEc(cl);
               return {key:cl.clientRif,nombre:cl.clientName,rif:cl.clientRif,vendedor:cl.nes[0]?.vendedor||cl.vendedor||'—',estado:ecbEstadoDe(saldoUsdCl),saldoUsd:saldoUsdCl,sinFactura:sinFacN?{n:sinFacN,usd:R(sinFacUsd)}:null,rows};
@@ -52246,6 +52534,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               notas.push('Montos en dólares (USD) tal como los muestra el sistema. Las retenciones y las notas se convierten a USD con la tasa de cada documento; la factura fiscal se muestra con sus datos en Bs. como referencia.');
             }
             if(hayIgtf) notas.push('El IGTF se muestra como informativo: no se suma al cobrado ni se descuenta del saldo.');
+            if(terceros.some((t)=>t.rows.some((r)=>r.tipoTxt==='Reintegro'||r.doc==='REINTEGRO'))) notas.push('Reintegros: dinero que se le devolvió al cliente (Banco / Caja). Se muestran bajo la retención o el pago que devuelven y suman a lo que nos debe, cancelando el «a favor» que ese documento había dejado; los que no tienen documento de origen salen aparte, a nombre del cliente.');
             if(haySinTasa) notas.push('Las partidas marcadas «Sin tasa» no tienen monto en Bs. registrado ni tasa para calcularlo; no se suman.');
             if(ecNeFiltro==='CON_FACTURA') notas.push('CxC fiscal: NE que ya tienen factura fiscal, con su factura, sus notas de crédito/débito, retenciones y cobros, más las notas de crédito/débito (fiscales y no fiscales, cada una con su tasa) de clientes directos (sin NE). El rango de fechas se aplica a la fecha de la factura fiscal (y a la fecha propia de cada nota directa). No incluye anticipos, ajustes ni retenciones manuales.');
             if(ecNeFiltro==='SIN_FACTURA') notas.push('CxC sin factura: NE que todavía no tienen factura fiscal (la NE es lo que genera la cuenta por cobrar), más las notas no fiscales de clientes directos. El rango de fechas se aplica a la fecha de la NE (y a la fecha propia de cada nota directa). No incluye anticipos, ajustes ni retenciones manuales.');
@@ -52378,6 +52667,21 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     +'<td style="padding:2px 6px;text-align:center">'+badge(esIgtf?'IGTF':'Cobrado',bgC,tcC)+'</td>'
                     +'</tr>';
                 });
+                // Reintegros al cliente ligados a la retención o al pago de esta NE (suman a lo que nos debe)
+                getReintegrosNEec(ne).forEach((x)=>{
+                  const detalleR=[x.tipo==='PAGO'?'Reintegro de un pago':'Reintegro de una retención',x.docRef,x.mov.concepto,x.mov.referencia?'Ref. '+x.mov.referencia:''].filter(Boolean).join(' · ')+(x.inferido?' · ligado por monto':'');
+                  neRowsHtml+='<tr style="background:#ecfeff;border-bottom:1px solid #a5f3fc">'
+                    +'<td style="padding:2px 6px;padding-left:20px;font-size:8px;color:#0e7490;font-weight:700">↳ Reintegro</td>'
+                    +'<td style="padding:2px 6px;font-size:8px;color:#0e7490">'+fD(x.fecha)+'</td>'
+                    +'<td style="padding:2px 6px">'+badge('Reintegro','#ecfeff','#0e7490')+'</td>'
+                    +'<td style="padding:2px 6px;font-size:8px;color:#0e7490">'+detalleR+'</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-family:monospace;font-weight:700;font-size:8px;color:#0e7490">'+(x.sinTasa?'⚠ Sin tasa':'+$'+fmtN(x.usd))+'</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                    +'<td style="padding:2px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                    +'<td style="padding:2px 6px;text-align:center">'+badge('Reintegrado','#ecfeff','#0e7490')+'</td>'
+                    +'</tr>';
+                });
               });
               manualRetsCl.forEach(r=>{
                 const valTxtM=r._sinTasa?'⚠ Sin tasa':(r._montoUSD<0?'+$':'-$')+fmtN(Math.abs(r._montoUSD));
@@ -52421,17 +52725,17 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   +'</tr>';
               });
               getAjustesCxcClienteEc(cl).forEach(a=>{
-                const esReintegro=a._montoUSD<0;
+                const esReintegro=!!a._esReint; // reintegro SIN documento de origen: suma a lo que nos debe
                 const colorAj=esReintegro?'#0e7490':'#b45309', bgAj=esReintegro?'#ecfeff':'#fffbeb', borderAj=esReintegro?'#a5f3fc':'#fde68a';
                 neRowsHtml+='<tr style="background:'+bgAj+';border-bottom:1px solid '+borderAj+'">'
-                  +'<td style="padding:3px 6px;color:'+colorAj+';font-weight:900;font-size:9px">'+(esReintegro?'\u21a9\ufe0f REINTEGRO':'\u26a0\ufe0f AJUSTE')+'</td>'
+                  +'<td style="padding:3px 6px;color:'+colorAj+';font-weight:900;font-size:9px">'+(esReintegro?'↩️ REINTEGRO':'⚠️ AJUSTE')+'</td>'
                   +'<td style="padding:3px 6px;font-size:8px;color:'+colorAj+'">'+fD(a.fecha)+'</td>'
                   +'<td style="padding:3px 6px">'+badge('Ajuste CxC',bgAj,colorAj)+'</td>'
-                  +'<td style="padding:3px 6px;font-size:8px;color:'+colorAj+'">'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td>'
-                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:'+colorAj+'">'+(!esReintegro?'$'+fmtN(Math.abs(a._montoUSD)):'\u2014')+'</td>'
-                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">\u2014</td>'
-                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:'+colorAj+'">'+(esReintegro?'$'+fmtN(Math.abs(a._montoUSD)):'\u2014')+'</td>'
-                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:'+colorAj+'">'+(esReintegro?'-':'+')+'$'+fmtN(Math.abs(a._montoUSD))+'</td>'
+                  +'<td style="padding:3px 6px;font-size:8px;color:'+colorAj+'">'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' · Ref. '+a.referencia:'')+(esReintegro?' · sin documento de origen':'')+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:8px;color:'+colorAj+'">$'+fmtN(Math.abs(a._montoUSD))+'</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-size:8px;color:#94a3b8">—</td>'
+                  +'<td style="padding:3px 6px;text-align:right;font-family:monospace;font-weight:900;font-size:9px;color:'+colorAj+'">+$'+fmtN(Math.abs(a._montoUSD))+'</td>'
                   +'<td style="padding:3px 6px;text-align:center">'+badge(esReintegro?'Reintegrado':'Cargo',bgAj,colorAj)+'</td>'
                   +'</tr>';
               });
@@ -52540,6 +52844,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     const esIgtfX=cb.tipo==='IGTF'; // el IGTF es un cargo aparte: informativo, no se suma al cobrado
                     bodyXls+='<tr><td style="padding-left:16px;color:'+(esIgtfX?'#475569':'#166534')+'">\u21b3 '+(esIgtfX?'IGTF':'Pago')+'</td><td>'+(cb.fecha||'')+'</td><td>'+(esIgtfX?'IGTF (informativo)':'Pago')+'</td><td>'+(cb.metodo||'')+' \u00b7 '+(cb.referencia||'')+(esIgtfX?' \u00b7 IGTF $'+fmtN2(cb.monto)+' \u00b7 no se suma al cobrado':'')+'</td><td colspan="3"></td><td>'+(esIgtfX?'':'$'+fmtN2(cb.monto))+'</td><td></td></tr>';
                   });
+                  getReintegrosNEec(ne).forEach(x=>{
+                    bodyXls+='<tr><td style="padding-left:16px;color:#0e7490">↳ Reintegro</td><td>'+(x.fecha||'')+'</td><td>Reintegro</td><td>'+[x.tipo==='PAGO'?'Reintegro de un pago':'Reintegro de una retención',x.docRef,x.mov.concepto,x.mov.referencia?'Ref. '+x.mov.referencia:''].filter(Boolean).join(' · ')+(x.inferido?' · ligado por monto':'')+'</td><td>'+(x.sinTasa?'Sin tasa':'+$'+fmtN2(x.usd))+'</td><td colspan="4"></td></tr>';
+                  });
                 });
                 manualRetsClX.forEach(r=>{
                   const valTxtMx=r._sinTasa?'Sin tasa':(r._montoUSD<0?'-':'')+'$'+fmtN2(Math.abs(r._montoUSD));
@@ -52553,8 +52860,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   bodyXls+='<tr><td style="padding-left:16px;color:#0f766e;font-weight:bold">\ud83d\udcb0 ANTICIPO</td><td>'+(a.fecha||'')+'</td><td>Anticipo</td><td>'+(a.concepto||'Anticipo de cliente')+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>$'+fmtN2(a.monto||0)+'</td><td colspan="3">'+((a._aplicadoHasta>0.01?'Aplicado $'+fmtN2(a._aplicadoHasta)+' ':'')+(a._reintegrado>0.01?'Reintegrado $'+fmtN2(a._reintegrado):''))+'</td><td style="color:#0f766e;font-weight:bold">-$'+fmtN2(Math.max(0,a._saldoAnt))+'</td></tr>';
                 });
                 getAjustesCxcClienteEc(cl).forEach(a=>{
-                  const esReintegro=a._montoUSD<0, colorAj=esReintegro?'#0e7490':'#b45309';
-                  bodyXls+='<tr><td style="padding-left:16px;color:'+colorAj+';font-weight:bold">'+(esReintegro?'\u21a9\ufe0f REINTEGRO':'\u26a0\ufe0f AJUSTE')+'</td><td>'+(a.fecha||'')+'</td><td>Ajuste CxC</td><td>'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' \u00b7 Ref. '+a.referencia:'')+'</td><td>'+(!esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td colspan="2"></td><td>'+(esReintegro?'$'+fmtN2(Math.abs(a._montoUSD)):'')+'</td><td style="color:'+colorAj+';font-weight:bold">'+(esReintegro?'-':'+')+'$'+fmtN2(Math.abs(a._montoUSD))+'</td></tr>';
+                  const esReintegro=!!a._esReint, colorAj=esReintegro?'#0e7490':'#b45309';
+                  bodyXls+='<tr><td style="padding-left:16px;color:'+colorAj+';font-weight:bold">'+(esReintegro?'↩️ REINTEGRO':'⚠️ AJUSTE')+'</td><td>'+(a.fecha||'')+'</td><td>Ajuste CxC</td><td>'+(a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa'))+(a.referencia?' · Ref. '+a.referencia:'')+(esReintegro?' · sin documento de origen':'')+'</td><td>$'+fmtN2(Math.abs(a._montoUSD))+'</td><td colspan="3"></td><td style="color:'+colorAj+';font-weight:bold">+$'+fmtN2(Math.abs(a._montoUSD))+'</td></tr>';
                 });
                 bodyXls+='<tr style="background:#dbeafe;font-weight:bold"><td colspan="4">SUBTOTAL '+cl.nes.length+' doc(s)'+(manualNCClX.length>0?' + '+manualNCClX.length+' NC/ND directa':'')+'</td><td>$'+fmtN2(facturadoClX)+(Math.abs(ncNdTotClX)>0.004?' / NC-ND '+(ncNdTotClX<0?'-$'+fmtN2(Math.abs(ncNdTotClX)):'+$'+fmtN2(ncNdTotClX)):'')+'</td><td>'+(retIvaClX<0?'-':'')+'$'+fmtN2(Math.abs(retIvaClX))+'</td><td>'+(retOtrasClX<0?'-':'')+'$'+fmtN2(Math.abs(retOtrasClX))+'</td><td>$'+fmtN2(cobradoClX)+'</td><td>'+(saldoClX<-0.01?'-$'+fmtN2(Math.abs(saldoClX)):'$'+fmtN2(saldoClX))+'</td></tr>';
                 bodyXls+='<tr><td colspan="9"></td></tr>';
@@ -52802,6 +53109,26 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   <td className="py-1.5 px-3 text-center"><span className={'px-1.5 py-0.5 rounded text-[8px] font-black '+(esIgtf?'bg-slate-100 text-slate-600':'bg-green-50 text-green-700')}>{esIgtf?'IGTF':'Cobrado'}</span></td>
                                 </tr>);
                               })}
+                              {getReintegrosNEec(ne).map((x,xi)=>(
+                                <tr key={'rein-'+xi} className="border-b border-cyan-100" style={{background:'#ecfeff'}} data-testid="ec-reintegro-ne">
+                                  <td className="py-1.5 px-3 pl-7 text-[8px] font-black text-cyan-700">↳ Reintegro</td>
+                                  <td className="py-1.5 px-3 text-[8px] text-cyan-600">{x.fecha||'—'}</td>
+                                  <td className="py-1.5 px-3"></td>
+                                  <td className="py-1.5 px-3"><span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-cyan-50 text-cyan-700">Reintegro</span></td>
+                                  <td className="py-1.5 px-3 text-[8px] text-gray-500">
+                                    <span className="font-bold text-cyan-700">{x.tipo==='PAGO'?'Reintegro de un pago':'Reintegro de una retención'}</span>
+                                    {x.docRef&&<span className="ml-1">· {x.docRef}</span>}
+                                    {x.mov.concepto&&<span className="ml-1 text-gray-400">· {x.mov.concepto}</span>}
+                                    {x.mov.referencia&&<span className="ml-1 font-mono text-gray-400">· Ref. {x.mov.referencia}</span>}
+                                    {x.inferido&&<span className="ml-1 text-gray-400">· ligado por monto</span>}
+                                  </td>
+                                  <td className={'py-1.5 px-3 text-right font-black '+(x.sinTasa?'text-red-500':'text-cyan-700')}>{x.sinTasa?'⚠ Sin tasa':'+$'+formatNum(x.usd)}</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-right text-gray-300">—</td>
+                                  <td className="py-1.5 px-3 text-center"><span className="px-1.5 py-0.5 rounded text-[8px] font-black bg-cyan-50 text-cyan-700">Reintegrado</span></td>
+                                </tr>
+                              ))}
                             </React.Fragment>);
                           })}
                           {manualRetsCli.map((r,ri)=>(
@@ -52864,18 +53191,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             </tr>
                           ))}
                           {getAjustesCxcClienteEc(cl).map((a,aj)=>{
-                            const esReintegro=a._montoUSD<0; // Egreso: le devolvimos dinero, reduce lo que nos debe
+                            const esReintegro=!!a._esReint; // reintegro SIN documento de origen: suma a lo que nos debe (le devolvimos dinero)
                             return (
-                            <tr key={a._docId||`ajc-${aj}`} className={`border-b ${esReintegro?'border-cyan-100':'border-amber-100'}`} style={{background:esReintegro?'#ecfeff':'#fffbeb'}}>
+                            <tr key={a._docId||`ajc-${aj}`} className={`border-b ${esReintegro?'border-cyan-100':'border-amber-100'}`} style={{background:esReintegro?'#ecfeff':'#fffbeb'}} data-testid={esReintegro?'ec-reintegro-libre':'ec-ajuste'}>
                               <td className={`py-2 px-3 font-black ${esReintegro?'text-cyan-700':'text-amber-700'}`}>{esReintegro?'↩️ REINTEGRO':'⚠️ AJUSTE'}</td>
                               <td className={`py-2 px-3 ${esReintegro?'text-cyan-600':'text-amber-600'}`}>{contDd(a.fecha)||'—'}</td>
                               <td className="py-2 px-3"></td>
                               <td className="py-2 px-3"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${esReintegro?'bg-cyan-50 text-cyan-700':'bg-amber-50 text-amber-700'}`}>Ajuste CxC</span></td>
-                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa')}{a.referencia?` · Ref. ${a.referencia}`:''}</td>
-                              <td className="py-2 px-3 text-right font-mono text-amber-700">{!esReintegro?'$'+formatNum(Math.abs(a._montoUSD)):'—'}</td>
+                              <td className="py-2 px-3 text-gray-500 max-w-[180px] truncate">{a.concepto||(esReintegro?'Reintegro al cliente':'Ajuste a favor de la empresa')}{a.referencia?` · Ref. ${a.referencia}`:''}{esReintegro?' · sin documento de origen':''}</td>
+                              <td className={`py-2 px-3 text-right font-mono ${esReintegro?'text-cyan-700':'text-amber-700'}`}>${formatNum(Math.abs(a._montoUSD))}</td>
                               <td className="py-2 px-3 text-right text-gray-300">—</td>
-                              <td className="py-2 px-3 text-right font-mono text-cyan-700">{esReintegro?'$'+formatNum(Math.abs(a._montoUSD)):'—'}</td>
-                              <td className={`py-2 px-3 text-right font-black ${esReintegro?'text-cyan-700':'text-amber-700'}`}>{esReintegro?'-':'+'}${formatNum(Math.abs(a._montoUSD))}</td>
+                              <td className="py-2 px-3 text-right text-gray-300">—</td>
+                              <td className={`py-2 px-3 text-right font-black ${esReintegro?'text-cyan-700':'text-amber-700'}`}>+${formatNum(Math.abs(a._montoUSD))}</td>
                               <td className="py-2 px-3 text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black ${esReintegro?'bg-cyan-50 text-cyan-700':'bg-amber-50 text-amber-700'}`}>{esReintegro?'Reintegrado':'Cargo'}</span></td>
                             </tr>
                             );
