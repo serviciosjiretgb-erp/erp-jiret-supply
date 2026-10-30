@@ -21663,7 +21663,7 @@ const dejarAjusteHistSoloGastos = async (nro, ajustes, appUser) => {
   if(r.n===0){ alert(`El ajuste «${nro}» ya está solo con Gastos (no tiene líneas de Ingresos ni de Costo de Venta): no hay nada que revertir.`); return false; }
   const nuevas = AJUSTES_SOLO_GASTOS_ENE_ABR_2026[mes];
   if(!Array.isArray(nuevas) || nuevas.length===0){ alert(`No hay gastos guardados para ${mes.toLowerCase()}.`); return false; }
-  if(!window.confirm(`Se va a dejar el ajuste «${nro}» solo con los Gastos operativos de ${mes.toLowerCase()} (${nuevas.length} línea(s)).\n\nSe quitan: ${r.texto}.\nLas ventas y el costo de ${mes.toLowerCase()} ya no se toman de este ajuste sino de las facturas, así que se quitan para no contarlos dos veces.\n\nSolo cambia este ajuste (los demás meses no se tocan) y el ajuste actual queda guardado en la Papelera (recuperable). ¿Continuar?`)) return false;
+  if(!window.confirm(`Se va a dejar el ajuste «${nro}» solo con los Gastos operativos de ${mes.toLowerCase()} (${nuevas.length} línea(s)).\n\nSe quitan: ${r.texto}.\nLas ventas y el costo de ${mes.toLowerCase()} ya no se toman de este ajuste sino de las facturas, así que se quitan para no contarlos dos veces.\n\nSolo cambia este ajuste (los demás meses no se tocan) y el ajuste actual queda guardado en la Papelera (recuperable).${ccAjAvisoCorregido(a)} ¿Continuar?`)) return false;
   try{
     await aplicarSoloGastosAjHist([{nro, a}], appUser);
     logAuditoria(appUser,'Contabilidad','EDICIÓN',`Ajuste ${nro} dejado solo con Gastos: se quitaron ${r.texto}`);
@@ -21675,7 +21675,7 @@ const dejarAjusteHistSoloGastos = async (nro, ajustes, appUser) => {
 const dejarAjustesHistSoloGastosTodos = async (ajustes, appUser) => {
   const items = Object.keys(AJ_HIST_MES).map(nro=>({nro, a:(ajustes||[]).find(x=>(x.nroComprobante||'').trim().toUpperCase()===nro)})).filter(x=>x.a).map(x=>({...x, r:resumenIngCostoAjHist(x.a)})).filter(x=>x.r.n>0);
   if(items.length===0){ alert('Los ajustes de enero a abril ya están solo con Gastos: no hay nada que revertir.'); return false; }
-  if(!window.confirm(`Se van a dejar solo con Gastos ${items.length} ajuste(s); los que ya lo están no se tocan:\n\n${items.map(x=>`• ${x.nro}: se quitan ${x.r.texto}`).join('\n')}\n\nLas ventas y el costo de esos meses ya no se toman de estos ajustes sino de las facturas. Los ajustes actuales quedan guardados en la Papelera (recuperables). ¿Continuar?`)) return false;
+  if(!window.confirm(`Se van a dejar solo con Gastos ${items.length} ajuste(s); los que ya lo están no se tocan:\n\n${items.map(x=>`• ${x.nro}: se quitan ${x.r.texto}`).join('\n')}\n\nLas ventas y el costo de esos meses ya no se toman de estos ajustes sino de las facturas. Los ajustes actuales quedan guardados en la Papelera (recuperables).${items.map(x=>ccAjAvisoCorregido(x.a)).join('')} ¿Continuar?`)) return false;
   try{
     await aplicarSoloGastosAjHist(items, appUser);
     logAuditoria(appUser,'Contabilidad','EDICIÓN',`Ajustes dejados solo con Gastos: ${items.map(x=>x.nro).join(', ')}`);
@@ -24816,7 +24816,236 @@ const antiguedadTexto = (fechaIngreso, fechaRef) => {
 const contNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const partesCtaCC = (str) => { const p=(str||'').split('—'); return { codigo:(p[0]||'').trim(), nombre:p.slice(1).join('—').trim() }; };
 
-function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
+// ═════ Cargar comprobante corregido (Excel) — Comprobantes Contables → Ajustes ═════════════════════════════════════════════════════════════════════
+// Flujo: se exporta un comprobante de «Ajustes» (Excel), se revisa/corrige/audita en Excel y se vuelve a subir. El comprobante del sistema con el mismo «Nro Comp.»
+// queda IGUAL al archivo (la versión anterior se guarda en la Papelera). Todo lo de este bloque son funciones puras (sin React ni Firebase): primero se arma una
+// vista previa con lo que cambiaría y solo al confirmar se escribe. Acepta el .xlsx corregido y también el .xls (HTML) tal como lo exporta el sistema.
+const CC_AJ_TOL = 0.02; // misma tolerancia de cuadre que usan los demás comprobantes (Debe = Haber)
+const CC_AJ_MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const ccAjTxt = (v) => (v==null || v instanceof Date) ? '' : String(v).replace(/\u00a0/g,' ').trim();
+const ccAjTxtC = (v) => ccAjTxt(v).replace(/\s+/g,' ');
+const ccAjNorm = (v) => ccAjTxtC(v).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+const ccAjSinNum = (s) => { const t = ccAjNorm(s); return t==='' || t==='AJUSTE' || t==='—' || t==='-'; };
+const ccAjDia = (d) => new Date(d.getTime()+43200000); // SheetJS entrega las fechas con unos segundos de deriva: al mediodia el dia local siempre es el correcto
+const ccAjCent = (n) => Math.round((Number(n)||0)*100);
+const ccAjR2 = (n) => Math.round(((Number(n)||0)+(n<0?-1e-9:1e-9))*100)/100;
+// Número en cualquiera de los formatos que puede traer el archivo: 2703.3 · "Bs.2.703,30" · "$5,52" · "1.234,56" · "1,234.56" · "(1.234,56)" → {n, ok}
+const ccAjNumES = (v) => {
+  if (v==null || v==='') return {n:null, ok:true};
+  if (typeof v==='number') return isFinite(v) ? {n:v, ok:true} : {n:null, ok:false};
+  let s = String(v).replace(/\u00a0/g,' ').trim(), neg = false;
+  if (!s || s==='—' || s==='-') return {n:null, ok:true};
+  if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1,-1); }
+  s = s.replace(/us\$|usd|bs\.?|\$/gi,'').replace(/\s+/g,'');
+  if (s[0]==='-') { neg = !neg; s = s.slice(1); } else if (s[0]==='+') s = s.slice(1);
+  if (!s || !/^[0-9.,]+$/.test(s) || !/[0-9]/.test(s)) return {n:null, ok:false};
+  const pd = s.lastIndexOf('.'), pc = s.lastIndexOf(',');
+  if (pd>=0 && pc>=0) { const dec = pd>pc ? '.' : ','; const mil = dec==='.' ? ',' : '.'; s = s.split(mil).join('').replace(dec,'.'); }
+  else if (pc>=0) s = (s.split(',').length>2) ? s.split(',').join('') : s.replace(',','.');
+  else if (pd>=0) { const p = s.split('.'); if (p.length>2 || (p[1].length===3 && p[0]!=='' && p[0]!=='0')) s = p.join(''); }
+  const n = Number(s);
+  return isFinite(n) ? {n:neg?-n:n, ok:true} : {n:null, ok:false};
+};
+// Fecha → 'aaaa-mm-dd' ('' si no se entiende). El sistema escribe dd/mm/aaaa; Excel entrega fechas reales (Date) o números de serie.
+const ccAjFecha = (v) => {
+  const p2 = (n) => String(n).padStart(2,'0');
+  const ok = (y,m,d) => (m>=1 && m<=12 && d>=1 && d<=31) ? `${y}-${p2(m)}-${p2(d)}` : '';
+  if (v==null || v==='') return '';
+  if (v instanceof Date) { if (isNaN(v)) return ''; const d = ccAjDia(v); return ok(d.getFullYear(), d.getMonth()+1, d.getDate()); }
+  if (typeof v==='number') { const d = new Date(Math.round((v-25569)*86400000)); return isNaN(d) ? '' : ok(d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()); }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return ok(+m[1], +m[2], +m[3]);
+  m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/); if (m) return ok(+m[3], +m[2], +m[1]);
+  return '';
+};
+// Excel convierte el texto «Mayo 2026» en la fecha 01/05/2026: se devuelve a «Mayo 2026» para que el concepto no cambie sin querer.
+const ccAjConcepto = (v) => {
+  if (v instanceof Date) { if (isNaN(v)) return ''; const d = ccAjDia(v); return d.getDate()===1 ? `${CC_AJ_MESES[d.getMonth()]} ${d.getFullYear()}` : `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; }
+  return ccAjTxtC(v);
+};
+// Filas del .xls HTML que exporta el sistema (tabla con encabezado Comprobante | Fecha | Código | ...).
+const ccAjFilasDeHtml = (texto) => {
+  const doc = new DOMParser().parseFromString(texto, 'text/html');
+  const filas = [];
+  doc.querySelectorAll('tr').forEach(tr => { filas.push([...tr.children].map(td => (td.textContent||'').replace(/\u00a0/g,' ').trim())); });
+  const per = [...doc.querySelectorAll('p,h1,h2,h3,div')].map(e => (e.textContent||'').trim()).find(t => /^Per[ií]odo/i.test(t)) || '';
+  let off = 0; for (const e of [...doc.body.children]) { if (e.tagName==='TABLE' || e.querySelector('table')) break; off++; }
+  return {filas, offset:off, periodoTxt:per};
+};
+// Lee el archivo: .xlsx / .xls binario con la librería de Excel (cargarXLSX), y el .xls HTML del sistema directamente (sin librería: los montos «$5,52» los malinterpretaría).
+const ccAjLeerFilas = async (buf, cargarXLSX) => {
+  const u8 = new Uint8Array(buf.slice(0,8));
+  const esZip = u8[0]===0x50 && u8[1]===0x4B, esOle = u8[0]===0xD0 && u8[1]===0xCF && u8[2]===0x11 && u8[3]===0xE0;
+  if (!esZip && !esOle) {
+    const texto = new TextDecoder('utf-8').decode(buf);
+    if (/<table/i.test(texto)) return ccAjFilasDeHtml(texto);
+  }
+  const XLSX = await cargarXLSX();
+  const wb = XLSX.read(buf, {type:'array', cellDates:true});
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws) throw new Error('el archivo no tiene hojas');
+  const off = XLSX.utils.decode_range(ws['!ref']||'A1').s.r;
+  const filas = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true});
+  let per = ''; for (let i=0; i<Math.min(filas.length,12); i++) { const t = ccAjTxt((filas[i]||[])[0]); if (/^Per[ií]odo/i.test(t)) { per = t; break; } }
+  return {filas, offset:off, periodoTxt:per};
+};
+// Ubica la fila de encabezados y la columna de cada dato (por nombre, no por posición: el usuario puede haber quitado «Bs.» a «Debe Bs.»).
+const ccAjColumnas = (filas) => {
+  for (let i=0; i<Math.min(filas.length,25); i++) {
+    const m = {};
+    (filas[i]||[]).forEach((c,ci) => {
+      const n = ccAjNorm(c); if (!n) return;
+      if (n==='COMPROBANTE') m.comp = ci;
+      else if (n==='FECHA') m.fecha = ci;
+      else if (n==='CODIGO') m.cod = ci;
+      else if (n==='CUENTA' || n.startsWith('CUENTA ')) m.cuenta = ci;
+      else if (n==='T' || n==='TIPO') m.t = ci;
+      else if (/^(NRO|NUMERO|N°|NO\.)\b/.test(n)) m.nro = ci;
+      else if (n==='CONCEPTO') m.conc = ci;
+      else if (n==='DETALLE') m.det = ci;
+      else if (n==='TASA') m.tasa = ci;
+      else if (n.startsWith('DEBE')) { if (/\$|USD/.test(n)) m.dU = ci; else m.dB = ci; }
+      else if (n.startsWith('HABER')) { if (/\$|USD/.test(n)) m.hU = ci; else m.hB = ci; }
+    });
+    if (m.cod!=null && m.dB!=null && m.hB!=null && m.dU!=null && m.hU!=null && (m.comp!=null || m.nro!=null)) return {hdr:i, map:m};
+  }
+  return null;
+};
+// Agrupa las filas en comprobantes (un comprobante empieza en la fila que trae «Comprobante»/«Nro Comp.») y valida cada línea. No toca el sistema.
+const ccAjAgrupar = (lec, planNombres) => {
+  const filas = lec.filas||[], off = lec.offset||0;
+  const det = ccAjColumnas(filas);
+  if (!det) return {error:'No encontré la fila de encabezados. El archivo debe tener las columnas del comprobante de Ajustes: Comprobante, Fecha, Código, Cuenta, T, Nro Comp., Concepto, Detalle, Tasa, Debe Bs., Haber Bs., Debe $ y Haber $ (el mismo formato que exporta el sistema).'};
+  const {hdr, map:m} = det;
+  const cel = (f, k) => (m[k]!=null ? f[m[k]] : null);
+  const tienePlan = !!(planNombres && planNombres.size);
+  const grupos = []; let cur = null, prevEnc = false;
+  for (let i=hdr+1; i<filas.length; i++) {
+    const f = filas[i]||[], filaN = i+off+1;
+    if (f.every(c => c==null || ccAjTxt(c)==='')) { prevEnc = false; continue; }
+    const A = ccAjTxtC(cel(f,'comp')), F = ccAjTxtC(cel(f,'nro'));
+    if (/^TOTALES/.test(ccAjNorm(A)) || /^TOTALES/.test(ccAjNorm(F))) { prevEnc = false; continue; }
+    const hayEnc = A!=='' || F!=='';
+    const clave = ccAjNorm(F||A);
+    if (!cur || (hayEnc && !(prevEnc && clave===cur.claveN))) {
+      cur = {nro:F||A, comp:A, claveN:clave, fecha:ccAjFecha(cel(f,'fecha')), fechaTxt:ccAjTxt(cel(f,'fecha')), concepto:ccAjConcepto(cel(f,'conc')), tasa:ccAjNumES(cel(f,'tasa')).n||0,
+        fila:filaN, lineas:[], errores:[], avisos:[], fueraPlan:[], _sinT:0, _unaMon:0, _sinMonto:0};
+      if (A && F && ccAjNorm(A)!==ccAjNorm(F)) cur.avisos.push(`«Comprobante» (${A}) y «Nro Comp.» (${F}) no coinciden: se usa «${F}».`);
+      grupos.push(cur);
+      if (!hayEnc) cur.errores.push({fila:filaN, msg:'Hay líneas antes del primer comprobante: falta su «Comprobante» / «Nro Comp.».'});
+    }
+    prevEnc = hayEnc;
+    const cod = ccAjTxtC(cel(f,'cod')), cuentaT = ccAjTxtC(cel(f,'cuenta')), detalle = ccAjTxtC(cel(f,'det'));
+    const nums = {dB:ccAjNumES(cel(f,'dB')), hB:ccAjNumES(cel(f,'hB')), dU:ccAjNumES(cel(f,'dU')), hU:ccAjNumES(cel(f,'hU'))};
+    const rotulo = {dB:'Debe Bs.', hB:'Haber Bs.', dU:'Debe $', hU:'Haber $'};
+    const malos = Object.keys(nums).filter(k => !nums[k].ok);
+    if (malos.length) { cur.errores.push({fila:filaN, msg:`Monto no válido en ${malos.map(k=>`«${rotulo[k]}»: ${ccAjTxt(cel(f,k))}`).join(', ')}.`}); continue; }
+    const v = (k) => nums[k].n||0;
+    if (['dB','hB','dU','hU'].some(k => v(k)<0)) { cur.errores.push({fila:filaN, msg:'Hay un monto negativo: un monto negativo no existe en un comprobante, ponlo en la otra columna (Debe ↔ Haber).'}); continue; }
+    const debe = v('dB')>0 || v('dU')>0, haber = v('hB')>0 || v('hU')>0;
+    if (!debe && !haber) { if (cod || detalle) cur._sinMonto++; continue; }
+    if (debe && haber) { cur.errores.push({fila:filaN, msg:'La línea tiene monto en Debe y en Haber a la vez.'}); continue; }
+    const tipo = debe ? 'D' : 'H';
+    const tRaw = ccAjNorm(cel(f,'t'));
+    if (tRaw) { const t = (tRaw==='D' || tRaw==='DEBE') ? 'D' : (tRaw==='H' || tRaw==='HABER') ? 'H' : ''; if (!t) { cur.errores.push({fila:filaN, msg:`La columna T debe ser D o H (dice «${ccAjTxt(cel(f,'t'))}»).`}); continue; } if (t!==tipo) { cur.errores.push({fila:filaN, msg:`La columna T dice ${t} pero el monto está en ${debe?'Debe':'Haber'}: corrige la T o pasa el monto a la otra columna.`}); continue; } }
+    else cur._sinT++;
+    if (!cod) { cur.errores.push({fila:filaN, msg:'La línea no tiene código de cuenta.'}); continue; }
+    if (tienePlan && !planNombres.has(cod)) cur.fueraPlan.push({fila:filaN, codigo:cod});
+    const bs = debe ? v('dB') : v('hB'), us = debe ? v('dU') : v('hU');
+    if ((bs>0) !== (us>0)) cur._unaMon++;
+    cur.lineas.push({codigo:cod, cuenta:cuentaT || (planNombres && planNombres.get(cod)) || cod, tipo, montoBs:bs, montoUSD:us, detalle});
+  }
+  grupos.forEach(g => {
+    if (g.fechaTxt && !g.fecha) g.avisos.push(`La fecha «${g.fechaTxt}» no se entiende (usa dd/mm/aaaa): ${'se conserva la del comprobante del sistema'}.`);
+    if (!g.lineas.length && !g.errores.length) g.errores.push({fila:g.fila, msg:'El comprobante no tiene líneas con monto.'});
+    if (g._sinT) g.avisos.push(`${g._sinT} línea(s) sin la letra T: se tomó del monto (Debe → D, Haber → H).`);
+    if (g._unaMon) g.avisos.push(`${g._unaMon} línea(s) con monto en una sola moneda (Bs. o $): la otra queda en cero.`);
+    if (g._sinMonto) g.avisos.push(`${g._sinMonto} fila(s) sin monto: se omitieron.`);
+  });
+  const dup = new Map(); grupos.forEach(g => { const k = g.claveN; dup.set(k, (dup.get(k)||0)+1); });
+  grupos.forEach(g => { if (!ccAjSinNum(g.nro) && dup.get(g.claveN)>1) g.errores.push({fila:g.fila, msg:`El número «${g.nro}» aparece en ${dup.get(g.claveN)} comprobantes del archivo: cada comprobante debe tener un Nro Comp. distinto.`}); });
+  return {grupos, periodoTxt:lec.periodoTxt||''};
+};
+const ccAjTotales = (lineas) => {
+  const t = {dBs:0, hBs:0, dUSD:0, hUSD:0};
+  (lineas||[]).forEach(l => { const bs = Number(l.montoBs)||0, us = Number(l.montoUSD)||0; if (l.tipo==='D') { t.dBs += bs; t.dUSD += us; } else { t.hBs += bs; t.hUSD += us; } });
+  return t;
+};
+const ccAjCuadre = (t) => { const difBs = ccAjR2(t.dBs-t.hBs), difUSD = ccAjR2(t.dUSD-t.hUSD); return {difBs, difUSD, bs:Math.abs(t.dBs-t.hBs)<=CC_AJ_TOL, usd:Math.abs(t.dUSD-t.hUSD)<=CC_AJ_TOL, ok:Math.abs(t.dBs-t.hBs)<=CC_AJ_TOL && Math.abs(t.dUSD-t.hUSD)<=CC_AJ_TOL}; };
+// Empareja las líneas del archivo con las que ya tiene el comprobante, para (1) conservar lo que la línea trae y el archivo no muestra (p. ej. su fecha propia) y
+// (2) contar qué se agregó, quitó o modificó. Pasadas: idéntica → cambió la cuenta → cambió el monto → cambió el detalle.
+const CC_AJ_CLAVES = {
+  exacta:  (l) => [ccAjTxtC(l.codigo), ccAjTxtC(l.cuenta), l.tipo, ccAjTxtC(l.detalle), ccAjCent(l.montoBs), ccAjCent(l.montoUSD)].join('\u0001'),
+  cuenta:  (l) => [l.tipo, ccAjTxtC(l.detalle), ccAjCent(l.montoBs), ccAjCent(l.montoUSD)].join('\u0001'),
+  monto:   (l) => [ccAjTxtC(l.codigo), l.tipo, ccAjTxtC(l.detalle)].join('\u0001'),
+  detalle: (l) => [ccAjTxtC(l.codigo), l.tipo, ccAjCent(l.montoBs), ccAjCent(l.montoUSD)].join('\u0001'),
+};
+const ccAjEmparejar = (existentes, nuevas) => {
+  const par = new Array(nuevas.length).fill(-1), pase = new Array(nuevas.length).fill(''), usado = new Array(existentes.length).fill(false);
+  ['exacta','cuenta','monto','detalle'].forEach(p => {
+    const f = CC_AJ_CLAVES[p], mapa = new Map();
+    existentes.forEach((l,i) => { if (usado[i]) return; const k = f(l); if (!mapa.has(k)) mapa.set(k, []); mapa.get(k).push(i); });
+    nuevas.forEach((l,j) => { if (par[j]>=0) return; const cola = mapa.get(f(l)); if (!cola || !cola.length) return; const i = cola.shift(); usado[i] = true; par[j] = i; pase[j] = p; });
+  });
+  return {par, pase, usado};
+};
+const CC_AJ_CAMPOS_LINEA = ['codigo','cuenta','tipo','montoBs','montoUSD','detalle'];
+// Monto que queda guardado en una línea emparejada: el del ARCHIVO. Única excepción: si el archivo trae el monto redondeado a centavos (lo que imprime el Excel del sistema) y el sistema ya tenía el mismo monto
+// con más decimales, se conserva el del sistema — así reenviar un export sin tocar esa línea no le quita precisión ni descuadra el comprobante por redondeos.
+const ccAjDosDec = (n) => Math.abs(n*100 - Math.round(n*100)) < 0.01;
+const ccAjMonto = (nuevo, viejo) => (ccAjCent(nuevo)===ccAjCent(viejo) && ccAjDosDec(Number(nuevo)||0)) ? (Number(viejo)||0) : (Number(nuevo)||0);
+// Compara un comprobante del archivo con el sistema y arma lo que quedaría guardado. existentes = todos los ajustes (comprobantes_ajustes).
+const ccAjCotejar = (g, existentes, planNombres) => {
+  const errores = g.errores.map(e => ({...e})), avisos = g.avisos.slice();
+  let cand;
+  if (ccAjSinNum(g.nro)) cand = (existentes||[]).filter(a => ccAjSinNum(a.nroComprobante) && g.fecha && a.fecha===g.fecha && (!g.concepto || ccAjTxtC(a.concepto)===g.concepto || ccAjTxtC(a.concepto)==='' ));
+  else cand = (existentes||[]).filter(a => ccAjNorm(a.nroComprobante)===g.claveN);
+  if (ccAjSinNum(g.nro) && cand.length!==1) errores.push({fila:g.fila, msg: cand.length ? 'Hay varios ajustes sin número con esa fecha: asígnales un «Nro Comp.» distinto en el sistema antes de cargar.' : 'El comprobante no tiene «Nro Comp.»: escribe el número del comprobante que quieres reemplazar (o uno nuevo).'});
+  if (!ccAjSinNum(g.nro) && cand.length>1) errores.push({fila:g.fila, msg:`En el sistema hay ${cand.length} ajustes con el número «${g.nro}»: no se sabe cuál reemplazar (déjale un solo comprobante con ese número).`});
+  const ex = cand.length===1 ? cand[0] : null;
+  const exLineas = ex && Array.isArray(ex.lineas) ? ex.lineas : [];
+  const codEx = new Set(exLineas.map(l => ccAjTxtC(l.codigo)));
+  (g.fueraPlan||[]).filter(x => !codEx.has(x.codigo)).forEach(x => errores.push({fila:x.fila, msg:`El código ${x.codigo} no existe en el Plan de Cuentas (revisa el código o créalo primero).`, codigo:x.codigo}));
+  const viejos = [...new Set((g.fueraPlan||[]).filter(x => codEx.has(x.codigo)).map(x => x.codigo))];
+  if (viejos.length) avisos.push(`${viejos.length} código(s) de cuenta ya no están en el Plan de Cuentas pero el comprobante ya los traía (${viejos.slice(0,4).join(', ')}${viejos.length>4?'…':''}): se respetan.`);
+  if (planNombres && planNombres.size) {
+    const parEx = new Set(exLineas.map(l => ccAjNorm(l.codigo)+'|'+ccAjNorm(l.cuenta)));
+    const dudosas = g.lineas.filter(l => { const pn = planNombres.get(l.codigo); return pn && ccAjNorm(pn)!==ccAjNorm(l.cuenta) && !parEx.has(ccAjNorm(l.codigo)+'|'+ccAjNorm(l.cuenta)); });
+    if (dudosas.length) avisos.push(`${dudosas.length} línea(s) traen un nombre de cuenta distinto al del Plan de Cuentas para su código (p. ej. ${dudosas[0].codigo}: el archivo dice «${dudosas[0].cuenta}» y el plan «${planNombres.get(dudosas[0].codigo)}»). Si cambiaste el código, cambia también el nombre; se guarda como viene en el archivo.`);
+  }
+  const base = {clave:'g'+g.fila, nro:g.nro||'(sin número)', grupo:g, existente:ex, errores, avisos};
+  if (!ex && !errores.length && !g.fecha) errores.push({fila:g.fila, msg:'Un comprobante nuevo necesita su fecha (columna Fecha, dd/mm/aaaa).'});
+  const em = ex ? ccAjEmparejar(exLineas, g.lineas) : {par:g.lineas.map(()=>-1), pase:g.lineas.map(()=>''), usado:[]};
+  const lineasFinal = g.lineas.map((l,j) => {
+    const i = em.par[j]; if (i<0) return l;
+    const e = exLineas[i];
+    const extras = {}; Object.keys(e).forEach(k => { if (!CC_AJ_CAMPOS_LINEA.includes(k)) extras[k] = e[k]; });
+    return {...extras, ...l, montoBs:ccAjMonto(l.montoBs, e.montoBs), montoUSD:ccAjMonto(l.montoUSD, e.montoUSD)};
+  });
+  const quitadas = exLineas.filter((_,i) => !em.usado[i]);
+  const agregadas = g.lineas.filter((_,j) => em.par[j]<0);
+  const modificadas = g.lineas.map((l,j) => ({antes:em.par[j]>=0?exLineas[em.par[j]]:null, despues:l, pase:em.pase[j]})).filter(x => x.antes && x.pase!=='exacta');
+  const iguales = em.pase.filter(p => p==='exacta').length;
+  let soloOrden = false;
+  if (ex && !quitadas.length && !agregadas.length && !modificadas.length && exLineas.length===g.lineas.length) { soloOrden = em.par.some((i,j) => i!==j); }
+  const cab = [];
+  if (ex) {
+    if (g.fecha && g.fecha!==ex.fecha) cab.push(['Fecha', ex.fecha||'—', g.fecha]);
+    const cEx = ccAjTxtC(ex.concepto);
+    if (g.concepto && g.concepto!==cEx && !(cEx==='' && g.concepto==='Ajuste manual')) cab.push(['Concepto', cEx||'—', g.concepto]);
+    if (g.tasa>0 && Math.abs(g.tasa-(Number(ex.tasa)||0))>0.006) cab.push(['Tasa', String(Number(ex.tasa)||0), String(g.tasa)]);
+  }
+  const antes = ex ? ccAjTotales(exLineas) : null, despues = ccAjTotales(lineasFinal), cuadre = ccAjCuadre(despues);
+  const sinCambios = !!ex && !quitadas.length && !agregadas.length && !modificadas.length && !soloOrden && !cab.length;
+  const estado = errores.length ? 'ERROR' : !ex ? 'NUEVO' : sinCambios ? 'SIN_CAMBIOS' : 'REEMPLAZA';
+  if (ex && ex.origen==='historico_real' && estado==='REEMPLAZA') avisos.push('Este comprobante lo administra el panel «Facturas históricas» (Ventas → Notas de Entrega): si lo cambias aquí, ese panel lo marcará como desactualizado y al actualizarlo se regenerará desde las facturas.');
+  return {...base, estado, lineasFinal, quitadas, agregadas, modificadas, iguales, soloOrden, cab, antes, despues, cuadre, nAntes:exLineas.length, nDespues:lineasFinal.length};
+};
+// Aviso para los botones que REEMPLAZAN las líneas de un ajuste (Revertir a Solo-Gastos, actualizar desde facturas): si el comprobante fue corregido y cargado desde Excel, esas correcciones se perderían.
+const ccAjAvisoCorregido = (aj) => (aj && aj.corregidoExcel) ? `\n\n⚠ «${aj.nroComprobante||aj.id}» fue corregido y cargado desde Excel${aj.corregidoExcel.fecha ? ` el ${contDd(aj.corregidoExcel.fecha)}` : ''}: si continúas se REEMPLAZAN esas correcciones (la versión corregida queda en la Papelera).` : '';
+// ═════ fin · Cargar comprobante corregido ═══════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, appUser }) {
   const [sub, setSub] = useState(initialSub||''); // '', 'banco', 'caja', 'ret_cli'
   const [movBanco, setMovBanco] = useState([]);
   const [asientosCC, setAsientosCC] = useState([]);
@@ -25078,6 +25307,8 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
   };
   const [nominaImportando, setNominaImportando] = useState(false);
   const [showAjusteModal, setShowAjusteModal] = useState(false);
+  const [cargaAj, setCargaAj] = useState(null); // vista previa / resultado de «Cargar comprobante corregido» (Excel)
+  const cargaAjInputRef = useRef(null);
   const [ajusteEditando, setAjusteEditando] = useState(null);
   const [ajusteForm, setAjusteForm] = useState({fecha:getTodayDate(), nroComprobante:'', concepto:'', tasa:'', lineas:[]});
   const [ajusteBusqCuentaIdx, setAjusteBusqCuentaIdx] = useState(-1);
@@ -28390,6 +28621,93 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn }) {
     if(!window.confirm('¿Eliminar este ajuste? Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.')) return;
     try{ const doc_=(ajustesC||[]).find(a=>a.id===id); if(doc_) await archivarEnPapelera('comprobantes_ajustes', id, doc_, `Ajuste — ${doc_.concepto||id}`); await deleteDoc(getDocRef('comprobantes_ajustes', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
   };
+  // ── Cargar comprobante corregido (Excel) ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  // Se exporta un comprobante de «Ajustes» (botón Excel), se revisa / corrige / audita en Excel y se vuelve a subir aquí: el comprobante del sistema con el mismo «Nro Comp.»
+  // queda IGUAL al archivo. Primero se muestra la vista previa (qué cambia y si cuadra) y solo al confirmar se guarda; la versión anterior queda en la Papelera.
+  // Las funciones de lectura / cotejo son puras y están a nivel de módulo (ccAj…); aquí solo va lo que toca el estado de la pantalla y Firebase.
+  const cargarXLSXAj = async () => {
+    if (window.XLSX) return window.XLSX;
+    await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload = res; s.onerror = () => rej(new Error('No se pudo cargar la librería de Excel (¿sin internet?). Guarda el archivo como .xlsx y vuelve a intentarlo.')); document.head.appendChild(s); });
+    return window.XLSX;
+  };
+  // Lo que se VE en el comprobante (con las reclasificaciones de cuenta y de lado D/H ya aplicadas): contra eso se compara el archivo.
+  const ajusteVistoCC = (a) => ({...a, lineas:(a.lineas||[]).map((l, li) => {
+    const ov = reclasificacionesC[`ajustes__${a.id}__${li}`];
+    if (!ov) return l;
+    return {...l, codigo:ov.codigo||l.codigo, cuenta:ov.cuenta||l.cuenta, tipo:(ov.tipoOverride && ov.tipoOverride!==l.tipo) ? ov.tipoOverride : l.tipo};
+  })});
+  const firmaAjusteCC = (a) => `${a.updatedAt||0}|${(a.lineas||[]).length}|${a.fecha||''}`;
+  const leerArchivoAjusteCorregido = async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    setCargaAj({estado:'leyendo', archivo:file.name});
+    try {
+      const buf = await file.arrayBuffer();
+      const lec = await ccAjLeerFilas(buf, cargarXLSXAj);
+      const plan = new Map((planCuentasC||[]).filter(p => p && p.codigo).map(p => [String(p.codigo).trim(), p.nombre||'']));
+      const res = ccAjAgrupar(lec, plan);
+      if (res.error) { setCargaAj({estado:'error', archivo:file.name, error:res.error}); return; }
+      const existentes = (ajustesC||[]).map(ajusteVistoCC);
+      const items = res.grupos.map(g => {
+        const it = ccAjCotejar(g, existentes, plan);
+        const crudo = it.existente ? (ajustesC||[]).find(a => a.id===it.existente.id) : null;
+        return {...it, firma: crudo ? firmaAjusteCC(crudo) : ''};
+      });
+      const sel = {}; items.forEach(it => { sel[it.clave] = (it.estado==='REEMPLAZA' || it.estado==='NUEVO'); });
+      setCargaAj({estado:'listo', archivo:file.name, periodoTxt:res.periodoTxt, items, sel, forzar:false, detalle:null, errorAplicar:''});
+    } catch (err) { setCargaAj({estado:'error', archivo:file.name, error:'No se pudo leer el archivo: '+((err && err.message) || err)}); }
+  };
+  const aplicarCargaAjuste = async () => {
+    const c = cargaAj;
+    if (!c || c.estado!=='listo') return;
+    const aplicables = c.items.filter(it => c.sel[it.clave] && (it.estado==='REEMPLAZA' || it.estado==='NUEVO') && (it.cuadre.ok || c.forzar));
+    if (!aplicables.length) return;
+    setCargaAj(p => ({...p, estado:'aplicando', errorAplicar:''}));
+    try {
+      const quien = appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario';
+      const ahora = Date.now();
+      const rid = () => Math.random().toString(36).slice(2,8);
+      const ops = [], hechos = [];
+      for (const it of aplicables) {
+        const g = it.grupo;
+        const meta = {fecha:getTodayDate(), ts:ahora, por:quien, archivo:c.archivo||'', lineasAntes:it.nAntes, lineasDespues:it.nDespues};
+        if (it.existente) {
+          const crudo = (ajustesC||[]).find(a => a.id===it.existente.id);
+          if (!crudo) throw new Error(`El comprobante «${it.nro}» ya no existe en el sistema. Vuelve a cargar el archivo.`);
+          if (firmaAjusteCC(crudo)!==it.firma) throw new Error(`El comprobante «${it.nro}» cambió mientras revisabas la vista previa. Vuelve a cargar el archivo para compararlo con la versión actual.`);
+          // Las reclasificaciones de cuenta / lado D-H de ese comprobante se guardan por número de línea: como el archivo ya trae las cuentas finales y las líneas pueden haber cambiado de lugar, se retiran (quedan en la Papelera).
+          const claves = Object.keys(reclasificacionesC||{}).filter(k => k.startsWith(`ajustes__${crudo.id}__`));
+          claves.forEach(k => {
+            const pid = `PAP-${ahora}-${rid()}`;
+            ops.push(b => b.set(getDocRef('papelera', pid), {id:pid, coleccionOrigen:'comprobantes_reclasificaciones', docId:k, datos:reclasificacionesC[k], resumen:`Reclasificación retirada (${crudo.nroComprobante||crudo.id}, línea ${Number(k.split('__').pop())+1}) al cargar el comprobante corregido`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:ahora}));
+            ops.push(b => b.delete(getDocRef('comprobantes_reclasificaciones', k)));
+          });
+          const papId = `PAP-${ahora}-${rid()}`;
+          ops.push(b => b.set(getDocRef('papelera', papId), {id:papId, coleccionOrigen:'comprobantes_ajustes', docId:String(crudo.id), datos:crudo, resumen:`Ajuste (versión anterior, antes de cargar el comprobante corregido) — ${crudo.nroComprobante||crudo.id} · ${crudo.concepto||''}`, eliminadoPor:quien, fechaEliminado:getTodayDate(), eliminadoEn:ahora}));
+          const nuevo = {...crudo, fecha:g.fecha||crudo.fecha||'', concepto:g.concepto||crudo.concepto||'', tasa:g.tasa>0 ? g.tasa : (Number(crudo.tasa)||0), lineas:it.lineasFinal, updatedAt:ahora, corregidoExcel:meta};
+          ops.push(b => b.set(getDocRef('comprobantes_ajustes', crudo.id), nuevo));
+          hechos.push({nro:it.nro, accion:'reemplazado', antes:it.nAntes, despues:it.nDespues, reclas:claves.length, fecha:nuevo.fecha});
+        } else {
+          const id = `AJ-${ahora}-${rid().slice(0,5)}`;
+          ops.push(b => b.set(getDocRef('comprobantes_ajustes', id), {id, nroComprobante:g.nro, fecha:g.fecha, concepto:g.concepto||'Ajuste manual', tasa:g.tasa||0, lineas:it.lineasFinal, createdAt:ahora, updatedAt:ahora, user:quien, origen:'excel_corregido', corregidoExcel:meta}));
+          hechos.push({nro:it.nro, accion:'creado', antes:0, despues:it.nDespues, reclas:0, fecha:g.fecha});
+        }
+      }
+      for (let i = 0; i < ops.length; i += 450) { const b = writeBatch(db); ops.slice(i, i+450).forEach(f => f(b)); await b.commit(); }
+      // Para que se vea de una vez lo que se cargó: el rango de fechas de la pestaña solo se AMPLÍA (nunca se reduce) hasta cubrir el mes del comprobante.
+      const fechas = hechos.map(h => h.fecha).filter(Boolean).sort();
+      if (fechas.length) {
+        const ini = fechas[0].slice(0,7)+'-01';
+        const [fy, fm] = fechas[fechas.length-1].split('-').map(Number);
+        const fin = `${fy}-${String(fm).padStart(2,'0')}-${String(new Date(fy, fm, 0).getDate()).padStart(2,'0')}`;
+        if (!filtDesde || ini < filtDesde) setFiltDesde(ini);
+        if (!filtHasta || fin > filtHasta) setFiltHasta(fin);
+      }
+      logAuditoria(appUser, 'Comprobantes Contables', 'EDICIÓN', `Comprobante(s) de Ajustes cargado(s) desde Excel corregido (${c.archivo||'archivo'}): ${hechos.map(h => `${h.nro} ${h.accion} (${h.antes}→${h.despues} líneas)`).join(' · ')} — la versión anterior queda en la Papelera`);
+      setCargaAj(p => ({...p, estado:'hecho', hechos}));
+    } catch (e) { setCargaAj(p => ({...p, estado:'listo', errorAplicar:'Error al guardar: '+((e && e.message) || e)})); }
+  };
   const eliminarNomina = async (id) => {
     if(!window.confirm('¿Eliminar este comprobante de nómina? Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.')) return;
     try{ const doc_=(nominaC||[]).find(a=>a.id===id); if(doc_) await archivarEnPapelera('comprobantes_nomina', id, doc_, `Nómina — ${doc_.concepto||id}`); await deleteDoc(getDocRef('comprobantes_nomina', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
@@ -29618,6 +29936,8 @@ ${valoresHtml}
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtDesde} onChange={e=>setFiltDesde(e.target.value)}/></div>
             <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={filtHasta} onChange={e=>setFiltHasta(e.target.value)}/></div>
             <button onClick={abrirNuevoAjuste} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Plus size={14}/>Nuevo Ajuste</button>
+            <button data-testid="ajuste-cargar-corregido" onClick={()=>cargaAjInputRef.current && cargaAjInputRef.current.click()} title="Sube el Excel de un comprobante de Ajustes que exportaste y corregiste: el comprobante del sistema con el mismo Nro Comp. queda igual al archivo. Antes te muestra qué cambia y la versión anterior queda en la Papelera." className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-black text-[10px] flex items-center gap-1.5"><Upload size={14}/>Cargar comprobante corregido</button>
+            <input ref={cargaAjInputRef} data-testid="ajuste-cargar-archivo" type="file" accept=".xlsx,.xls" className="hidden" onChange={leerArchivoAjusteCorregido}/>
             <div data-testid="ajuste-revertir-grupo" className="flex items-center gap-1 bg-slate-100 border border-slate-300 rounded-lg px-2 py-1.5">
               <span className="text-[9px] font-black text-slate-600 uppercase mr-1" title="Quita de ese ajuste las líneas de Ingresos y de Costo de Venta (ya salen de las facturas) y lo deja solo con los Gastos operativos. Solo cambia el mes que pulses.">Revertir a Solo-Gastos:</span>
               {[['HIST-ENERO-2026','Ene'],['HIST-FEBRERO-2026','Feb'],['HIST-MARZO-2026','Mar'],['HIST-ABRIL-2026','Abr']].map(([nro,corto])=>(
@@ -29639,7 +29959,7 @@ ${valoresHtml}
             <p className="text-[10px] text-gray-400 ml-auto">{lineasAj.length} ajuste(s) · Total ${contFmt(totalAjUSD)}</p>
             <BotonesExportCC tabId="ajustes"/>
           </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Comprobantes 100% manuales — no se derivan de ningún otro módulo. Úsalos para correcciones, reclasificaciones puntuales o cualquier asiento que no encaje en las otras pestañas. Soporta Bs. y $ por línea.</div>
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">ℹ Comprobantes 100% manuales — no se derivan de ningún otro módulo. Úsalos para correcciones, reclasificaciones puntuales o cualquier asiento que no encaje en las otras pestañas. Soporta Bs. y $ por línea. Para corregir un comprobante completo: descárgalo con «Excel», corrígelo en Excel y súbelo con «Cargar comprobante corregido».</div>
           {lineasAj.length===0?(
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               <FileText size={36} className="mx-auto mb-2 opacity-40"/>
@@ -29655,7 +29975,7 @@ ${valoresHtml}
                 <tbody>
                   {lineasAj.flatMap((r,ri)=>r.lineas.map((l,li)=>(
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
-                      <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}{li===0 && r._raw && r._raw.corregidoExcel ? <span data-testid="ajuste-corregido-insignia" title={`Cargado desde un Excel corregido el ${contDd(r._raw.corregidoExcel.fecha)} por ${r._raw.corregidoExcel.por||'—'}`} className="ml-1.5 align-middle text-[8px] font-black bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">✔ CORREGIDO</span> : null}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
                       <CeldaCuentaCC tabId='ajustes' compId={r.id} li={li} l={l} r={r}/>
                       <CeldaTipoCC tabId='ajustes' compId={r.id} li={li} l={l}/>
@@ -29685,6 +30005,126 @@ ${valoresHtml}
               </table></div>
             </div>
           )}
+          {/* ── Modal Cargar comprobante corregido (Excel) ── */}
+          {cargaAj && (()=>{
+            const c = cargaAj;
+            const fB = (n) => 'Bs.'+contFmt(n), fU = (n) => '$'+contFmt(n);
+            const items = c.items || [];
+            const aplicable = (it) => it.estado==='REEMPLAZA' || it.estado==='NUEVO';
+            const nAplicar = items.filter(it => aplicable(it) && c.sel[it.clave] && (it.cuadre.ok || c.forzar)).length;
+            const hayDescuadre = items.some(it => aplicable(it) && c.sel[it.clave] && !it.cuadre.ok);
+            const ocupado = c.estado==='aplicando';
+            const ETQ = {NUEVO:['NUEVO','bg-emerald-100 text-emerald-700'], REEMPLAZA:['REEMPLAZA AL DEL SISTEMA','bg-orange-100 text-orange-700'], SIN_CAMBIOS:['SIN CAMBIOS','bg-gray-100 text-gray-500'], ERROR:['CON ERRORES','bg-red-100 text-red-700']};
+            const totTxt = (n, t) => `${n} línea(s) · Debe ${fB(t.dBs)} / Haber ${fB(t.hBs)} · Debe ${fU(t.dUSD)} / Haber ${fU(t.hUSD)}`;
+            return (
+              <div data-testid="cca-modal" className="fixed inset-0 z-[400] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.6)'}}>
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[72vh] flex flex-col">
+                  <div className="px-6 py-4 flex justify-between items-center rounded-t-2xl" style={{background:'#1e293b',borderBottom:'3px solid #10b981'}}>
+                    <h3 className="font-black text-white text-sm uppercase tracking-wide">📎 Cargar comprobante corregido{c.archivo ? <span className="text-white/50 normal-case font-bold"> — {c.archivo}</span> : null}</h3>
+                    <button data-testid="cca-cerrar" onClick={()=>setCargaAj(null)} disabled={ocupado} className="text-white/60 hover:text-white"><X size={18}/></button>
+                  </div>
+                  <div className="p-5 space-y-3 overflow-y-auto min-h-0">
+                    {c.estado==='leyendo' && <p data-testid="cca-leyendo" className="text-xs font-bold text-gray-500">Leyendo el archivo…</p>}
+                    {c.estado==='error' && <div data-testid="cca-error" className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs font-bold text-red-700">{c.error}</div>}
+                    {(c.estado==='listo' || c.estado==='aplicando') && (<>
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[10px] text-blue-700 font-bold">Se encontraron {items.length} comprobante(s) en el archivo{c.periodoTxt ? ` (${c.periodoTxt})` : ''}. Cada uno reemplaza al comprobante del sistema con el mismo «Nro Comp.»: queda IGUAL al archivo (líneas, cuentas, montos, detalle, fecha, concepto y tasa). Nada se guarda hasta que pulses «Aplicar»; la versión anterior queda en la Papelera.</div>
+                      {c.errorAplicar ? <div data-testid="cca-error-aplicar" className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs font-bold text-red-700">{c.errorAplicar}</div> : null}
+                      {items.map(it => {
+                        const apl = aplicable(it);
+                        const [etq, cls] = ETQ[it.estado];
+                        const abierto = c.detalle===it.clave;
+                        const det = [
+                          ['Quitadas — están en el sistema y NO en el archivo', it.quitadas.map(l => ({tag:'−', l})), 'text-red-600', 'bg-red-50/60', it.quitadas.length],
+                          ['Agregadas — están en el archivo y NO en el sistema', it.agregadas.map(l => ({tag:'+', l})), 'text-emerald-700', 'bg-emerald-50/60', it.agregadas.length],
+                          ['Modificadas — antes y ahora', it.modificadas.flatMap(m => [{tag:'antes', l:m.antes}, {tag:'ahora', l:m.despues}]), 'text-orange-700', 'bg-orange-50/60', it.modificadas.length],
+                        ].filter(x => x[1].length);
+                        return (
+                          <div key={it.clave} data-testid="cca-grupo" data-nro={it.nro} data-estado={it.estado} className={`border-2 rounded-xl p-3 ${it.estado==='ERROR' ? 'border-red-200 bg-red-50/30' : apl ? 'border-orange-200' : 'border-gray-200'}`}>
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <input type="checkbox" data-testid="cca-check" disabled={!apl || ocupado} checked={apl && !!c.sel[it.clave]} onChange={e=>setCargaAj(p=>({...p, sel:{...p.sel, [it.clave]:e.target.checked}}))} className="w-4 h-4 accent-orange-500"/>
+                              <span className="font-mono font-black text-orange-600 text-xs">{it.nro}</span>
+                              <span data-testid="cca-estado" className={`text-[9px] font-black px-2 py-0.5 rounded ${cls}`}>{etq}</span>
+                              <span className="text-[10px] text-gray-500 font-bold">{contDd(it.grupo.fecha || (it.existente && it.existente.fecha))}</span>
+                              <span className="text-[10px] text-gray-400 truncate max-w-[340px]" title={it.grupo.concepto}>{it.grupo.concepto}</span>
+                              {apl && it.cuadre.ok ? <span className="ml-auto text-[10px] font-black text-emerald-600">✔ Cuadra (Debe = Haber)</span> : null}
+                              {apl && !it.cuadre.ok ? <span data-testid="cca-descuadre" className="ml-auto text-[10px] font-black text-red-600">✖ Descuadrado: Debe − Haber = {fB(it.cuadre.difBs)} / {fU(it.cuadre.difUSD)}</span> : null}
+                            </div>
+                            {it.estado!=='ERROR' && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 text-[10px]">
+                                {it.existente ? <div className="bg-gray-50 rounded-lg p-2"><p className="font-black text-gray-400 uppercase text-[9px]">En el sistema hoy</p><p data-testid="cca-antes" className="font-mono font-bold text-gray-600">{totTxt(it.nAntes, it.antes)}</p></div> : null}
+                                <div className="bg-emerald-50 rounded-lg p-2"><p className="font-black text-emerald-600 uppercase text-[9px]">{it.existente ? 'Quedaría igual al archivo' : 'Se crearía'}</p><p data-testid="cca-despues" className="font-mono font-bold text-gray-700">{totTxt(it.nDespues, it.despues)}</p></div>
+                              </div>
+                            )}
+                            {it.estado==='REEMPLAZA' && (
+                              <p data-testid="cca-cambios" className="mt-2 text-[10px] font-bold text-gray-600">{it.iguales} igual(es) · {it.agregadas.length} agregada(s) · {it.quitadas.length} quitada(s) · {it.modificadas.length} modificada(s){it.soloOrden ? ' · solo cambia el orden de las líneas' : ''}{it.cab.map(([k, a, b]) => ` · ${k}: ${a} → ${b}`).join('')}</p>
+                            )}
+                            {it.estado==='SIN_CAMBIOS' && <p className="mt-2 text-[10px] font-bold text-gray-500">Este comprobante ya está igual al archivo: no hay nada que cargar.</p>}
+                            {it.avisos.length>0 && <ul data-testid="cca-avisos" className="mt-2 space-y-0.5 text-[10px] font-bold text-amber-700">{it.avisos.slice(0,6).map((a,i)=><li key={i}>⚠ {a}</li>)}</ul>}
+                            {it.errores.length>0 && (
+                              <ul data-testid="cca-errores" className="mt-2 space-y-0.5 text-[10px] font-bold text-red-700">
+                                {it.errores.slice(0,12).map((e,i)=><li key={i}>✖ {e.fila ? `Fila ${e.fila}: ` : ''}{e.msg}</li>)}
+                                {it.errores.length>12 && <li>…y {it.errores.length-12} error(es) más.</li>}
+                              </ul>
+                            )}
+                            {det.length>0 && (
+                              <button data-testid="cca-detalle-btn" onClick={()=>setCargaAj(p=>({...p, detalle:abierto ? null : it.clave}))} className="mt-2 text-[10px] font-black text-blue-600 hover:text-blue-800 underline">{abierto ? 'Ocultar detalle' : 'Ver detalle de las líneas que cambian'}</button>
+                            )}
+                            {abierto && (
+                              <div data-testid="cca-detalle" className="mt-2 space-y-2">
+                                {det.map(([tit, rows, tc, bg, n]) => (
+                                  <div key={tit}>
+                                    <p className={`text-[9px] font-black uppercase ${tc}`}>{tit} ({n})</p>
+                                    <div className="max-h-56 overflow-auto border border-gray-200 rounded-lg">
+                                      <table className="w-full text-[10px]">
+                                        <thead><tr className="bg-gray-100 text-gray-500 uppercase text-[9px]"><th className="px-2 py-1 text-left w-10"></th><th className="px-2 py-1 text-left">Código</th><th className="px-2 py-1 text-left">Cuenta</th><th className="px-2 py-1 text-center">T</th><th className="px-2 py-1 text-left">Detalle</th><th className="px-2 py-1 text-right">Bs.</th><th className="px-2 py-1 text-right">$</th></tr></thead>
+                                        <tbody>{rows.slice(0,400).map((r,i)=>(
+                                          <tr key={i} className={`border-b border-gray-100 ${bg}`}>
+                                            <td className="px-2 py-1 font-black text-gray-400">{r.tag}</td>
+                                            <td className="px-2 py-1 font-mono text-blue-600">{r.l.codigo}</td>
+                                            <td className="px-2 py-1 uppercase">{r.l.cuenta}</td>
+                                            <td className="px-2 py-1 text-center font-black">{r.l.tipo}</td>
+                                            <td className="px-2 py-1 text-gray-600">{r.l.detalle}</td>
+                                            <td className="px-2 py-1 text-right font-mono">{fB(r.l.montoBs)}</td>
+                                            <td className="px-2 py-1 text-right font-mono">{fU(r.l.montoUSD)}</td>
+                                          </tr>
+                                        ))}</tbody>
+                                      </table>
+                                    </div>
+                                    {rows.length>400 && <p className="text-[9px] text-gray-400 font-bold mt-0.5">Se muestran las primeras 400 filas.</p>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>)}
+                    {c.estado==='hecho' && (
+                      <div data-testid="cca-resultado" className="space-y-2">
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs font-bold text-emerald-800 space-y-1">
+                          <p>✔ Listo — se cargó el comprobante corregido:</p>
+                          {(c.hechos||[]).map(h => <p key={h.nro} className="font-mono">• {h.nro}: {h.accion}{h.accion==='reemplazado' ? ` (${h.antes} → ${h.despues} líneas)` : ` (${h.despues} líneas)`}{h.reclas>0 ? ` · se retiraron ${h.reclas} reclasificación(es) de cuenta (el archivo ya trae las cuentas finales)` : ''}</p>)}
+                        </div>
+                        <p className="text-[10px] text-gray-500 font-bold">La versión anterior de cada comprobante reemplazado quedó en Auditoría del Sistema → Papelera (se puede restaurar). Para comprobarlo, descarga otra vez el Excel de esta pestaña: sale igual a lo que cargaste.</p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="px-6 py-3 border-t border-gray-200 flex items-center gap-3 flex-wrap">
+                    {c.estado==='listo' && hayDescuadre && (
+                      <label className="flex items-center gap-1.5 text-[10px] font-black text-red-600 cursor-pointer"><input type="checkbox" data-testid="cca-forzar" checked={!!c.forzar} onChange={e=>setCargaAj(p=>({...p, forzar:e.target.checked}))} className="w-4 h-4 accent-red-500"/>Cargar aunque haya comprobantes descuadrados (no recomendado)</label>
+                    )}
+                    <span className="ml-auto"></span>
+                    {(c.estado==='listo' || c.estado==='aplicando') ? (<>
+                      <button data-testid="cca-cancelar" onClick={()=>setCargaAj(null)} disabled={ocupado} className="px-4 py-2 rounded-lg border-2 border-gray-200 text-gray-600 font-black text-[10px] uppercase hover:bg-gray-50">Cancelar</button>
+                      <button data-testid="cca-aplicar" onClick={aplicarCargaAjuste} disabled={nAplicar===0 || ocupado} className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-[10px] uppercase">{ocupado ? 'Guardando…' : `Aplicar ${nAplicar} comprobante(s)`}</button>
+                    </>) : (
+                      <button data-testid="cca-cerrar2" onClick={()=>setCargaAj(null)} className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white font-black text-[10px] uppercase">Cerrar</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           {/* ── Modal Nuevo/Editar Ajuste ── */}
           {showAjusteModal && (()=>{
             const totAj = totalesAjusteForm();
@@ -46749,7 +47189,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const fechaAj = s.lineas.map(l=>l.fecha).filter(Boolean).sort().slice(-1)[0] || `${m.ym}-${m.fin}`;
             const nF = s.facts.length, nN = s.notas.length;
             const conceptoReal = `${m.nombre} — ingreso y costo de ${nF} factura(s) real(es) del sistema${nN?` y ${nN} nota(s) fiscal(es)`:''} (las mismas del Reporte General de Ventas y Costos y del Libro de Ventas de ${m.corto}) — se registra aquí porque ${m.corto} es anterior al «Inicio de Contabilidad Real»; las facturas no se tocan`;
-            if(!window.confirm(`Se va a ${act?'ACTUALIZAR':'REGISTRAR'} el comprobante «${nro}» de ${m.nombre} con las facturas REALES del sistema (por la fecha de su Nro. Fiscal, como tu Reporte General de Ventas y Costos y el Libro de Ventas):\n\n• ${nF} factura(s)${nN?` y ${nN} nota(s) de crédito/débito fiscal(es)`:''}\n• Ingresos netos: $${formatNum(s.tot.ing)} (Bs. ${formatNum(s.tot.ingBs)})\n• Costo de venta neto: $${formatNum(s.tot.cos)} (Bs. ${formatNum(s.tot.cosBs)})${act?`\n• Hoy el comprobante trae: Ingresos $${formatNum(s.ajTot.ing)} · Costo de venta $${formatNum(s.ajTot.cos)} (${textoDifRealMes(s)}); la versión actual queda en la Papelera.`:''}${quitaAj?`\n\nAdemás se quita del ajuste «${m.ajuste}» lo que trae de Ingresos y Costo de Venta (${rAj.texto}): sus Gastos quedan como están y el ajuste actual queda en la Papelera. Sin esto ${m.corto} contaría las ventas dos veces.`:(ajM?'':`\n\nNo hay ajuste «${m.ajuste}»: no se quita nada.`)}\n\nNo toca Cuentas por Cobrar, IVA, Bancos ni las facturas. ¿Continuar?`)) return;
+            if(!window.confirm(`Se va a ${act?'ACTUALIZAR':'REGISTRAR'} el comprobante «${nro}» de ${m.nombre} con las facturas REALES del sistema (por la fecha de su Nro. Fiscal, como tu Reporte General de Ventas y Costos y el Libro de Ventas):\n\n• ${nF} factura(s)${nN?` y ${nN} nota(s) de crédito/débito fiscal(es)`:''}\n• Ingresos netos: $${formatNum(s.tot.ing)} (Bs. ${formatNum(s.tot.ingBs)})\n• Costo de venta neto: $${formatNum(s.tot.cos)} (Bs. ${formatNum(s.tot.cosBs)})${act?`\n• Hoy el comprobante trae: Ingresos $${formatNum(s.ajTot.ing)} · Costo de venta $${formatNum(s.ajTot.cos)} (${textoDifRealMes(s)}); la versión actual queda en la Papelera.`:''}${quitaAj?`\n\nAdemás se quita del ajuste «${m.ajuste}» lo que trae de Ingresos y Costo de Venta (${rAj.texto}): sus Gastos quedan como están y el ajuste actual queda en la Papelera. Sin esto ${m.corto} contaría las ventas dos veces.`:(ajM?'':`\n\nNo hay ajuste «${m.ajuste}»: no se quita nada.`)}${s.aj?ccAjAvisoCorregido(s.aj):''}${quitaAj?ccAjAvisoCorregido(ajM):''}\n\nNo toca Cuentas por Cobrar, IVA, Bancos ni las facturas. ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const batch = writeBatch(db);
@@ -46793,7 +47233,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const r = resumenIngCostoAjHist(a);
             if(r.n===0){ alert(`El ajuste «${m.ajuste}» ya está solo con Gastos: no hay nada que quitar.`); return; }
             const nuevas = lineasAjusteSoloGastosDin(a);
-            if(!window.confirm(`Se va a dejar el ajuste «${m.ajuste}» solo con los Gastos de ${m.corto} (${nuevas.length} línea(s)).\n\nSe quitan: ${r.texto}.\nLas ventas y el costo de ${m.corto} salen de las facturas reales (comprobante «${nroAjusteRealMes(m)}»), así que se quitan para no contarlos dos veces. Solo cambia este ajuste y el actual queda guardado en la Papelera (recuperable). ¿Continuar?`)) return;
+            if(!window.confirm(`Se va a dejar el ajuste «${m.ajuste}» solo con los Gastos de ${m.corto} (${nuevas.length} línea(s)).\n\nSe quitan: ${r.texto}.\nLas ventas y el costo de ${m.corto} salen de las facturas reales (comprobante «${nroAjusteRealMes(m)}»), así que se quitan para no contarlos dos veces. Solo cambia este ajuste y el actual queda guardado en la Papelera (recuperable).${ccAjAvisoCorregido(a)} ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const batch = writeBatch(db);
@@ -72280,7 +72720,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
            })()}
 
           {/* ── CONTABILIDAD — COMPROBANTES CONTABLES ── */}
-           {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} getAsientosRealesFn={getAsientosReales}/>}
+           {activeTab === 'comprobantes_contables' && hasPerm('banco') && <ComprobantesContablesApp onBack={()=>setActiveTab('home')} getAsientosRealesFn={getAsientosReales} appUser={appUser}/>}
            {activeTab === 'mayor_analitico_cc' && hasPerm('banco') && renderMayorAnaliticoModule()}
            {activeTab === 'balance_comprobacion_cc' && hasPerm('banco') && renderBalanceComprobacionModule()}
            {activeTab === 'estado_resultados_cc' && hasPerm('banco') && renderEstadoResultadosModule()}
