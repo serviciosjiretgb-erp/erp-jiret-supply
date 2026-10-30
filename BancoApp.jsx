@@ -418,6 +418,193 @@ const BEmptyState = ({ icon: Icon, title, desc }) => (
   </div>
 );
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// REINTEGROS A CLIENTES (Banco / Caja · «ajuste a Cuentas por Cobrar» · Egreso)
+// Un reintegro devuelve dinero al cliente y deshace algo que él tenía «a favor». Para que CRUCE en su Estado de Cuenta hay
+// que decir QUÉ se reintegra:
+//   · RETENCION → una retención que el cliente nos aplicó (el «a favor» que esa retención dejó en su NE vuelve a cero)
+//   · PAGO      → un pago recibido (error, o devolución total / parcial): la NE de ese pago vuelve a deber lo reintegrado
+//   · ANTICIPO  → un anticipo sin aplicar (consume su saldo; es el mecanismo que ya existía: anticipoVinculadoId)
+//   · (vacío)   → saldo a favor del cliente / otro: sin documento de origen, se descuenta del saldo a favor del cliente
+// El movimiento guarda reintegroTipo, reintegroDocId, reintegroNeId, reintegroDocRef y reintegroUSD (USD que se aplican al documento).
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+const rcxN = (v) => parseFloat(v) || 0;
+const rcxNorm = (s) => String(s == null ? '' : s).toUpperCase().replace(/\s+/g, ' ').trim();
+const rcxIdMov = (m) => (m && (m._docId || m.id)) || '';
+// USD que se aplican al documento de origen. Si la cuenta es en Bs. y el documento tiene su monto en Bs., se convierte con la tasa del
+// DOCUMENTO: reintegrar los mismos Bs. de la retención la deja exactamente en cero, sin diferencias por la tasa del día del reintegro.
+// En cualquier otro caso se aplican los USD del movimiento.
+const rcxUsdAplicado = (ctx, docUsd, docBs) => {
+  const mBs = rcxN(ctx.montoBs), mUsd = rcxN(ctx.montoUSD);
+  if (String(ctx.monedaCta || '').toUpperCase() === 'BS' && rcxN(docBs) > 0 && rcxN(docUsd) > 0) return Math.round(mBs * (rcxN(docUsd) / rcxN(docBs)) * 10000) / 10000;
+  return Math.round(mUsd * 10000) / 10000;
+};
+// Documentos que se pueden reintegrar a un cliente, con lo que ya se reintegró de cada uno (sin contar el movimiento que se edita)
+const rcxOpciones = ({ cliente, cobros, retenciones, movs, movId, todos, anticipoActual }) => {
+  const usado = new Map();
+  (movs || []).forEach((m) => {
+    if (!m.esAjusteCxC || !m.reintegroDocId) return;
+    if (movId && rcxIdMov(m) === movId) return;
+    const k = (m.reintegroTipo || '') + '|' + m.reintegroDocId;
+    usado.set(k, (usado.get(k) || 0) + (rcxN(m.reintegroUSD) || rcxN(m.montoUSD)));
+  });
+  const rif = rcxNorm(cliente && (cliente.rif || cliente.cedulaRif));
+  const nombres = new Set([cliente && cliente.razonSocial, cliente && cliente.nombre, cliente && cliente.clientName, cliente && cliente.name].filter(Boolean).map(rcxNorm));
+  const porFechaDesc = (a, b) => String(b.fecha || '').localeCompare(String(a.fecha || ''));
+  const rets = (retenciones || []).filter((r) => {
+    if (!r || r.tipo === 'IGTF') return false;
+    if (rcxN(r.montoRetenido) <= 0) return false; // las de una NC se guardan en negativo: no se reintegran
+    const rr = rcxNorm(r.clientRif || r._manualRif);
+    return rif ? rr === rif : (!!rr || nombres.size > 0) && nombres.has(rcxNorm(r._manualCliente));
+  }).map((r) => {
+    const bs = rcxN(r.montoRetenido), tasa = rcxN(r.tasa) || rcxN(r.tasaFactura);
+    const usd = tasa > 1 ? bs / tasa : 0;
+    const ya = usado.get('RETENCION|' + r.id) || 0;
+    const disp = usd > 0 ? Math.max(0, usd - ya) : null; // null = sin tasa: no se puede calcular lo disponible
+    const nro = r.nroRetencion || r.nroComprobante || r.id;
+    const fecha = String(r.fechaComprobante || r.fecha || '').substring(0, 10);
+    const ref = 'Ret. ' + nro + (r.nroFactura ? ' · Fac. ' + r.nroFactura : '');
+    return { id: r.id, bs, usd, ya, disp, fecha, neId: r.neId || r.neOrigen || '', ref,
+      label: bancoDd(fecha) + ' · ' + ref + ' · Bs. ' + bancoFmt(bs) + (usd > 0 ? ' ($' + bancoFmt(usd) + ')' : '') + (disp == null ? '' : (disp <= 0.005 ? ' · ya reintegrada' : ' · disp. $' + bancoFmt(disp))) };
+  }).sort(porFechaDesc);
+  const pagos = (cobros || []).filter((c) => {
+    if (!c || c.esAnticipo || c.tipo === 'IGTF' || !c.neId) return false;
+    if (String(c.neId).startsWith('ND-') || String(c.cuentaBancariaId || '').startsWith('ANTICIPO::')) return false;
+    if (todos) return true;
+    if (c.clientRif) return rcxNorm(c.clientRif) === rif;
+    return nombres.has(rcxNorm(c.clientName));
+  }).map((c) => {
+    const usd = rcxN(c.monto) || rcxN(c.montoUSD), bs = rcxN(c.montoBs);
+    const ya = usado.get('PAGO|' + c.id) || 0;
+    const disp = Math.max(0, usd - ya);
+    const neDoc = c.neDocumento || c.neId;
+    const ref = 'Pago ' + (c.metodo || '') + (c.referencia ? ' Ref ' + c.referencia : '') + ' · ' + neDoc;
+    return { id: c.id, bs, usd, ya, disp, fecha: String(c.fecha || '').substring(0, 10), neId: c.neId, neDoc, ref,
+      label: bancoDd(String(c.fecha || '').substring(0, 10)) + ' · ' + (c.metodo || 'Pago') + (c.referencia ? ' · Ref ' + c.referencia : '') + ' · ' + neDoc + ' · $' + bancoFmt(usd) + (bs > 0 ? ' (Bs. ' + bancoFmt(bs) + ')' : '') + (ya > 0 ? (disp <= 0.005 ? ' · ya reintegrado' : ' · disp. $' + bancoFmt(disp)) : '') };
+  }).sort(porFechaDesc);
+  const ants = (cobros || []).filter((a) => a && a.esAnticipo && ((rif && rcxNorm(a.clientRif) === rif) || a.id === anticipoActual) && ((rcxN(a.monto) - rcxN(a.montoAplicado)) > 0.01 || a.id === anticipoActual))
+    .map((a) => ({ id: a.id, fecha: a.fecha || '', label: (a.fecha || '') + ' · ' + (a.referencia || a.concepto || 'Anticipo') + ' · disp. $' + (rcxN(a.monto) - rcxN(a.montoAplicado)).toFixed(2) }))
+    .sort(porFechaDesc);
+  return { rets, pagos, ants };
+};
+// Campos que se guardan en el movimiento (Banco o Caja). ctx = { cliente, cobros, retenciones, monedaCta, montoBs, montoUSD }
+// prev = el movimiento tal como estaba (solo al EDITAR): si ya traía datos de reintegro y ahora no es un reintegro, se limpian;
+// si nunca los tuvo no se agrega nada (los movimientos que no son reintegros quedan exactamente como antes).
+const rcxCamposMov = (form, ctx, prev) => {
+  const vacio = { reintegroTipo: '', reintegroDocId: '', reintegroNeId: '', reintegroDocRef: '', reintegroUSD: 0 };
+  if (!(form.aplicaTercero && form.terceroId && form.esAjusteCxP && form.tipoTercero === 'Cliente' && form.tipo === 'Egreso')) return (prev && (prev.reintegroTipo || prev.reintegroDocId)) ? vacio : {};
+  const tipo = form.reintegroTipo || (form.anticipoVinculadoId ? 'ANTICIPO' : '');
+  if (tipo === 'LIBRE') return { ...vacio, reintegroTipo: 'LIBRE' };
+  if (tipo === 'ANTICIPO') return form.anticipoVinculadoId ? { ...vacio, reintegroTipo: 'ANTICIPO', reintegroDocId: form.anticipoVinculadoId } : vacio;
+  if (tipo === 'RETENCION') {
+    const r = (ctx.retenciones || []).find((x) => x.id === form.reintegroDocId);
+    if (!r) return vacio;
+    const bs = rcxN(r.montoRetenido), tasa = rcxN(r.tasa) || rcxN(r.tasaFactura);
+    return { reintegroTipo: 'RETENCION', reintegroDocId: r.id, reintegroNeId: r.neId || r.neOrigen || '',
+      reintegroDocRef: 'Ret. ' + (r.nroRetencion || r.nroComprobante || r.id) + (r.nroFactura ? ' · Fac. ' + r.nroFactura : ''),
+      reintegroUSD: rcxUsdAplicado(ctx, tasa > 1 ? bs / tasa : 0, bs) };
+  }
+  if (tipo === 'PAGO') {
+    const c = (ctx.cobros || []).find((x) => x.id === form.reintegroDocId);
+    if (!c) return vacio;
+    return { reintegroTipo: 'PAGO', reintegroDocId: c.id, reintegroNeId: c.neId || '',
+      reintegroDocRef: 'Pago ' + (c.metodo || '') + (c.referencia ? ' Ref ' + c.referencia : '') + ' · ' + (c.neDocumento || c.neId || ''),
+      reintegroUSD: rcxUsdAplicado(ctx, rcxN(c.monto) || rcxN(c.montoUSD), rcxN(c.montoBs)) };
+  }
+  return vacio;
+};
+// Texto de error (o '') antes de guardar: el documento debe existir y el reintegro no puede superar lo que queda por reintegrar
+const rcxValidar = (form, ctx, movs, movId) => {
+  if (!(form.aplicaTercero && form.terceroId && form.esAjusteCxP && form.tipoTercero === 'Cliente' && form.tipo === 'Egreso')) return '';
+  const tipo = form.reintegroTipo || (form.anticipoVinculadoId ? 'ANTICIPO' : '');
+  if (!tipo) return 'Elige qué se está reintegrando: una retención, un pago, un anticipo, o «Saldo a favor / otro» si no tiene documento de origen.';
+  if (tipo === 'LIBRE') return '';
+  const op = rcxOpciones({ cliente: ctx.cliente, cobros: ctx.cobros, retenciones: ctx.retenciones, movs, movId, todos: !!form.reintegroTodos, anticipoActual: form.anticipoVinculadoId });
+  if (tipo === 'ANTICIPO') {
+    if (!form.anticipoVinculadoId) return 'Elige el anticipo que se está reintegrando (o marca «Saldo a favor / otro» si no tiene documento de origen).';
+    return op.ants.some((a) => a.id === form.anticipoVinculadoId) ? '' : 'El anticipo elegido no corresponde a este cliente. Vuelve a elegirlo.';
+  }
+  const lista = tipo === 'RETENCION' ? op.rets : op.pagos;
+  if (!form.reintegroDocId) return 'Elige ' + (tipo === 'RETENCION' ? 'la retención' : 'el pago') + ' que se está reintegrando (o marca «Saldo a favor / otro» si no tiene documento de origen).';
+  const d = lista.find((x) => x.id === form.reintegroDocId);
+  if (!d) return (tipo === 'RETENCION' ? 'La retención' : 'El pago') + ' elegido no existe o no corresponde a este cliente. Vuelve a elegirlo.';
+  const aplic = rcxCamposMov(form, ctx).reintegroUSD;
+  if (d.disp != null && aplic > d.disp + 0.05) return 'El reintegro ($' + bancoFmt(aplic) + ') supera lo que queda por reintegrar de ese documento ($' + bancoFmt(d.disp) + '). Ajusta el monto, o registra el excedente aparte como «Saldo a favor / otro».';
+  return '';
+};
+// Selector «¿Qué se está reintegrando?» (componente de módulo: identidad estable, no se remonta al escribir)
+const ReintegroCxcPicker = ({ form, setForm, cliente, cobros, retenciones, movs, movId, montoBs, montoUSD, monedaCta }) => {
+  const todos = !!form.reintegroTodos;
+  const op = useMemo(() => rcxOpciones({ cliente, cobros, retenciones, movs, movId, todos, anticipoActual: form.anticipoVinculadoId }),
+    [cliente, cobros, retenciones, movs, movId, todos, form.anticipoVinculadoId]);
+  const tipo = form.reintegroTipo || (form.anticipoVinculadoId ? 'ANTICIPO' : '');
+  const elegir = (t) => setForm((f) => ({ ...f, reintegroTipo: t, reintegroDocId: '', anticipoVinculadoId: t === 'ANTICIPO' ? (f.anticipoVinculadoId || '') : '' }));
+  const lista = tipo === 'RETENCION' ? op.rets : tipo === 'PAGO' ? op.pagos : [];
+  const docSel = lista.find((x) => x.id === form.reintegroDocId);
+  const aplic = docSel ? rcxUsdAplicado({ montoBs, montoUSD, monedaCta }, docSel.usd, docSel.bs) : 0;
+  const exceso = !!(docSel && docSel.disp != null && aplic > docSel.disp + 0.05);
+  const OPC = [
+    ['RETENCION', '🧾 Una retención', 'Le devolvemos una retención que nos aplicó'],
+    ['PAGO', '💵 Un pago recibido', 'Pago erróneo o devolución total / parcial de un pago'],
+    ['ANTICIPO', '💰 Un anticipo sin aplicar', 'Devolución de un anticipo del cliente'],
+    ['LIBRE', '↩️ Saldo a favor / otro', 'Sin documento de origen: baja el saldo a favor del cliente'],
+  ];
+  return (
+    <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 space-y-2.5" data-testid="reintegro-cxc-picker">
+      <div>
+        <p className="text-[10px] font-black uppercase tracking-widest text-cyan-800">↩️ ¿Qué se está reintegrando?</p>
+        <p className="text-[10px] text-cyan-700 mt-0.5">Elige el documento de origen: así el reintegro cruza con él en el Estado de Cuenta y en Cuentas por Cobrar (y no queda como un «a favor» más).</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {OPC.map(([k, t, d]) => (
+          <label key={k} className={`flex items-start gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all ${tipo === k ? 'border-cyan-500 bg-white' : 'border-cyan-100 hover:border-cyan-300'}`}>
+            <input type="radio" name="reintegro-tipo" className="mt-0.5" checked={tipo === k} onChange={() => elegir(k)} />
+            <span><b className="block text-[11px] text-slate-800">{t}</b><span className="text-[9px] text-slate-500">{d}</span></span>
+          </label>
+        ))}
+      </div>
+      {tipo === 'RETENCION' && (
+        <div>
+          <select className={sel} value={form.reintegroDocId || ''} onChange={(e) => setForm((f) => ({ ...f, reintegroDocId: e.target.value }))}>
+            <option value="">— Seleccione la retención —</option>
+            {op.rets.map((r) => <option key={r.id} value={r.id} disabled={r.disp != null && r.disp <= 0.005 && r.id !== form.reintegroDocId}>{r.label}</option>)}
+          </select>
+          {op.rets.length === 0 && <p className="text-[9px] text-slate-500 mt-1">Este cliente no tiene retenciones registradas.</p>}
+        </div>
+      )}
+      {tipo === 'PAGO' && (
+        <div>
+          <select className={sel} value={form.reintegroDocId || ''} onChange={(e) => setForm((f) => ({ ...f, reintegroDocId: e.target.value }))}>
+            <option value="">— Seleccione el pago —</option>
+            {op.pagos.map((p) => <option key={p.id} value={p.id} disabled={p.ya > 0 && p.disp <= 0.005 && p.id !== form.reintegroDocId}>{p.label}</option>)}
+          </select>
+          {op.pagos.length === 0 && <p className="text-[9px] text-slate-500 mt-1">No se encontraron pagos de este cliente.</p>}
+          <label className="flex items-center gap-1.5 mt-1 text-[9px] text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={todos} onChange={(e) => setForm((f) => ({ ...f, reintegroTodos: e.target.checked }))} /> Mostrar los pagos de todos los clientes
+          </label>
+        </div>
+      )}
+      {tipo === 'ANTICIPO' && (
+        <div>
+          <select className={sel} value={form.anticipoVinculadoId || ''} onChange={(e) => setForm((f) => ({ ...f, anticipoVinculadoId: e.target.value, reintegroDocId: e.target.value }))}>
+            <option value="">— Seleccione el anticipo —</option>
+            {op.ants.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </select>
+          {op.ants.length === 0 && <p className="text-[9px] text-slate-500 mt-1">Este cliente no tiene anticipos sin aplicar.</p>}
+        </div>
+      )}
+      {docSel && (
+        <p className={`text-[10px] font-bold ${exceso ? 'text-red-600' : 'text-cyan-800'}`}>
+          Se aplican <b>${bancoFmt(aplic)}</b> contra {docSel.ref}{docSel.disp != null ? ` · queda por reintegrar de ese documento: $${bancoFmt(docSel.disp)}` : ''}
+          {exceso ? ' — ⚠ supera lo disponible: ajusta el monto o usa «Saldo a favor / otro» para el excedente.' : ''}
+        </p>
+      )}
+      {tipo === 'LIBRE' && <p className="text-[9px] text-cyan-700">Sin documento de origen: se descuenta del saldo a favor del cliente (aparece como un cargo en su cuenta).</p>}
+      {tipo === '' && <p className="text-[9px] font-bold text-amber-700">⚠ Elige una opción: sin ella el reintegro no se puede guardar.</p>}
+    </div>
+  );
+};
+
 // Sidebar layout — mejorado con colores por grupo
 const BSidebarLayout = ({ brand, brandSub, navGroups, activeId, onNav, children, headerContent, onBack, accentColor = ORANGE }) => {
   const activeGroup = navGroups.find(g => g.items.find(i => i.id === activeId));
@@ -2730,6 +2917,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const systemUsers = systemUsersProp.length > 0 ? systemUsersProp : systemUsersLocal;
   const [cobrosCajaCxc, setCobrosCajaCxc] = useState([]); // cobros_cxc donde cuentaBancariaId empieza con CAJA::
   const [cobrosCxcTodos, setCobrosCxcTodos] = useState([]); // TODOS los cobros_cxc — para vincular reintegros a anticipos de cliente
+  const [retencionesCli, setRetencionesCli] = useState([]); // retencionesClientes — para vincular un reintegro a la retención que se devuelve
+  // Movimientos de ajuste a CxC (Banco y Caja): sirven para saber cuánto se ha reintegrado ya de cada retención / pago
+  const reintegrosCxcMovs = useMemo(() => [...movBanco, ...movCaja].filter(m => m.esAjusteCxC), [movBanco, movCaja]);
   const [pagosCajaCxP,  setPagosCajaCxP]  = useState([]); // procura_pagos_cxp donde cuentaId empieza con CAJA::
   const [pagosCxPTodos, setPagosCxPTodos] = useState([]); // TODOS los procura_pagos_cxp — para Pagos por Identificar
 
@@ -2742,6 +2932,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         setCobrosCajaCxc(todos.filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')));
         setCobrosCxcTodos(todos);
       }),
+      onSnapshot(getColRef('retencionesClientes'), s => setRetencionesCli(s.docs.map(d=>({id:d.id,...d.data()})))),
       onSnapshot(query(getColRef('procura_pagos_cxp'), orderBy('fecha','desc')), s => {
         const todos = s.docs.map(d=>d.data());
         setPagosCajaCxP(todos.filter(p=>(p.cuentaId||'').startsWith('CAJA::')));
@@ -3545,7 +3736,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       aplicaComision:false,tasaDestino:'',comisionCtaId:'',
       origenIngreso:'Venta',motivoEgreso:'Pago Proveedor',
       concepto:'',referencia:'',tasa:String(tasaActiva),montoNativo:'',
-      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',esAjusteCxP:false,
+      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',esAjusteCxP:false,reintegroTipo:'',reintegroDocId:'',reintegroTodos:false,
       cerrarCxC:false,facturaId:'',
       ctaContraId:'',ctaContraNombre:'',cuentaAjusteId:'',
       lineasContra:[{ctaId:'',ctaNom:'',debeBs:'',haberBs:'',debeUSD:'',haberUSD:''}],
@@ -3593,6 +3784,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(form.tipo==='Traslado de Fondo'&&form.cuentaDestinoId===form.cuentaId) return alert('El Banco Destino no puede ser el mismo que el Banco Origen');
       if((form.tipo==='Nota de Débito'||form.tipo==='Nota de Crédito')&&!form.cuentaAjusteId) return alert('Seleccione la cuenta contable del ajuste (comisión, interés, etc.)');
       if(form.aplicaTercero&&!form.terceroId) return alert('Seleccione el tercero');
+      { const _eRcx=rcxValidar(form,{cliente:clientes.find(c=>c.id===form.terceroId),cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:cuentaSel?.moneda,montoBs,montoUSD},reintegrosCxcMovs,''); if(_eRcx) return alert(_eRcx); }
       setBusy(true);
       try {
         const cuenta=cuentas.find(c=>c.id===form.cuentaId);
@@ -3747,6 +3939,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           terceroId:tercero?.id||'',terceroNombre:nomT(tercero),
           facturaId:factura?.id||'',facturaNumero:factura?.numero||'',
           anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSD:0,
+          ...rcxCamposMov(form,{cliente:tercero,cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:cuenta.moneda,montoBs,montoUSD}),
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito,asientoCredito,
           asientoContableId:asientoId,
@@ -3859,6 +4052,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(!form.concepto) return alert('Ingrese el concepto');
       const movOrigChk = movBanco.find(m=>(m._docId||m.id)===editId);
       if(movOrigChk?.estatus==='Conciliado') return alert('🔒 Este movimiento está conciliado — reversa la conciliación primero (Conciliación → Historial) para poder editarlo.');
+      { const _eRcx=rcxValidar(form,{cliente:clientes.find(c=>c.id===form.terceroId),cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:cuentaSel?.moneda,montoBs,montoUSD},reintegrosCxcMovs,editId); if(_eRcx) return alert(_eRcx); }
       setBusy(true);
       try {
         const movOriginal = movBanco.find(m=>(m._docId||m.id)===editId);
@@ -3884,6 +4078,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           tasa,montoNativo:mNat,montoBs,montoUSD,saldoResultante:nuevoSaldo,
           aplicaTercero:form.aplicaTercero,tipoTercero:form.tipoTercero,esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSD:0,
+          ...rcxCamposMov(form,{cliente:tercero,cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:cuentaNueva?.moneda||'',montoBs,montoUSD},movOriginal),
           terceroId:tercero?.id||'',terceroNombre:nomT(tercero),
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
@@ -4214,7 +4409,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         origenIngreso:m.origenIngreso||'Venta',motivoEgreso:m.motivoEgreso||'Pago Proveedor',
         concepto:m.concepto,referencia:m.referencia||'',
         tasa:String(m.tasa||tasaActiva),montoNativo:String(m.montoNativo||''),
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,anticipoVinculadoId:m.anticipoVinculadoId||'',
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,anticipoVinculadoId:m.anticipoVinculadoId||'',reintegroTipo:m.reintegroTipo||(m.anticipoVinculadoId?'ANTICIPO':((m.esAjusteCxP||m.esAjusteCxC)?'LIBRE':'')),reintegroDocId:m.reintegroDocId||m.anticipoVinculadoId||'',
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||'',
         cuentaDestinoId, _destinoMovId:destinoMovId, _destinoNoEncontrado: m.tipo==='Transferencia' && !destinoMovId});
     };
@@ -4676,7 +4871,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked})}/>
                     <span className="text-[11px] text-amber-800"><b>Es un ajuste a {form.tipoTercero==='Proveedor'?'Cuentas por Pagar':'Cuentas por Cobrar'}</b> — marca esto si el movimiento NO es un pago de factura ni un anticipo formal (ej. reintegro de retención, nota de ajuste). Aparecerá como línea aparte en el Estado de Cuenta de este tercero.</span>
                   </label>}
-                  {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&(()=>{
+                  {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&form.tipo==='Egreso'&&<ReintegroCxcPicker form={form} setForm={setForm} cliente={clientes.find(c=>c.id===form.terceroId)} cobros={cobrosCxcTodos} retenciones={retencionesCli} movs={reintegrosCxcMovs} movId={editId} montoBs={montoBs} montoUSD={montoUSD} monedaCta={cuentaSel?.moneda}/>}
+                  {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&form.tipo!=='Egreso'&&(()=>{
                     const clienteSel=clientes.find(c=>c.id===form.terceroId);
                     const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&((Number(a.monto||0)-Number(a.montoAplicado||0))>0.01||a.id===form.anticipoVinculadoId));
                     return (
@@ -4727,6 +4923,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     <p className="text-[9px] font-black uppercase text-orange-700 tracking-widest mb-1">Tercero Vinculado</p>
                     <p className="font-black text-slate-900">{movDetalle.terceroNombre}</p>
                     {movDetalle.facturaNumero&&<p className="text-[10px] text-blue-600 font-black mt-0.5">Factura: {movDetalle.facturaNumero}</p>}
+                    {movDetalle.esAjusteCxC&&movDetalle.reintegroDocRef&&<p className="text-[10px] text-cyan-700 font-black mt-0.5">↩️ Reintegro de: {movDetalle.reintegroDocRef}{rcxN(movDetalle.reintegroUSD)>0?` · aplicado $${bancoFmt(movDetalle.reintegroUSD)}`:''}</p>}
                   </div>
                 )}
                 {(()=>{
@@ -5358,6 +5555,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           ?factPend.map(f=>(<label key={f.id} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${form.facturaId===f.id?'border-blue-500 bg-blue-50':'border-slate-200 hover:border-slate-100'}`}><input type="radio" name="fid" value={f.id} checked={form.facturaId===f.id} onChange={()=>setForm({...form,facturaId:f.id})} className="accent-blue-500"/><div className="flex-1"><p className="font-black text-xs text-slate-900">{f.numero} · {bancoDd(f.fechaVencimiento)}</p></div><p className="font-mono font-black text-orange-500">{'$'+bancoFmt(f.saldoUSD)}</p>{f.fechaVencimiento<getTodayDate()&&<BBadge v="red">Vencida</BBadge>}</label>))
                           :<div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2"><CheckCircle size={14} className="text-emerald-500"/><p className="text-[10px] font-black text-emerald-700">Sin facturas pendientes.</p></div>
                         )}
+                      </div>
+                    )}
+                    {form.tipoTercero==='Cliente'&&form.terceroId&&form.tipo==='Egreso'&&(
+                      <div className="space-y-2">
+                        <label className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3 cursor-pointer">
+                          <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked,reintegroTipo:'',reintegroDocId:'',anticipoVinculadoId:''})}/>
+                          <span className="text-[11px] text-amber-800"><b>Es un reintegro al cliente (ajuste a Cuentas por Cobrar)</b> — marca esto si le devuelves dinero: una retención, un pago erróneo o parcial, un saldo a favor o un anticipo. Aparecerá en su Estado de Cuenta y cruzará contra el documento de origen.</span>
+                        </label>
+                        {form.esAjusteCxP&&<ReintegroCxcPicker form={form} setForm={setForm} cliente={clientes.find(c=>c.id===form.terceroId)} cobros={cobrosCxcTodos} retenciones={retencionesCli} movs={reintegrosCxcMovs} movId="" montoBs={montoBs} montoUSD={montoUSD} monedaCta={cuentaSel?.moneda}/>}
                       </div>
                     )}
                   </div>}
@@ -6316,7 +6522,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       monedaOp:'BS',montoOp:'',
       tasaDestino:'',comisionCtaId:'',
       concepto:'',referencia:'',tasa:String(tasaActiva),montoNativo:'',
-      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',esAjusteCxP:false,
+      aplicaTercero:false,tipoTercero:'Cliente',terceroId:'',esAjusteCxP:false,reintegroTipo:'',reintegroDocId:'',reintegroTodos:false,
       cerrarCxC:false,facturaId:'',
       cuentaAjusteId:'',
       lineasContra:[{ctaId:'',ctaNom:'',debeBs:'',haberBs:'',debeUSD:'',haberUSD:''}],
@@ -6531,6 +6737,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(form.tipo==='Traslado de Fondo'&&form.cuentaDestinoId===form.cuentaId) return alert('El destino no puede ser la misma caja de origen');
       if((form.tipo==='Nota de Débito'||form.tipo==='Nota de Crédito')&&!form.cuentaAjusteId) return alert('Seleccione la cuenta contable del ajuste (comisión, diferencial, etc.)');
       if(form.aplicaTercero&&!form.terceroId) return alert('Seleccione el tercero');
+      { const _eRcx=rcxValidar(form,{cliente:clientes.find(c=>c.id===form.terceroId),cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:cuentaSel?.moneda,montoBs,montoUSD},reintegrosCxcMovs,''); if(_eRcx) return alert(_eRcx); }
       setBusy(true);
       try {
         const caja = cajas.find(c=>c.id===form.cuentaId);
@@ -6642,6 +6849,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           tasa, monto:mNat, montoBs, montoUSD,
           aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSD:0,
+          ...rcxCamposMov(form,{cliente:tercero,cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:caja.moneda,montoBs,montoUSD}),
           terceroId:tercero?.id||'', terceroNombre:nomT(tercero),
           facturaId:factura?.id||'', facturaNumero:factura?.numero||'',
           asientoContableId:asientoId, estatus:'No Conciliado', ts:serverTimestamp()
@@ -6762,7 +6970,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       setCajaEdit(true);
       setForm({fecha:m.fecha||getTodayDate(),tipo:m.tipo||'Ingreso',moneda:m.moneda||'BS',concepto:m.concepto||'',referencia:m.referencia||'',
         motivoEgreso:m.motivoEgreso||'Pago Proveedor',montoNativo:String(m.monto||''),tasa:String(m.tasa||tasaActiva),cajaId:m.cajaId||'',
-        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,anticipoVinculadoId:m.anticipoVinculadoId||'',
+        aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,anticipoVinculadoId:m.anticipoVinculadoId||'',reintegroTipo:m.reintegroTipo||(m.anticipoVinculadoId?'ANTICIPO':((m.esAjusteCxP||m.esAjusteCxC)?'LIBRE':'')),reintegroDocId:m.reintegroDocId||m.anticipoVinculadoId||'',
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||''});
     };
 
@@ -6771,6 +6979,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(cajaDet.estatus==='Conciliado'||concilCajaIds.has(cajaDet.id)) return alert('Este movimiento ya est\u00e1 conciliado. Elimine primero la conciliaci\u00f3n para poder editarlo.');
       if(!form.montoNativo||Number(form.montoNativo)<=0) return alert('Ingrese un monto válido');
       if(!form.concepto) return alert('Ingrese el concepto');
+      { const _mN=Number(form.montoNativo)||0, _t=Number(form.tasa)||tasaActiva, _bsC=form.moneda==='BS'; const _eRcx=rcxValidar(form,{cliente:clientes.find(c=>c.id===form.terceroId),cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:form.moneda,montoBs:_bsC?_mN:_mN*_t,montoUSD:_bsC?(_t>0?_mN/_t:0):_mN},reintegrosCxcMovs,cajaDet.id); if(_eRcx) return alert(_eRcx); }
       setBusy(true);
       try {
         const mNatEdit = Number(form.montoNativo)||0;
@@ -6790,6 +6999,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           tasa:tasaEdit, monto:mNatEdit, montoBs:montoBsEdit, montoUSD:montoUSDEdit,
           aplicaTercero:form.aplicaTercero, tipoTercero:form.tipoTercero, esAjusteCxP:!!form.esAjusteCxP&&form.tipoTercero==='Proveedor',esAjusteCxC:!!form.esAjusteCxP&&form.tipoTercero==='Cliente',
           anticipoVinculadoId:(form.esAjusteCxP&&form.tipoTercero==='Cliente')?(form.anticipoVinculadoId||''):'',anticipoAplicadoMonto:(form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.anticipoVinculadoId&&cobrosCxcTodos.some(a=>a.id===form.anticipoVinculadoId))?montoUSDEdit:0,
+          ...rcxCamposMov(form,{cliente:terceroEdit,cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:form.moneda,montoBs:montoBsEdit,montoUSD:montoUSDEdit},cajaDet),
           terceroId:terceroEdit?.id||'', terceroNombre:nomT(terceroEdit),
           ctaContraId:form.ctaContraId, ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaCajaEdit:ctaContraEdit,
@@ -7373,7 +7583,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked})}/>
                   <span className="text-[11px] text-amber-800"><b>Es un ajuste a {form.tipoTercero==='Proveedor'?'Cuentas por Pagar':'Cuentas por Cobrar'}</b> — marca esto si el movimiento NO es un pago de factura ni un anticipo formal. Aparecerá como línea aparte en el Estado de Cuenta de este tercero.</span>
                 </label>}
-                {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&(()=>{
+                {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&form.tipo==='Egreso'&&<ReintegroCxcPicker form={form} setForm={setForm} cliente={clientes.find(c=>c.id===form.terceroId)} cobros={cobrosCxcTodos} retenciones={retencionesCli} movs={reintegrosCxcMovs} movId={cajaDet?.id} montoBs={(form.moneda==='BS')?(Number(form.montoNativo)||0):(Number(form.montoNativo)||0)*(Number(form.tasa)||tasaActiva)} montoUSD={(form.moneda==='BS')?((Number(form.tasa)||tasaActiva)>0?(Number(form.montoNativo)||0)/(Number(form.tasa)||tasaActiva):0):(Number(form.montoNativo)||0)} monedaCta={form.moneda}/>}
+                {form.aplicaTercero&&form.esAjusteCxP&&form.tipoTercero==='Cliente'&&form.terceroId&&form.tipo!=='Egreso'&&(()=>{
                   const clienteSel=clientes.find(c=>c.id===form.terceroId);
                   const antsDisponibles=cobrosCxcTodos.filter(a=>a.esAnticipo&&(a.clientRif||'').trim().toUpperCase()===(clienteSel?.rif||'').trim().toUpperCase()&&((Number(a.monto||0)-Number(a.montoAplicado||0))>0.01||a.id===form.anticipoVinculadoId));
                   return (
@@ -7404,6 +7615,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   ))}
                 </div>
                 {cajaDet._facturaInfo&&<div className="bg-orange-50 border border-orange-200 rounded-xl p-3"><p className="text-[9px] font-black uppercase text-orange-700 mb-1">Factura(s) Afectada(s)</p><p className="text-xs font-black text-orange-900">📄 {cajaDet._facturaInfo}</p></div>}
+                {cajaDet.esAjusteCxC&&cajaDet.reintegroDocRef&&<div className="bg-cyan-50 border border-cyan-200 rounded-xl p-3"><p className="text-[9px] font-black uppercase text-cyan-700 mb-1">Reintegro de</p><p className="text-xs font-black text-cyan-900">↩️ {cajaDet.reintegroDocRef}{rcxN(cajaDet.reintegroUSD)>0?` · aplicado $${bancoFmt(cajaDet.reintegroUSD)}`:''}</p></div>}
                 {(()=>{
                   // Mismo criterio que en Banco: buscar el asiento propio y, si es un traslado, el
                   // asiento del OTRO LADO (banco o caja) por referencia+fecha+concepto, para
@@ -7812,6 +8024,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           ?factPend.map(f=>(<label key={f.id} className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${form.facturaId===f.id?'border-emerald-500 bg-emerald-50':'border-slate-200 hover:border-slate-100'}`}><input type="radio" name="fid" value={f.id} checked={form.facturaId===f.id} onChange={()=>setForm({...form,facturaId:f.id})} className="accent-emerald-500"/><div className="flex-1"><p className="font-black text-xs text-slate-900">{f.numero} · {bancoDd(f.fechaVencimiento)}</p></div><p className="font-mono font-black text-orange-500">{'$'+bancoFmt(f.saldoUSD)}</p>{f.fechaVencimiento<getTodayDate()&&<BBadge v="red">Vencida</BBadge>}</label>))
                           :<div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2"><CheckCircle size={14} className="text-emerald-500"/><p className="text-[10px] font-black text-emerald-700">Sin facturas pendientes.</p></div>
                         )}
+                      </div>
+                    )}
+                    {form.tipoTercero==='Cliente'&&form.terceroId&&form.tipo==='Egreso'&&(
+                      <div className="space-y-2">
+                        <label className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3 cursor-pointer">
+                          <input type="checkbox" className="mt-0.5" checked={!!form.esAjusteCxP} onChange={e=>setForm({...form,esAjusteCxP:e.target.checked,reintegroTipo:'',reintegroDocId:'',anticipoVinculadoId:''})}/>
+                          <span className="text-[11px] text-amber-800"><b>Es un reintegro al cliente (ajuste a Cuentas por Cobrar)</b> — marca esto si le devuelves dinero: una retención, un pago erróneo o parcial, un saldo a favor o un anticipo. Aparecerá en su Estado de Cuenta y cruzará contra el documento de origen.</span>
+                        </label>
+                        {form.esAjusteCxP&&<ReintegroCxcPicker form={form} setForm={setForm} cliente={clientes.find(c=>c.id===form.terceroId)} cobros={cobrosCxcTodos} retenciones={retencionesCli} movs={reintegrosCxcMovs} movId="" montoBs={montoBs} montoUSD={montoUSD} monedaCta={cuentaSel?.moneda}/>}
                       </div>
                     )}
                   </div>}
