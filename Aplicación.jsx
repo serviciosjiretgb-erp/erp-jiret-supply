@@ -1549,6 +1549,19 @@ const rhFaovDelPago = (pago, tipo, conceptos) => {
   return { auto, incluida:auto && !(carga && carga.solo && !item), esUtilidades, enLista:!!item, concepto:item ? item.concepto : (activos.find(c => c.tipo === 'D' && rhEsConceptoFaov(c)) || null), cuenta:(item && item.cuenta) || null };
 };
 
+// == RRHH - IVSS / RPE / FAOV en los pagos de Vacaciones (sin «Días Trabajados») ==
+// Un pago de Vacaciones carga solo sus conceptos (días de vacaciones, días adicionales, bono vacacional…) y no trae «Días Trabajados»: IVSS y RPE salían solo de ese sueldo y el BANAVIH solo en Utilidades,
+// así que el pago de Vacaciones no calculaba nada de eso —ni lo del trabajador ni el aporte de la empresa— aunque su tipo tuviera tildados los aportes patronales (Configuración → Tipos de nómina).
+// Ahora un pago de Vacaciones sin «Días Trabajados» calcula cada ley que su tipo lleva tildada (Seguro Social, Paro Forzoso, BANAVIH), con el cálculo de siempre sobre las asignaciones del pago:
+//   IVSS y RPE: salario normal (sin el bono vacacional) × % × lunes del período, con su tope · FAOV (BANAVIH): % sobre todas las asignaciones. Cada fila sale con su aporte de la empresa.
+// Una ley sin tildar en el tipo no sale en el pago. Los pagos con «Días Trabajados», los de Utilidades y los de cualquier otro tipo siguen exactamente igual que antes.
+const rhEsPagoVacaciones = (pago, tipo) => /VACACION/.test(rhNormalizarNombre(pago && pago.concepto)) || /VACACION/.test(rhNormalizarNombre(tipo && tipo.nombre));
+// → { ivss, rpe, faov }: las leyes que el pago calcula aunque no tenga «Días Trabajados» (solo en Vacaciones; un tipo que aún no guardó sus aportes usa lo que le corresponde por su nombre, ver rhAportesDeTipo)
+const rhLeyesSinDiasDelPago = (pago, tipo) => {
+  if (!rhEsPagoVacaciones(pago, tipo)) return { ivss:false, rpe:false, faov:false };
+  const a = rhAportesDeTipo(tipo, (pago && pago.concepto) || (tipo && tipo.nombre));
+  return { ivss:a.ivss === true, rpe:a.rpe === true, faov:a.faov === true };
+};
 // ═════ Informes de nómina: Nómina General de Pago · Resumen de Conceptos · Resumen por Centro de Costo (los del ERP, mejorados) ═════
 // Todo sale de lo ya guardado en cada pago (rrhh_nominas + rrhh_nomina_detalles): las mismas cifras del recibo, del reporte y del asiento.
 // Se omiten las filas en 0 (sin monto en $ ni en Bs.). Las deducciones salen en positivo, en su propia columna: Neto = Asignaciones − Deducciones.
@@ -3493,7 +3506,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   // - INCES: el trabajador solo se descuenta sobre utilidades: mkInces (solo se usa en pagos de Utilidades o de un tipo que lista el concepto INCES: % «Trabajador (solo utilidades)» de Parafiscales
   //   sobre las utilidades del pago, ver rhIncesUtilidades). El patronal es trimestral (pantalla propia) y mensual en «Cierre de Mes».
   // Devuelve, para cada una, el monto AL TRABAJADOR y el APORTE PATRONAL por separado.
-  const calcularDeduccionesLegales = (asignaciones, tasa, conceptoNomina, mes, quincena) => {
+  const calcularDeduccionesLegales = (asignaciones, tasa, conceptoNomina, mes, quincena, leyesSinDias) => {
     const incluidas = asignaciones.filter(a=>a.incluida);
     const totalAsig = incluidas.reduce((s,a)=>s+Number(a.montoUSD||0),0);
     const sueldoBasicoItem = incluidas.find(a=>a.codigo==='00001');
@@ -3516,7 +3529,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
       return (semanal*pct/100)*lunes;
     };
     const mkSemanal = (nombre, cfgSeccion, cuenta) => {
-      if(!hayBase || lunes===0) return {concepto:nombre, montoUSD:0, montoPatronalUSD:0, montoBs:0, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfgSeccion.nombrePasivo||nombre, esLegal:true};
+      const sinDias = !hayBase && !!(leyesSinDias && leyesSinDias[nombre==='IVSS' ? 'ivss' : 'rpe']); // pago de Vacaciones sin «Días Trabajados» cuyo tipo lleva esta ley (rhLeyesSinDiasDelPago)
+      if((!hayBase && !sinDias) || lunes===0) return {concepto:nombre, montoUSD:0, montoPatronalUSD:0, montoBs:0, montoPatronalBs:0, codigoCuenta:cuenta?.codigoCuenta||'', nombreCuenta:cuenta?.nombreCuenta||cfgSeccion.nombrePasivo||nombre, esLegal:true};
       const pctPatronal = nombre==='IVSS' ? RIESGO_PCT[configParafiscal.ivss.riesgo] : cfgSeccion.pctPatronal;
       const crudoUSD = calcSemanal(salarioNormal, cfgSeccion.pctTrabajador, cfgSeccion.topeMultiplo);
       const crudoPatronalUSD = calcSemanal(salarioNormal, pctPatronal, cfgSeccion.topeMultiplo);
@@ -3582,9 +3596,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const conceptosActivos = conceptos.filter(c=>c.activo!==false && c.tipo==='D');
     const cIVSSc = conceptosActivos.find(conceptoEsIVSS), cRPEc = conceptosActivos.find(conceptoEsRPE), cFAOVc = conceptosActivos.find(conceptoEsFAOV);
     const aCuenta = (c) => { const cu=c?cuentaDeConcepto(c,centroCostoId):null; return {codigoCuenta:cu?.codigo||'', nombreCuenta:cu?.nombre||''}; };
-    const {hayBase, mkSemanal, mkFaov, mkFaovPago, mkInces} = calcularDeduccionesLegales(asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena);
-    const base = hayBase ? [mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), mkFaov(aCuenta(cFAOVc))].map(d=>({...d, incluida:true})) : [];
     const tipoPago = nominaActiva?.tipoNominaId ? tiposNomina.find(t=>t.id===nominaActiva.tipoNominaId) : null;
+    // Pago de Vacaciones sin «Días Trabajados»: calcula IVSS / RPE / FAOV de las leyes que su tipo lleva tildadas (rhLeyesSinDiasDelPago); cualquier otro pago, igual que siempre
+    const leyesSinDias = rhLeyesSinDiasDelPago(nominaActiva, tipoPago);
+    const {hayBase, mkSemanal, mkFaov, mkFaovPago, mkInces} = calcularDeduccionesLegales(asignaciones, tasa, nominaActiva?.concepto, nominaActiva?.mes, nominaActiva?.quincena, leyesSinDias);
+    const base = hayBase ? [mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), mkFaov(aCuenta(cFAOVc))].map(d=>({...d, incluida:true})) : [];
     // FAOV: con «Días Trabajados» es el de siempre (va con IVSS y RPE); sin ellos, en Utilidades (o en un tipo que lo lista) sale solo, con la cuenta del tipo si le asignó una (cuentaDeTipo manda sobre la de Parafiscales y la del concepto)
     const fv = rhFaovDelPago(nominaActiva, tipoPago, conceptos);
     const cuentaFaov = fv.cuenta ? {codigoCuenta:fv.cuenta.codigo, nombreCuenta:fv.cuenta.nombre} : aCuenta(cFAOVc);
@@ -3592,7 +3608,16 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     // Aportes patronales del tipo (Configuración → Tipos de nómina): si el tipo no lleva el de una ley, la parte de la empresa de esa fila queda en 0 (lo que se le descuenta al trabajador no cambia)
     const aportesTipo = rhAportesDeTipo(tipoPago, nominaActiva?.concepto);
     const sinPatronalSiNoAplica = (d) => { const k = rhPfClaveFila(d); return (k && k !== 'inces' && !aportesTipo[k]) ? {...d, montoPatronalUSD:0, montoPatronalBs:0} : d; };
-    const legales = (hayBase ? base.map(faovConCuentaDeTipo) : (fv.auto ? [{...faovConCuentaDeTipo(mkFaovPago(cuentaFaov)), incluida:fv.incluida}] : [])).map(sinPatronalSiNoAplica);
+    // Sin «Días Trabajados»: el FAOV de Utilidades (o del tipo que lo lista) como siempre; en Vacaciones, además, IVSS / RPE y el BANAVIH de las leyes que el tipo lleva (cada fila con su aporte de la empresa)
+    const filasSinDias = () => {
+      const r = [];
+      if(leyesSinDias.ivss) r.push({...mkSemanal('IVSS', configParafiscal.ivss, aCuenta(cIVSSc)), incluida:true});
+      if(leyesSinDias.rpe) r.push({...mkSemanal('RPE (Paro Forzoso)', configParafiscal.rpe, aCuenta(cRPEc)), incluida:true});
+      if(fv.auto) r.push({...faovConCuentaDeTipo(mkFaovPago(cuentaFaov)), incluida:fv.incluida});
+      else if(leyesSinDias.faov) r.push({...faovConCuentaDeTipo(mkFaovPago(cuentaFaov)), incluida:true});
+      return r;
+    };
+    const legales = (hayBase ? base.map(faovConCuentaDeTipo) : filasSinDias()).map(sinPatronalSiNoAplica);
     const inc = rhIncesDelPago(nominaActiva, tipoPago, conceptos);
     if(!inc.auto) return legales;
     const cuentaInces = inc.cuenta ? {codigoCuenta:inc.cuenta.codigo, nombreCuenta:inc.cuenta.nombre} : aCuenta(inc.concepto);
@@ -3805,6 +3830,9 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     if(faovCalc && faovCalc.incluida===false && faovPago.incluida && !hayDiasTrabajados && legalesGuardadas && !faovManualGuardado) avisosCarga.push(`El FAOV (BANAVIH) de ${trabajador.nombre} (${pctFaov} % sobre las asignaciones) no estaba en este pago guardado: queda sin marcar. Si debe descontarse, búscalo en «Buscar concepto para agregar».`);
     if(faovManualConMonto && !faovManualJunto) avisosCarga.push(`El BANAVIH de ${trabajador.nombre} que escribiste a mano (Bs.${formatNum(faovManualBs)}) se conserva en la fila FAOV. Si debe calcularse solo (${pctFaov} % sobre las asignaciones), pulsa «Recalcular legales».`);
     if(faovManualJunto) avisosCarga.push(`${trabajador.nombre} tiene en este pago guardado el BANAVIH escrito a mano y el FAOV calculado: se conservan las dos filas. Si es el mismo descuento, quita una de las dos.`);
+    // Pago de Vacaciones guardado antes de que IVSS / RPE / BANAVIH se calcularan sin «Días Trabajados» (sin ninguna ley guardada): las que su tipo lleva quedan sin marcar y se avisa; no se agregan solas a un recibo ya hecho
+    const leyesVac = rhLeyesSinDiasDelPago(nominaActiva, tipoDelPago);
+    if(!hayDiasTrabajados && legalesGuardadas && legalesGuardadas.length===0 && deduccionesLegales.some(d=>d.incluida===false && leyesVac[rhPfClaveFila(d)]===true)) avisosCarga.push(`Este pago de Vacaciones de ${trabajador.nombre} se guardó sin IVSS, Paro Forzoso ni BANAVIH. Ahora se calculan según los aportes que tiene tildados su tipo, pero quedan sin marcar para no cambiar un recibo ya hecho: pulsa «Recalcular legales» o búscalos en «Buscar concepto para agregar».`);
     const deduccionesBeneficios = benConstruirLineas({trabajador, nomina:nominaActiva, cfg:configBeneficios, conceptos, detalleExistente, detallesMes:detallesMesDe(trabajador.id)});
     setCargarTrabModal({trabajador, asignaciones, deduccionesManual, deduccionesLegales, deduccionesBeneficios, novedadesValores:detalleExistente?.novedades||{}, _nroReciboExistente:detalleExistente?.nroRecibo||null, avisosCarga, difFicha});
   };
@@ -5735,6 +5763,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                   </div>
                 )}
                 <p data-testid="tipo-aportes-ayuda" className="text-[10px] text-gray-500">{ap.guardado ? '' : 'Marcado según el nombre del tipo; cámbialo si no es así. '}{ap.aplica ? 'Cada pago de este tipo calcula el aporte de la empresa de lo marcado: en el recibo (IVSS, Paro Forzoso y BANAVIH), en Cierre de Mes, en Parafiscales y en INCES Trimestral. Lo que se descuenta al trabajador no cambia.' : 'Los pagos de este tipo no generan ningún aporte de la empresa (ni INCES, ni IVSS, ni Paro Forzoso, ni BANAVIH). Lo que se descuenta al trabajador no cambia.'}</p>
+                {ap.aplica && (ap.ivss===true || ap.rpe===true || ap.faov===true) && rhEsPagoVacaciones(null, tipoForm) && <p data-testid="tipo-aportes-vacaciones" className="text-[10px] text-gray-500">En Vacaciones, como el pago no lleva «Días Trabajados», cada ley marcada aquí (Seguro Social, Paro Forzoso, BANAVIH) se calcula en el recibo también al trabajador, junto con el aporte de la empresa; una ley sin marcar no sale.</p>}
               </div>
                 );
               })()}
@@ -7243,6 +7272,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                       <td className="py-1.5 px-3 font-bold text-green-700">{d.concepto} <span className="text-[9px] font-normal text-green-500">(calculado)</span>
                         {d.claveLegal==='inces' && (()=>{ const r = rhIncesUtilidades(asigIncluidas, tasa, configParafiscal.inces.pctTrabajadorUtilidades); return <div data-testid="inces-detalle" className="text-[9px] font-normal text-green-600">{String(r.pct).replace('.',',')} % sobre {r.usaTodas?'las asignaciones del pago':'las utilidades'}: Bs.{formatNum(r.baseBs)} (${formatNum(r.baseUSD)})</div>; })()}
                         {d.concepto==='FAOV' && !asigIncluidas.some(a=>a.codigo==='00001') && (()=>{ const cf = configParafiscal.faov||{}; const r = rhFaovSobreAsignaciones(asigIncluidas, tasa, cf.pctTrabajador, cf.pctPatronal); const patBs = rhBsFila(d,'montoPatronalBs','montoPatronalUSD',tasa); return <div data-testid="faov-detalle" className="text-[9px] font-normal text-green-600">BANAVIH · {String(r.pct).replace('.',',')} % sobre las asignaciones del pago: Bs.{formatNum(r.baseBs)} (${formatNum(r.baseUSD)}){patBs>0 ? ` · aporte de la empresa (${String(r.pctPatronal).replace('.',',')} %): Bs.${formatNum(patBs)}` : ''}</div>; })()}
+                        {(d.concepto==='IVSS' || /^RPE/.test(String(d.concepto))) && !asigIncluidas.some(a=>a.codigo==='00001') && (()=>{ const patBs = rhBsFila(d,'montoPatronalBs','montoPatronalUSD',tasa); return patBs>0 ? <div data-testid="semanal-detalle" className="text-[9px] font-normal text-green-600">Sobre el salario normal del pago (sin el bono vacacional), con su tope · aporte de la empresa: Bs.{formatNum(patBs)}</div> : null; })()}
                       </td>
                       <td className="py-1.5 px-3"></td>
                       <td className="py-1.5 px-3 text-right">
@@ -8690,6 +8720,14 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
     if(r&&r._periodoMes&&r._periodoQ) return `${r._periodoMes}-${String(r._periodoQ)==='2'?'16':'01'}`;
     return (r&&r.fecha)||'';
   };
+  // Texto «Período» del comprobante de retención de IVA («2da Q octubre 2026»): SIEMPRE el de la fecha con la que se ubica (_fechaRefRet: su fecha, o el Mes / Quincena elegidos en «Editar»).
+  // El texto que se guarda al registrar la factura sale de la fecha de la FACTURA y podía quedar en otra quincena que la del comprobante (factura del 10, comprobante del 20): los filtros, el TXT
+  // y «Editar» ya usaban la fecha del comprobante, pero el reporte (pantalla, PDF y Excel) y el Resumen Tributario leían ese texto viejo y lo mostraban / sumaban en la «1ra Q».
+  const _periodoRet=(r)=>{
+    const [y,m,d]=String(_fechaRefRet(r)).split('-').map(n=>parseInt(n,10));
+    if(!y||!m) return (r&&r.periodo)||'—';
+    return `${(d||1)<=15?'1ra Q':'2da Q'} ${new Date(y,m-1,1).toLocaleString('es-VE',{month:'long'})} ${y}`;
+  };
   const _MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   const _mesLabel=(r)=>{
     const [y,m]=_fechaRefRet(r).split('-');
@@ -8742,7 +8780,7 @@ th,td{border:1px solid #888;padding:3px 6px;vertical-align:top}
         <td style="padding:3px 6px">${r.proveedor||'—'}<div style="font-size:6px;color:#777">${r.rifProveedor||''}</div></td>
         <td style="padding:3px 6px">${r.nroFactura||'—'}</td>
         <td style="padding:3px 6px;text-align:center">${pD(r.fecha)}</td>
-        <td style="padding:3px 6px;text-align:center">${r.periodo||'—'}</td>
+        <td style="padding:3px 6px;text-align:center">${_periodoRet(r)}</td>
         <td style="padding:3px 6px;text-align:center">${r.pctRetencion||75}%</td>
         <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.monto)}</td>
         <td style="padding:3px 6px;text-align:right;font-family:monospace">${fmtN(r.montoBs)}</td>
@@ -8798,7 +8836,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
       ?['N° Comp.','Proveedor','RIF','Factura','Fecha','Período','%','Monto USD','Monto Bs.','Status']
       :['N° Comp.','Proveedor','RIF','Factura','Fecha','Cód.','Concepto SENIAT','%','Monto USD','Monto Bs.','Status'];
     const filas=lista.map(r=>tipoR==='IVA'
-      ?[r.nroComprobante||'—',r.proveedor||'—',r.rifProveedor||'',r.nroFactura||'—',pD(r.fecha),r.periodo||'—',(r.pctRetencion||75)+'%',fmtN(r.monto),fmtN(r.montoBs),r.status||'PENDIENTE']
+      ?[r.nroComprobante||'—',r.proveedor||'—',r.rifProveedor||'',r.nroFactura||'—',pD(r.fecha),_periodoRet(r),(r.pctRetencion||75)+'%',fmtN(r.monto),fmtN(r.montoBs),r.status||'PENDIENTE']
       :[r.nroComprobante||'—',r.proveedor||'—',r.rifProveedor||'',r.nroFactura||'—',pD(r.fecha),r.codConcepto||'',r.concepto||'—',(r.pct||0)+'%',fmtN(r.monto),fmtN(r.montoBs),r.status||'PENDIENTE']);
     const numCols=tipoR==='IVA'?[7,8]:[8,9];
     const rowsHtml=filas.map(f=>`<tr>${f.map((c,ci)=>`<td style="${numCols.includes(ci)?'text-align:right;font-family:monospace':'text-align:left'}">${c}</td>`).join('')}</tr>`).join('');
@@ -9146,7 +9184,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                       <td className="px-3 py-2 font-black">{r.proveedor||'—'}<div className="text-[9px] text-slate-400">{r.rifProveedor||''}</div></td>
                       <td className="px-3 py-2">{r.nroFactura||''}{(r.tipoDocumento==='NC'||r.tipoDocumento==='ND')&&<span className={`ml-1 px-1.5 py-0.5 rounded-full text-[8px] font-black ${r.tipoDocumento==='NC'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{r.tipoDocumento}</span>}{(r.tipoDocumento==='NC'||r.tipoDocumento==='ND')&&r.facturaAfectada&&<div className="text-[9px] text-slate-400">{'Afecta fact. '+r.facturaAfectada}</div>}</td>
                       <td className="px-3 py-2">{pD(r.fecha)}</td>
-                      <td className="px-3 py-2">{r.periodo||'—'}</td>
+                      <td className="px-3 py-2">{_periodoRet(r)}</td>
                       <td className="px-3 py-2 text-center font-black">{r.pctRetencion||75}%</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-orange-600">{fmtN(r.monto)}</td>
                       <td className="px-3 py-2 text-right font-mono">{fmtN(r.montoBs)}</td>
@@ -9158,7 +9196,7 @@ tfoot td{background:#0f172a;color:#f97316;font-weight:900;padding:5px 6px}
                           <button onClick={()=>imprimirComprobante(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[9px] font-black uppercase text-slate-600" title="Imprimir comprobante">
                             <Printer size={10}/> PDF
                           </button>
-                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:r.periodo||'',baseIVABs:r.baseIVABs||0,_periodoMes:r._periodoMes||_mes,_periodoQ:r._periodoQ||((parseInt((r.fecha||'').substring(8,10),10)||1)<=15?'1':'2')});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
+                          <button onClick={()=>{const _mes=(r.fecha||'').substring(0,7);setEditRet({doc:r,tipo:'IVA'});setEditRetForm({nroComprobante:r.nroComprobante||'',status:r.status||'PENDIENTE',nroFactura:r.nroFactura||'',nroControl:r.nroControl||'',fecha:r.fecha||'',pctRetencion:r.pctRetencion||75,monto:r.monto||0,montoBs:r.montoBs||0,periodo:(_fechaRefRet(r)?_periodoRet(r):(r.periodo||'')),baseIVABs:r.baseIVABs||0,_periodoMes:r._periodoMes||_mes,_periodoQ:r._periodoQ||((parseInt((r.fecha||'').substring(8,10),10)||1)<=15?'1':'2')});}} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white text-[9px] font-black uppercase transition-all" title="Editar">
                             <Edit size={10}/> Editar
                           </button>
                           <button onClick={()=>eliminarRet(r,'IVA')} className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-500 hover:bg-red-500 hover:text-white text-[9px] font-black uppercase transition-all" title="Eliminar">
@@ -10382,8 +10420,9 @@ td,th{border:1px solid #333;padding:5px 7px}
 
           const _enMes=(r)=>_fechaRefRet(r).substring(0,7)===`${rtAnio}-${rtMes}`;
           const _qDeRet=(r)=>(r&&r._periodoQ)?(String(r._periodoQ)==='2'?'2':'1'):_detectQ(r&&r.periodo);
-          const _enQuincena=(r)=>(r.fecha||'').substring(0,7)===`${rtAnio}-${rtMes}`&&_detectQ(r.periodo)===rtQ;
           const _qDiaRet=(r)=>{if(r&&r._periodoQ)return String(r._periodoQ)==='2'?'2':'1';const d=parseInt((_fechaRefRet(r)||'').substring(8,10),10);return d>=16?'2':'1';};
+          // La quincena de un comprobante es la de SU fecha (o la que se eligió en «Editar»), no la del texto «Período» guardado al registrar la factura (que sale de la fecha de la factura)
+          const _enQuincena=(r)=>_enMes(r)&&_qDiaRet(r)===rtQ;
           const retIvaBs=(retIVA||[]).filter(_enQuincena).reduce((s,r)=>s+pNum(r.montoBs||0),0);
           // Retenciones de ISLR se declaran MENSUALMENTE ante el SENIAT (no por quincena, a diferencia de IVA) —
           // por eso este total suma todo el mes, no solo la quincena seleccionada arriba.
