@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getFirestore, collection, doc, setDoc, updateDoc, deleteDoc,
+  getFirestore, initializeFirestore, collection, doc, setDoc, updateDoc, deleteDoc,
   onSnapshot, query, orderBy, serverTimestamp, writeBatch, arrayUnion, getDocs
 } from 'firebase/firestore';
 
@@ -30,7 +30,11 @@ const _bancoCfg = {
   appId: "1:201939139821:web:95e5f589e546d7d557e0e4",
 };
 const _bancoApp = getApps().find(a=>a.name==='erp-gyb-banco') || initializeApp(_bancoCfg,'erp-gyb-banco');
-const _bancoDB  = getFirestore(_bancoApp, "us-central");
+// Conexión resistente: si el canal normal de Firestore no logra conectar (proxies, redes lentas o inestables), cambia solo a «long polling»
+// en vez de quedarse esperando. En una red sana no cambia nada. Si Firestore ya estaba iniciado, se usa tal cual.
+let _bancoDB;
+try { _bancoDB = initializeFirestore(_bancoApp, { experimentalAutoDetectLongPolling: true }, "us-central"); }
+catch (e) { _bancoDB = getFirestore(_bancoApp, "us-central"); }
 // Helpers compatibles con el ERP (sin sandbox — Banco siempre usa datos reales)
 const getColRef = (n) => collection(_bancoDB, n);
 const getDocRef = (n, id) => doc(_bancoDB, n, String(id));
@@ -55,6 +59,8 @@ const BG     = '#ffffff';
 const _bancoNF   = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const bancoFmt   = (n) => _bancoNF.format(Number(n) || 0);
 const bancoDd    = (s) => { if (!s) return '—'; const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
+// Un «Traslado» (de fondo, a caja o transferencia) es plata que SALE de la cuenta: en los totales y en el filtro «Solo Egresos» se cuenta como Egreso.
+const bancoEsTraslado = (m) => !!m && (m.tipo === 'Traslado de Fondo' || m.tipo === 'Traslado Banco→Caja' || m.tipo === 'Transferencia');
 const bancoGid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const bancoNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const bancoMesActual = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
@@ -2741,6 +2747,243 @@ function ConciliacionCajaView({ cajas, movCaja, cobrosCajaCxc, pagosCajaCxP, tas
   </div>);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ALMACÉN DE DATOS DE BANCO / CAJA (a nivel de módulo)
+// Antes, cada vez que se entraba a Banco/Caja se abrían ~21 suscripciones a colecciones COMPLETAS y se cerraban todas al salir. Como
+// Firestore no guarda nada entre una suscripción y la siguiente, CADA entrada volvía a descargar todo desde cero y, mientras tanto,
+// las pantallas mostraban «sin movimientos» (parecía que no cargaba). Ahora:
+//  · las suscripciones viven aquí y se QUEDAN abiertas un buen rato al salir del módulo: al volver a entrar los datos ya están;
+//  · se abren por etapas (1: cuentas, movimientos y tasas · 2: lo complementario · 3: asientos contables), para que lo indispensable
+//    llegue primero y no compita con las colecciones grandes;
+//  · mientras el servidor no responde se muestra «Cargando…» (no pantallas vacías) y, si alguna colección falla, se avisa;
+//  · con el módulo cerrado solo se guarda la última «foto» de cada colección (no se arma nada), así no se frena el resto de la app.
+// ═══════════════════════════════════════════════════════════════════════════
+const BANCO_GRACIA_MS        = 60 * 60 * 1000;      // al salir del módulo, las suscripciones siguen abiertas este tiempo
+const BANCO_TOPE_ETAPA_MS    = { 1: 3000, 2: 8000 }; // si una etapa se atora, se abre la siguiente de todos modos
+const BANCO_TOPE_ESENCIAL_MS = 25000;               // si lo indispensable no llega en este tiempo, se muestra lo que haya (con aviso)
+const BANCO_TOPE_COMPLETO_MS = 45000;               // idem para lo complementario (se desbloquea registrar / editar)
+const _bMapDoc = (sn) => sn.docs.map(d => d.data());
+const _bMapId  = (sn) => sn.docs.map(d => ({ id: d.id, ...d.data() }));
+// k = clave · fase = etapa · q = consulta (idéntica a la de siempre) · ap = cómo se vuelca la foto en los estados de BancoApp (S.<estado>)
+const BANCO_SUBS = [
+  // ── Etapa 1: lo indispensable para pintar cuentas, movimientos y saldos ──
+  { k: 'cuentas',  fase: 1, q: () => getColRef('banco_cuentas'), ap: (sn, S) => S.cuentas(_bMapDoc(sn)) },
+  { k: 'cajas',    fase: 1, q: () => getColRef('caja_cuentas'),  ap: (sn, S) => S.cajas(_bMapDoc(sn)) },
+  { k: 'tasas',    fase: 1, q: () => query(getColRef('banco_tasas'), orderBy('fecha','desc')), ap: (sn, S) => S.tasas(_bMapDoc(sn)) },
+  { k: 'movBanco', fase: 1, q: () => query(getColRef('banco_movimientos'), orderBy('fecha','desc')), ap: (sn, S) => S.movBanco(sn.docs.map(d => ({ _docId: d.id, ...d.data() }))) },
+  { k: 'movCaja',  fase: 1, q: () => query(getColRef('caja_movimientos'), orderBy('fecha','desc')), ap: (sn, S) => S.movCaja(_bMapDoc(sn)) },
+  // ── Etapa 2: complementarias (nombres, vínculos, conciliaciones, plan de cuentas…) ──
+  { k: 'users',    fase: 2, q: () => getColRef('users'), ap: (sn, S) => S.systemUsersLocal(_bMapId(sn)) },
+  { k: 'plan',     fase: 2, q: () => getColRef('planDeCuentas'), ap: (sn, S) => S.contCuentas(_bMapId(sn)) },
+  { k: 'concils',  fase: 2, q: () => getColRef('banco_conciliaciones'), ap: (sn, S) => S.concils(_bMapDoc(sn)) },
+  { k: 'concilsC', fase: 2, q: () => getColRef('caja_conciliaciones'), ap: (sn, S) => S.concilsCaja(_bMapDoc(sn)) },
+  { k: 'arques',   fase: 2, q: () => query(getColRef('caja_arques'), orderBy('fecha','desc')), ap: (sn, S) => S.arques(_bMapDoc(sn)) },
+  { k: 'provs',    fase: 2, q: () => getColRef('procura_proveedores'), ap: (sn, S) => S.provs(_bMapId(sn)) },
+  { k: 'clientes', fase: 2, q: () => getColRef('clientes'), ap: (sn, S) => S.clientes(_bMapId(sn)) },
+  { k: 'retCli',   fase: 2, q: () => getColRef('retencionesClientes'), ap: (sn, S) => S.retencionesCli(_bMapId(sn)) },
+  { k: 'ajustes',  fase: 2, q: () => getColRef('comprobantes_ajustes'), ap: (sn, S) => S.ajustesContables(_bMapId(sn)) },
+  { k: 'reclas',   fase: 2, q: () => getColRef('comprobantes_reclasificaciones'), ap: (sn, S) => S.reclasificaciones(Object.fromEntries(sn.docs.map(d => [d.id, d.data()]))) },
+  { k: 'tercRel',  fase: 2, q: () => getColRef('cxp_terceros_relacionados'), ap: (sn, S) => S.tercerosRel(_bMapDoc(sn)) },
+  { k: 'pagosRel', fase: 2, q: () => getColRef('cxp_pagos_relacionados'), ap: (sn, S) => S.pagosRel(_bMapDoc(sn)) },
+  { k: 'cobros',   fase: 2, q: () => query(getColRef('cobros_cxc'), orderBy('fecha','desc')), ap: (sn, S) => {
+      const todos = _bMapDoc(sn);
+      S.cobrosCajaCxc(todos.filter(c => (c.cuentaBancariaId || '').startsWith('CAJA::')));
+      S.cobrosCxcTodos(todos);
+    } },
+  { k: 'pagosCxp', fase: 2, q: () => query(getColRef('procura_pagos_cxp'), orderBy('fecha','desc')), ap: (sn, S) => {
+      const todos = _bMapDoc(sn);
+      S.pagosCajaCxP(todos.filter(p => (p.cuentaId || '').startsWith('CAJA::')));
+      S.pagosCxPTodos(todos);
+    } },
+  { k: 'facturas', fase: 2, q: () => query(getColRef('facturacion_facturas'), orderBy('fechaEmision','desc')), ap: (sn, S) => S.facturas(_bMapDoc(sn)) },
+  // ── Etapa 3: asientos contables (la colección más grande; solo se consulta al abrir un detalle o revisar traslados) ──
+  { k: 'asientos', fase: 3, q: () => query(getColRef('cont_asientos'), orderBy('fecha','desc')), ap: (sn, S) => S.asientosBanco(_bMapDoc(sn)) },
+];
+const _BS = { uid: null, activo: false, unsubs: [], timers: [], tFase: {}, raw: {}, ver: {}, srv: {}, err: {}, faseLanzada: 0, pend3: false,
+              forzEss: false, forzComp: false, setters: null, onProg: null, killTimer: null, sig: '' };
+const BANCO_PROG_VACIO = { total: BANCO_SUBS.length, listas: 0, errores: [], esenciales: false, completo: false, asientos: false, forzado: false };
+const _bancoUid = (u) => (u && (u.uid || u.email || u.id)) || 'anon';
+const _bancoLog = (msg) => {
+  try {
+    if (!window.__bancoDbg) window.__bancoDbg = [];
+    window.__bancoDbg.push(`${new Date().toLocaleTimeString()} — ${msg}`);
+    if (window.__bancoDbg.length > 40) window.__bancoDbg.shift();
+    console.log('🔍', msg);
+  } catch (e) {}
+};
+const _bancoProg = () => {
+  const ok = (k) => !!(_BS.srv[k] || _BS.err[k]);
+  const f1 = BANCO_SUBS.filter(x => x.fase === 1), f12 = BANCO_SUBS.filter(x => x.fase <= 2);
+  return {
+    total: BANCO_SUBS.length,
+    listas: BANCO_SUBS.filter(x => ok(x.k)).length,
+    errores: BANCO_SUBS.filter(x => _BS.err[x.k]).map(x => x.k),
+    esenciales: !!_BS.activo && (_BS.forzEss || f1.every(x => ok(x.k))),
+    completo: !!_BS.activo && (_BS.forzComp || f12.every(x => ok(x.k))),
+    asientos: !!_BS.activo && !!_BS.srv.asientos,
+    forzado: !!(_BS.forzEss || _BS.forzComp),
+  };
+};
+// Avisa a la pantalla abierta SOLO si cambió algo del progreso (así un simple «ok» del servidor tras guardar no vuelve a pintar todo)
+const _bancoNotificar = () => {
+  if (!_BS.onProg) return;
+  const p = _bancoProg();
+  const sig = [p.listas, p.esenciales, p.completo, p.asientos, p.forzado, p.errores.join(',')].join('|');
+  if (sig === _BS.sig) return;
+  _BS.sig = sig;
+  _BS.onProg(p);
+};
+const _bancoFaseLista = (n) => BANCO_SUBS.filter(x => x.fase === n).every(x => _BS.srv[x.k] || _BS.err[x.k]);
+const _bancoRegistrar = (sub) => {
+  const t1 = Date.now();
+  let un = null;
+  try {
+    un = onSnapshot(sub.q(), { includeMetadataChanges: true }, (snap) => {
+      if (!_BS.activo) return; // llegó tarde, con el almacén ya cerrado
+      const primera = !_BS.raw[sub.k];
+      // Un aviso solo de metadatos (p. ej. «el servidor ya confirmó lo que guardaste») no trae cambios de documentos: no hay nada que volver a armar
+      const cambios = primera || typeof snap.docChanges !== 'function' || snap.docChanges().length > 0;
+      const desdeCache = !!(snap.metadata && snap.metadata.fromCache);
+      _BS.raw[sub.k] = snap;
+      if (cambios) {
+        _BS.ver[sub.k] = (_BS.ver[sub.k] || 0) + 1;
+        if (_BS.setters) { try { sub.ap(snap, _BS.setters); } catch (e) { console.error(e); } }
+      }
+      // «Lista» = respuesta REAL del servidor (un vacío desde caché significa «aún sin conexión», no «no hay datos»)
+      if (!desdeCache && !_BS.srv[sub.k]) {
+        _BS.srv[sub.k] = true;
+        _bancoLog(`📦 ${sub.k}: ${snap.size != null ? snap.size : snap.docs.length} docs en ${((Date.now() - t1) / 1000).toFixed(1)} s`);
+        _bancoAvanzar();
+      }
+      _bancoNotificar();
+    }, (err) => {
+      if (!_BS.activo) return;
+      _BS.err[sub.k] = (err && (err.code || err.message)) || 'error';
+      _bancoLog(`❌ ${sub.k}: ${(err && err.message) || err}`);
+      _bancoAvanzar();
+      _bancoNotificar();
+    });
+  } catch (e) {
+    _BS.err[sub.k] = (e && e.message) || 'error';
+    _bancoLog(`❌ ${sub.k}: ${(e && e.message) || e}`);
+  }
+  _BS.unsubs.push(() => { try { if (un) un(); } catch (e) {} });
+};
+const _bancoLanzar = (n) => {
+  if (!_BS.activo || n > 3 || _BS.faseLanzada >= n) return;
+  // Los asientos (lo más grande) no se piden en una precarga sin pantalla abierta: esperan a que se entre al módulo
+  if (n === 3 && !_BS.setters) { _BS.pend3 = true; return; }
+  _BS.faseLanzada = n;
+  const lista = BANCO_SUBS.filter(x => x.fase === n);
+  _bancoLog(`📦 Banco/Caja: etapa ${n} — ${lista.length} colecciones`);
+  lista.forEach(_bancoRegistrar);
+  if (n < 3) { const t = setTimeout(() => _bancoLanzar(n + 1), BANCO_TOPE_ETAPA_MS[n]); _BS.timers.push(t); _BS.tFase[n] = t; }
+};
+// Cuando una etapa termina de llegar, se abre la siguiente
+const _bancoAvanzar = () => {
+  for (let n = 1; n < 3; n++) {
+    if (_BS.faseLanzada === n && _bancoFaseLista(n)) { clearTimeout(_BS.tFase[n]); _bancoLanzar(n + 1); }
+  }
+};
+const _bancoDetener = () => {
+  _BS.activo = false;
+  _BS.unsubs.forEach(f => { try { f(); } catch (e) {} });
+  _BS.unsubs = [];
+  _BS.timers.forEach(t => clearTimeout(t));
+  _BS.timers = []; _BS.tFase = {};
+  if (_BS.killTimer) { clearTimeout(_BS.killTimer); _BS.killTimer = null; }
+  _BS.raw = {}; _BS.ver = {}; _BS.srv = {}; _BS.err = {};
+  _BS.faseLanzada = 0; _BS.forzEss = false; _BS.forzComp = false; _BS.sig = ''; _BS.pend3 = false;
+};
+const _bancoArrancar = (uid) => {
+  _bancoDetener();
+  _BS.uid = uid; _BS.activo = true;
+  _bancoLog('📦 Banco/Caja: iniciando carga de datos');
+  _BS.timers.push(setTimeout(() => {
+    if (_BS.activo && !_bancoProg().esenciales) { _BS.forzEss = true; _bancoLog(`⚠ Banco/Caja: lo indispensable tarda más de ${BANCO_TOPE_ESENCIAL_MS / 1000} s — se muestra lo que haya`); _bancoNotificar(); }
+  }, BANCO_TOPE_ESENCIAL_MS));
+  _BS.timers.push(setTimeout(() => {
+    if (_BS.activo && !_bancoProg().completo) { _BS.forzComp = true; _bancoLog(`⚠ Banco/Caja: lo complementario tarda más de ${BANCO_TOPE_COMPLETO_MS / 1000} s — se desbloquea la pantalla`); _bancoNotificar(); }
+  }, BANCO_TOPE_COMPLETO_MS));
+  _bancoLanzar(1);
+};
+// Foto de lo que el almacén ya tiene (para pintar de entrada, sin esperar): estados iniciales de BancoApp
+const bancoAlmacenFoto = (fbUser) => {
+  const v = {};
+  if (!_BS.activo || _BS.uid !== _bancoUid(fbUser)) return { v, ver: {} };
+  const C = new Proxy({}, { get: (_, nombre) => (valor) => { v[nombre] = valor; } });
+  BANCO_SUBS.forEach(sub => { const sn = _BS.raw[sub.k]; if (sn) { try { sub.ap(sn, C); } catch (e) { console.error(e); } } });
+  return { v, ver: { ..._BS.ver } };
+};
+const bancoAlmacenProgreso = (fbUser) => (!_BS.activo || _BS.uid !== _bancoUid(fbUser)) ? BANCO_PROG_VACIO : _bancoProg();
+// Una pantalla (BancoApp) se «engancha» al almacén; devuelve la función para soltarlo. Sin `setters` solo precarga (no pinta nada).
+const bancoAlmacenAcoplar = (fbUser, setters, onProg, verInicial) => {
+  const uid = _bancoUid(fbUser);
+  if (_BS.killTimer) { clearTimeout(_BS.killTimer); _BS.killTimer = null; }
+  // Se reinicia la carga si es otro usuario o si una colección falló la vez anterior (así salir y volver a entrar reintenta)
+  if (!_BS.activo || _BS.uid !== uid || Object.keys(_BS.err).length > 0) _bancoArrancar(uid);
+  if (setters) {
+    _BS.setters = setters; _BS.onProg = onProg; _BS.sig = '';
+    if (_BS.pend3) { _BS.pend3 = false; _bancoLanzar(3); }
+    // Lo que llegó mientras no había pantalla abierta (o entre el primer pintado y este enganche)
+    BANCO_SUBS.forEach(sub => {
+      const sn = _BS.raw[sub.k];
+      if (sn && _BS.ver[sub.k] !== (verInicial && verInicial[sub.k])) { try { sub.ap(sn, setters); } catch (e) { console.error(e); } }
+    });
+    _bancoNotificar();
+  }
+  return () => {
+    if (setters && _BS.setters === setters) { _BS.setters = null; _BS.onProg = null; }
+    if (_BS.setters) return; // hay una pantalla abierta: no se programa ningún cierre
+    if (_BS.killTimer) clearTimeout(_BS.killTimer);
+    _BS.killTimer = setTimeout(_bancoDetener, BANCO_GRACIA_MS);
+  };
+};
+// Precarga opcional (p. ej. al iniciar sesión): deja la carga en marcha para que al entrar a Banco/Caja ya esté lista
+const bancoPrecargar = (fbUser) => { try { if (fbUser) bancoAlmacenAcoplar(fbUser, null, null, null)(); } catch (e) { console.error(e); } };
+if (typeof window !== 'undefined') window.__bancoPrecargar = bancoPrecargar; // Aplicación la llama tras iniciar sesión
+
+// ── Pantalla de carga (mientras llega lo indispensable) y avisos (mientras llega el resto) ──
+function BancoPanelCarga({ prog }) {
+  const [seg, setSeg] = useState(0);
+  useEffect(() => { const t0 = Date.now(); const id = setInterval(() => setSeg(Math.floor((Date.now() - t0) / 1000)), 1000); return () => clearInterval(id); }, []);
+  return (
+    <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'96px 24px', textAlign:'center'}}>
+      <style>{'@keyframes bancoGira{to{transform:rotate(360deg)}}'}</style>
+      <div style={{width:48, height:48, borderRadius:'50%', border:'4px solid #e2e8f0', borderTopColor:'#f97316', animation:'bancoGira 1s linear infinite', marginBottom:20}}/>
+      <p style={{fontSize:14, fontWeight:900, textTransform:'uppercase', letterSpacing:'.05em', color:'#334155', margin:0}}>Cargando información de Banco y Caja…</p>
+      <p style={{fontSize:11, fontWeight:700, color:'#94a3b8', margin:'6px 0 0'}}>{prog.listas} de {prog.total} listas · {seg} s</p>
+      <p style={{fontSize:12, color:'#94a3b8', margin:'12px 0 0', maxWidth:430}}>Se están trayendo los datos del servidor. La primera vez puede tardar unos segundos; al volver a entrar al módulo será inmediato.</p>
+      {seg >= 10 && <p style={{fontSize:12, fontWeight:700, color:'#d97706', margin:'12px 0 0', maxWidth:430}}>La conexión con el servidor está lenta. Los datos aparecerán solos; si pasa de un minuto, revisa tu conexión a internet.</p>}
+    </div>
+  );
+}
+function BancoBannerCarga({ prog }) {
+  if (prog.errores && prog.errores.length) return (
+    <div style={{margin:'12px 16px 0', padding:'10px 14px', borderRadius:12, background:'#fef2f2', border:'1px solid #fecaca', color:'#b91c1c', fontSize:12, fontWeight:700}}>
+      ⚠ No se pudieron cargar: {prog.errores.join(', ')}. Sal de Banco/Caja y vuelve a entrar para reintentar, o recarga la página.
+    </div>
+  );
+  if (!prog.esenciales) return null;
+  if (!prog.completo) return (
+    <div style={{margin:'12px 16px 0', padding:'10px 14px', borderRadius:12, background:'#fffbeb', border:'1px solid #fde68a', color:'#b45309', fontSize:12, fontWeight:700}}>
+      ⏳ Cargando datos complementarios ({prog.listas} de {prog.total})… Por ahora puedes consultar; para registrar o editar espera a que termine.
+    </div>
+  );
+  return (<>
+    {prog.forzado && prog.listas < prog.total - (prog.asientos ? 0 : 1) && (
+      <div style={{margin:'12px 16px 0', padding:'10px 14px', borderRadius:12, background:'#fffbeb', border:'1px solid #fde68a', color:'#b45309', fontSize:12, fontWeight:700}}>
+        ⚠ La carga sigue en curso (conexión lenta): puede que falten datos. Espera unos segundos más antes de registrar o editar.
+      </div>
+    )}
+    {!prog.asientos && (
+      <div style={{position:'fixed', bottom:8, right:8, zIndex:99990, padding:'6px 12px', borderRadius:999, background:'rgba(15,23,42,.92)', color:'#cbd5e1', fontSize:10, fontWeight:800}}>
+        Cargando asientos contables…
+      </div>
+    )}
+  </>);
+}
+
 const DebugPanel = () => {
   const [, forceUpdate] = useState(0);
   const [minimizado, setMinimizado] = useState(window.__bancoDbgMin ?? true);
@@ -2778,15 +3021,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   // (montos, referencias) sin que se pierda al recargar o volver a entrar. Un solo lugar
   // compartido entre Movimientos Banco y Movimientos Caja, guardado en Firestore.
   const [favoritosMov, setFavoritosMov] = useState([]);
-  // Asientos formales (cont_asientos) — necesarios para que "Movimientos Banco" respete el monto
-  // real de un asiento corregido a mano, igual que ya hace Comprobante de Contabilidad. Esta
-  // suscripción nunca existió dentro de BancoApp — por error se usaba una variable con el mismo
-  // nombre que en realidad pertenece a otro componente completamente aparte (AsientosApp).
-  const [asientos, setAsientos] = useState([]);
-  useEffect(()=>{
-    const u = onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientos(s.docs.map(d=>({_docId:d.id,...d.data()}))));
-    return ()=>u();
-  },[]);
+  // (Aquí había una suscripción propia a cont_asientos solo para las tarjetas de saldo. Ya no hace falta: las tarjetas usan el monto de cada
+  //  movimiento, y los asientos que sí se consultan llegan por el almacén de datos de arriba.)
+  // Datos que el almacén ya tenía al entrar (volver a entrar al módulo = datos al instante, sin volver a descargar)
+  const _bf = useMemo(() => bancoAlmacenFoto(fbUser), []);
   useEffect(()=>{
     const u=onSnapshot(getDocRef('settings','movimientosFavoritos'), d=>{ if(d.exists()) setFavoritosMov(d.data()?.ids||[]); });
     return ()=>u();
@@ -2890,73 +3128,51 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     _prevSecSub.current = {sec, submodulo};
   }, [sec, submodulo]);
 
-  const [cuentas,    setCuentas]  = useState([]);
-  const [cajas,      setCajas]    = useState([]);
-  const [tercerosRel, setTercerosRel] = useState([]);
-  const [ajustesContables, setAjustesContables] = useState([]);
-  const [reclasificaciones, setReclasificaciones] = useState({});
-  const [pagosRel,    setPagosRel]    = useState([]);
-  const [movBanco,   setMovBanco] = useState([]);
-  const [movCaja,    setMovCaja]  = useState([]);
-  const [arques,     setArques]   = useState([]);
-  const [concils,    setConcils]  = useState([]);
-  const [concilsCaja, setConcilsCaja] = useState([]);
+  const [cuentas,    setCuentas]  = useState(_bf.v.cuentas || []);
+  const [cajas,      setCajas]    = useState(_bf.v.cajas || []);
+  const [tercerosRel, setTercerosRel] = useState(_bf.v.tercerosRel || []);
+  const [ajustesContables, setAjustesContables] = useState(_bf.v.ajustesContables || []);
+  const [reclasificaciones, setReclasificaciones] = useState(_bf.v.reclasificaciones || {});
+  const [pagosRel,    setPagosRel]    = useState(_bf.v.pagosRel || []);
+  const [movBanco,   setMovBanco] = useState(_bf.v.movBanco || []);
+  const [movCaja,    setMovCaja]  = useState(_bf.v.movCaja || []);
+  const [arques,     setArques]   = useState(_bf.v.arques || []);
+  const [concils,    setConcils]  = useState(_bf.v.concils || []);
+  const [concilsCaja, setConcilsCaja] = useState(_bf.v.concilsCaja || []);
   const concilCajaIds = new Set((concilsCaja||[]).flatMap(c=>c.movimientoIds||[])); // movimientos de caja ya conciliados
-  const [tasas,      setTasas]    = useState([]);
-  const [clientes,   setClientes] = useState([]);
-  const [facturas,   setFacturas] = useState([]);
-  const [provs,      setProvs]    = useState([]);
-  const [contCuentas,setContC]    = useState([]);
-  const [asientosBanco, setAsientosBanco] = useState([]);
+  const [tasas,      setTasas]    = useState(_bf.v.tasas || []);
+  const [clientes,   setClientes] = useState(_bf.v.clientes || []);
+  const [facturas,   setFacturas] = useState(_bf.v.facturas || []);
+  const [provs,      setProvs]    = useState(_bf.v.provs || []);
+  const [contCuentas,setContC]    = useState(_bf.v.contCuentas || []);
+  const [asientosBanco, setAsientosBanco] = useState(_bf.v.asientosBanco || []);
   // Panel "Corregir Traslados": null = no revisado, [] = revisado sin problemas, [...] = lista
   const [problemasTraslado, setProblemasTraslado] = useState(null);
   // systemUsers viene de Aplicación.jsx (que sí tiene acceso a la BD correcta)
   // Se mantiene el estado interno para el onSnapshot de respaldo
-  const [systemUsersLocal, setSystemUsersLocal] = useState([]);
+  const [systemUsersLocal, setSystemUsersLocal] = useState(_bf.v.systemUsersLocal || []);
   // Combinar: primero el prop (más confiable), luego el local
   const systemUsers = systemUsersProp.length > 0 ? systemUsersProp : systemUsersLocal;
-  const [cobrosCajaCxc, setCobrosCajaCxc] = useState([]); // cobros_cxc donde cuentaBancariaId empieza con CAJA::
-  const [cobrosCxcTodos, setCobrosCxcTodos] = useState([]); // TODOS los cobros_cxc — para vincular reintegros a anticipos de cliente
-  const [retencionesCli, setRetencionesCli] = useState([]); // retencionesClientes — para vincular un reintegro a la retención que se devuelve
+  const [cobrosCajaCxc, setCobrosCajaCxc] = useState(_bf.v.cobrosCajaCxc || []); // cobros_cxc donde cuentaBancariaId empieza con CAJA::
+  const [cobrosCxcTodos, setCobrosCxcTodos] = useState(_bf.v.cobrosCxcTodos || []); // TODOS los cobros_cxc — para vincular reintegros a anticipos de cliente
+  const [retencionesCli, setRetencionesCli] = useState(_bf.v.retencionesCli || []); // retencionesClientes — para vincular un reintegro a la retención que se devuelve
   // Movimientos de ajuste a CxC (Banco y Caja): sirven para saber cuánto se ha reintegrado ya de cada retención / pago
   const reintegrosCxcMovs = useMemo(() => [...movBanco, ...movCaja].filter(m => m.esAjusteCxC), [movBanco, movCaja]);
-  const [pagosCajaCxP,  setPagosCajaCxP]  = useState([]); // procura_pagos_cxp donde cuentaId empieza con CAJA::
-  const [pagosCxPTodos, setPagosCxPTodos] = useState([]); // TODOS los procura_pagos_cxp — para Pagos por Identificar
+  const [pagosCajaCxP,  setPagosCajaCxP]  = useState(_bf.v.pagosCajaCxP || []); // procura_pagos_cxp donde cuentaId empieza con CAJA::
+  const [pagosCxPTodos, setPagosCxPTodos] = useState(_bf.v.pagosCxPTodos || []); // TODOS los procura_pagos_cxp — para Pagos por Identificar
 
+  // Estado de la carga (lo alimenta el almacén de datos): permite mostrar «Cargando…» en vez de pantallas vacías.
+  const [cargaProg, setCargaProg] = useState(() => bancoAlmacenProgreso(fbUser));
+  // Enganche al almacén de datos: las suscripciones ya NO se abren y cierran con esta pantalla; siguen abiertas un buen rato al salir.
   useEffect(() => {
     if (!fbUser) return;
-    const subs = [
-      onSnapshot(getColRef('users'), s => setSystemUsersLocal(s.docs.map(d=>({id:d.id,...d.data()})))),
-      onSnapshot(query(getColRef('cobros_cxc'), orderBy('fecha','desc')), s => {
-        const todos = s.docs.map(d=>d.data());
-        setCobrosCajaCxc(todos.filter(c=>(c.cuentaBancariaId||'').startsWith('CAJA::')));
-        setCobrosCxcTodos(todos);
-      }),
-      onSnapshot(getColRef('retencionesClientes'), s => setRetencionesCli(s.docs.map(d=>({id:d.id,...d.data()})))),
-      onSnapshot(query(getColRef('procura_pagos_cxp'), orderBy('fecha','desc')), s => {
-        const todos = s.docs.map(d=>d.data());
-        setPagosCajaCxP(todos.filter(p=>(p.cuentaId||'').startsWith('CAJA::')));
-        setPagosCxPTodos(todos);
-      }),
-      onSnapshot(getColRef('banco_cuentas'), s => setCuentas(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('caja_cuentas'), s => setCajas(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('cxp_terceros_relacionados'), s => setTercerosRel(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('comprobantes_ajustes'), s => setAjustesContables(s.docs.map(d=>({id:d.id,...d.data()})))),
-      onSnapshot(getColRef('comprobantes_reclasificaciones'), s => setReclasificaciones(Object.fromEntries(s.docs.map(d=>[d.id,d.data()])))),
-      onSnapshot(getColRef('cxp_pagos_relacionados'), s => setPagosRel(s.docs.map(d=>d.data()))),
-      onSnapshot(query(getColRef('banco_movimientos'), orderBy('fecha','desc')), s => setMovBanco(s.docs.map(d=>({_docId:d.id,...d.data()})))),
-      onSnapshot(query(getColRef('caja_movimientos'), orderBy('fecha','desc')), s => setMovCaja(s.docs.map(d=>d.data()))),
-      onSnapshot(query(getColRef('caja_arques'), orderBy('fecha','desc')), s => setArques(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('banco_conciliaciones'), s => setConcils(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('caja_conciliaciones'), s => setConcilsCaja(s.docs.map(d=>d.data()))),
-      onSnapshot(query(getColRef('banco_tasas'), orderBy('fecha','desc')), s => setTasas(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('clientes'), s => setClientes(s.docs.map(d=>({id:d.id, ...d.data()})))),
-      onSnapshot(query(getColRef('facturacion_facturas'), orderBy('fechaEmision','desc')), s => setFacturas(s.docs.map(d=>d.data()))),
-      onSnapshot(getColRef('procura_proveedores'), s => setProvs(s.docs.map(d=>({id:d.id, ...d.data()})))),
-      onSnapshot(getColRef('planDeCuentas'), s => setContC(s.docs.map(d=>({id:d.id,...d.data()})))),
-      onSnapshot(query(getColRef('cont_asientos'), orderBy('fecha','desc')), s => setAsientosBanco(s.docs.map(d=>d.data()))),
-    ];
-    return () => subs.forEach(u=>u());
+    return bancoAlmacenAcoplar(fbUser, {
+      systemUsersLocal:setSystemUsersLocal, cobrosCajaCxc:setCobrosCajaCxc, cobrosCxcTodos:setCobrosCxcTodos, retencionesCli:setRetencionesCli,
+      pagosCajaCxP:setPagosCajaCxP, pagosCxPTodos:setPagosCxPTodos, cuentas:setCuentas, cajas:setCajas, tercerosRel:setTercerosRel,
+      ajustesContables:setAjustesContables, reclasificaciones:setReclasificaciones, pagosRel:setPagosRel, movBanco:setMovBanco, movCaja:setMovCaja,
+      arques:setArques, concils:setConcils, concilsCaja:setConcilsCaja, tasas:setTasas, clientes:setClientes, facturas:setFacturas,
+      provs:setProvs, contCuentas:setContC, asientosBanco:setAsientosBanco,
+    }, setCargaProg, _bf.ver);
   }, [fbUser]);
 
   const tasaActiva = tasas.find(t=>t.modulo==='Banco'||t.modulo==='Todos')?.tasaRef || tasas[0]?.tasaRef || 39.50;
@@ -4251,7 +4467,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       });
       return problemas;
     };
-    const revisarTraslados = () => setProblemasTraslado(detectarTrasladosRotos());
+    const revisarTraslados = () => { if(!cargaProg.asientos){ window.alert('Todavía se están cargando los asientos contables (unos segundos). Vuelve a intentarlo en un momento.'); return; } setProblemasTraslado(detectarTrasladosRotos()); };
     // Guarda lo que había ANTES de corregir, para poder reversar si algo sale mal.
     const [ultimaCorreccionTraslados, setUltimaCorreccionTraslados] = useState(null);
     const corregirTraslados = async () => {
@@ -4362,7 +4578,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const mList = filtC ? movBanco.filter(m=>m.cuentaId===filtC) : movBanco;
       const cuentaNom = filtC ? cuentas.find(c=>c.id===filtC)?.banco||'Todas' : 'Todas las cuentas';
       const totI=mList.filter(m=>m.tipo==='Ingreso').reduce((a,m)=>a+Number(m.montoUSD||0),0);
-      const totE=mList.filter(m=>m.tipo==='Egreso' ).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+      const totE=mList.filter(m=>m.tipo==='Egreso'||bancoEsTraslado(m)).reduce((a,m)=>a+Number(m.montoUSD||0),0);
       const rows=mList.map((m,i)=>`<tr>
         <td>${i+1}</td>
         <td>${bancoDd(m.fecha)}</td>
@@ -4427,7 +4643,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const saldoUSD = bs?Number(cuenta.saldo)/tasaActiva:Number(cuenta.saldo);
       const saldoBs  = bs?Number(cuenta.saldo):Number(cuenta.saldo)*tasaActiva;
       const ultSaldoConcilUSD = ultConcil?.saldoBanco||0;
-      const pendientesD = movCta.filter(m=>m.tipo==='Egreso' &&m.estatus!=='Conciliado').reduce((a,m)=>a+Number(m.montoUSD||0),0);
+      const pendientesD = movCta.filter(m=>(m.tipo==='Egreso'||bancoEsTraslado(m))&&m.estatus!=='Conciliado').reduce((a,m)=>a+Number(m.montoUSD||0),0);
       const pendientesC = movCta.filter(m=>m.tipo==='Ingreso'&&m.estatus!=='Conciliado').reduce((a,m)=>a+Number(m.montoUSD||0),0);
       const saldoDispUSD = saldoUSD - pendientesD + pendientesC;
       const difUltConc  = saldoUSD - ultSaldoConcilUSD;
@@ -4469,7 +4685,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     const movFiltAll = useMemo(()=>movBanco.filter(m=>{
       if(filtC     && m.cuentaId!==filtC)   return false;
-      if(filtTipo  && m.tipo!==filtTipo)    return false;
+      if(filtTipo  && m.tipo!==filtTipo && !(filtTipo==='Egreso' && bancoEsTraslado(m)))    return false; // «Solo Egresos» incluye los Traslados
       if(filtDesde && m.fecha<filtDesde)     return false;
       if(filtHasta && m.fecha>filtHasta)     return false;
       if(busqCli && !(m.terceroNombre||m.clientName||m.proveedor||m.concepto||'').toUpperCase().includes(busqCli.toUpperCase())) return false;
@@ -4501,33 +4717,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // ningún movimiento) y avanza HACIA ADELANTE sumando/restando lo ocurrido hasta el inicio
     // del mes que se está viendo. Antes se calculaba "hacia atrás" desde el saldo vivo actual,
     // lo cual además tenía un error de signo (sumaba en vez de restar lo posterior al mes).
-    // Índice de asientos: se arma UNA vez cuando cambian los asientos (no en cada tecla). Buscar el asiento ligado a un movimiento ya no
-    // recorre todos los asientos por cada movimiento (antes: movimientos × asientos × varias pasadas, y todo eso por cada letra escrita).
-    // Devuelve lo mismo que el find() anterior: el PRIMER asiento de la lista que cumpla cualquiera de las 5 condiciones.
-    const asientoIdx = useMemo(()=>{
-      const lista=asientos||[]; const porId=new Map(), porBanco=new Map(), porCaja=new Map();
-      lista.forEach((a,i)=>{
-        if(!porId.has(a.id)) porId.set(a.id,i);
-        if(!porBanco.has(a.movimientoBancoId)) porBanco.set(a.movimientoBancoId,i);
-        if(!porCaja.has(a.movimientoCajaId)) porCaja.set(a.movimientoCajaId,i);
-      });
-      const min=(x,y)=>x===undefined?y:(y===undefined?x:(y<x?y:x));
-      return { buscar:(m)=>{ const ix=min(min(min(min(porId.get(m.asientoContableId),porBanco.get(m.id)),porBanco.get(m._docId)),porCaja.get(m.id)),porCaja.get(m._docId)); return ix===undefined?undefined:lista[ix]; } };
-    },[asientos]);
     const cuentasBalanceFiltro = filtC ? cuentas.filter(c=>c.id===filtC) : cuentas;
     const primerDiaMesBalance = `${filtMesBalance}-01`;
     const calcCuentaBalance = (c) => {
-      // Si un movimiento tiene un asiento formal vinculado (cont_asientos), ESE es el monto real
-      // que ya usa "Comprobante de Contabilidad" — puede diferir del monto crudo guardado en el
-      // propio movimiento si alguna vez se corrigió el asiento directamente. Antes este cálculo
-      // solo miraba el monto crudo, así que podía no coincidir con lo que ya se veía bien ahí.
-      const montoRealCta = (m, campo) => {
-        const asientoLigado = asientoIdx.buscar(m);
-        if(!asientoLigado || !asientoLigado.lineas || !asientoLigado.lineas.length) return Number(m[campo]||0);
-        const campoLinea = campo==='montoBs' ? (m.tipo==='Ingreso'||m.tipo==='Nota de Crédito'?'debeBs':'haberBs') : (m.tipo==='Ingreso'||m.tipo==='Nota de Crédito'?'debeUSD':'haberUSD');
-        const propia = (asientoLigado.lineas||[]).find(l=>Number(l[campoLinea]||0)>0);
-        return propia ? Number(propia[campoLinea]||0) : Number(m[campo]||0);
-      };
+      // Monto de cada movimiento: el MISMO que muestra el listado y que usa la Conciliación (el que sale en el estado de cuenta del banco).
+      // Antes se tomaba el de la PRIMERA línea del asiento contable ligado: en asientos con varias líneas (o corregidos por separado) eso daba un
+      // monto distinto al del movimiento, y Entradas / Salidas / Saldo final no cuadraban con la Conciliación (ni con el listado de abajo).
+      const montoRealCta = (m, campo) => Number(m[campo]||0);
       const movsCta = movBanco.filter(m=>m.cuentaId===c.id);
       const inicioCuenta = `${c.mesSaldoInicial||'2000-01'}-01`;
       const finMesBalance = `${filtMesBalance}-32`; // cualquier fecha después del último día del mes
@@ -4564,8 +4760,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       salidasUSD:a.salidasUSD+r.salidasUSD, salidasBs:a.salidasBs+r.salidasBs,
     }),{saldoInicialUSD:0,saldoInicialBs:0,entradasUSD:0,entradasBs:0,salidasUSD:0,salidasBs:0});
     // Estos balances recorren los movimientos de todas las cuentas: se recalculan solo cuando cambia algo que los afecta
-    // (movimientos, asientos, cuentas, cuenta filtrada, mes o tasa) y NO en cada tecla que se escribe en el formulario.
-    const {balBs,balUsd} = useMemo(()=>({balBs:sumarGrupo(cuentasBsGrp),balUsd:sumarGrupo(cuentasUsdGrp)}),[movBanco,asientoIdx,cuentas,filtC,filtMesBalance,tasaActiva]);
+    // (movimientos, cuentas, cuenta filtrada, mes o tasa) y NO en cada tecla que se escribe en el formulario.
+    const {balBs,balUsd} = useMemo(()=>({balBs:sumarGrupo(cuentasBsGrp),balUsd:sumarGrupo(cuentasUsdGrp)}),[movBanco,cuentas,filtC,filtMesBalance,tasaActiva]);
     const dispBs  = {usd:balBs.saldoInicialUSD+balBs.entradasUSD-balBs.salidasUSD,  bs:balBs.saldoInicialBs+balBs.entradasBs-balBs.salidasBs};
     const dispUsd = {usd:balUsd.saldoInicialUSD+balUsd.entradasUSD-balUsd.salidasUSD, bs:balUsd.saldoInicialBs+balUsd.entradasBs-balUsd.salidasBs};
     const fmtBs  = (usd,bs) => `Bs.${bancoFmt(bs)}`;
@@ -4635,10 +4831,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
                 <td className="px-4 py-3 text-right font-mono font-black text-white">
                   {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||bancoEsTraslado(m))return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||bancoEsTraslado(m))return a-Number(m.montoBs);return a;},0))}</span>
                   ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
                     if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||bancoEsTraslado(m))  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
                     return a;
                   },0))}
                 </td>
@@ -4694,10 +4890,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <td colSpan={5} className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-left">BALANCE NETO (INGRESOS - EGRESOS)</td>
                 <td className="px-4 py-3 text-right font-mono font-black text-white">
                   {monedaVista==='AMBAS'?(
-                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')return a-Number(m.montoBs);return a;},0))}</span>
+                    <span><span className='text-emerald-300'>${bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoUSD);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||bancoEsTraslado(m))return a-Number(m.montoUSD);return a;},0))}</span> / Bs.{bancoFmt(movRows.reduce((a,m)=>{if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito')return a+Number(m.montoBs);if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||bancoEsTraslado(m))return a-Number(m.montoBs);return a;},0))}</span>
                   ):(monedaVista==='BS'?'Bs.':'$')+bancoFmt(movRows.reduce((a,m)=>{
                     if(m.tipo==='Ingreso'||m.tipo==='Nota de Crédito') return a+Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
-                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito')  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
+                    if(m.tipo==='Egreso'||m.tipo==='Nota de Débito'||bancoEsTraslado(m))  return a-Number(monedaVista==='BS'?m.montoBs:m.montoUSD);
                     return a;
                   },0))}
                 </td>
@@ -7184,7 +7380,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       });
       return problemas;
     };
-    const revisarTrasladosCaja = () => setProblemasTrasladoCaja(detectarTrasladosRotosCaja());
+    const revisarTrasladosCaja = () => { if(!cargaProg.asientos){ window.alert('Todavía se están cargando los asientos contables (unos segundos). Vuelve a intentarlo en un momento.'); return; } setProblemasTrasladoCaja(detectarTrasladosRotosCaja()); };
     const corregirTrasladosCaja = async () => {
       if(!problemasTrasladoCaja || problemasTrasladoCaja.length===0) return;
       setBusy(true);
@@ -9502,9 +9698,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [rC,setRC]=useState('');const [rD,setRD]=useState(bancoMesActual()+'-01');const [rH,setRH]=useState(getTodayDate());
     const filt=movBanco.filter(m=>(!rC||m.cuentaId===rC)&&m.fecha>=rD&&m.fecha<=rH);
     const iU=filt.filter(m=>m.tipo==='Ingreso').reduce((a,m)=>a+Number(m.montoUSD||0),0);
-    const eU=filt.filter(m=>m.tipo==='Egreso' ).reduce((a,m)=>a+Number(m.montoUSD||0),0);
+    const eU=filt.filter(m=>m.tipo==='Egreso'||bancoEsTraslado(m)).reduce((a,m)=>a+Number(m.montoUSD||0),0);
     const iB=filt.filter(m=>m.tipo==='Ingreso').reduce((a,m)=>a+Number(m.montoBs||0),0);
-    const eB=filt.filter(m=>m.tipo==='Egreso' ).reduce((a,m)=>a+Number(m.montoBs||0),0);
+    const eB=filt.filter(m=>m.tipo==='Egreso'||bancoEsTraslado(m)).reduce((a,m)=>a+Number(m.montoBs||0),0);
     return(<div className="space-y-5">
       <BCard title="Filtros"><div className="grid grid-cols-3 gap-4">
         <BFG label="Cuenta"><select className={sel} value={rC} onChange={e=>setRC(e.target.value)}><option value="">Todas</option>{cuentas.map(c=><option key={c.id} value={c.id}>{c.banco}</option>)}</select></BFG>
@@ -10507,7 +10703,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         <span className="text-white font-black text-sm uppercase tracking-wide">Bancos & Tesorería · Resumen Banco-Caja</span>
       </div>
       <div className="p-6 max-w-6xl mx-auto">
-        <ResumenOperacionesView/>
+        <BancoBannerCarga prog={cargaProg}/>
+        {cargaProg.esenciales ? (
+          <div style={cargaProg.completo ? undefined : {pointerEvents:'none'}}><ResumenOperacionesView/></div>
+        ) : <BancoPanelCarga prog={cargaProg}/>}
       </div>
     </div>
   );
@@ -10528,7 +10727,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           </div>
         </div>
         <div className="p-6 max-w-3xl mx-auto">
-          <MovimientosView ventasOnlyIngreso={true}/>
+          <BancoBannerCarga prog={cargaProg}/>
+          {cargaProg.esenciales ? (
+            <div style={cargaProg.completo ? undefined : {pointerEvents:'none'}}><MovimientosView ventasOnlyIngreso={true}/></div>
+          ) : <BancoPanelCarga prog={cargaProg}/>}
         </div>
       </div>
     );
@@ -10562,9 +10764,12 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         </div>
       </div>
       {/* ── Contenido ── */}
-      <div>
-        {views[sec] || <DashboardView/>}
-      </div>
+      <BancoBannerCarga prog={cargaProg}/>
+      {cargaProg.esenciales ? (
+        <div style={cargaProg.completo ? undefined : {pointerEvents:'none'}}>
+          {views[sec] || <DashboardView/>}
+        </div>
+      ) : <BancoPanelCarga prog={cargaProg}/>}
       <DebugPanel/>
     </div>
   );
