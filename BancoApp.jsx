@@ -4593,6 +4593,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     // Tablas de movimientos: se arman UNA vez (cuando cambian los movimientos, los filtros, las cuentas, la moneda o los favoritos) y NO en
     // cada tecla escrita en el formulario. Antes, cada letra volvía a crear y comparar miles de filas (hasta ~17.000 nodos) aunque nada de la
     // tabla hubiera cambiado. Los botones de cada fila (favorito / editar / eliminar) llaman, vía accMov, a la versión más reciente de la función.
+    // ⭐ Un movimiento marcado como favorito se resalta con toda la línea de color ámbar (en Banco y en Caja, según el mismo listado de favoritos); al quitarle la estrella vuelve a su aspecto normal.
     const accMov = useRef(null);
     accMov.current = {toggleFavoritoMov, abrirEdicion, pedirEliminar};
     const tablasMov = useMemo(()=>(<>
@@ -4604,7 +4605,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                 <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>Bs.</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
                 <tbody>
                   {movRows.length===0&&<tr><td colSpan={9}><BEmptyState icon={ArrowLeftRight} title="Sin movimientos nacionales" desc="Registre transacciones en cuentas Bs."/></td></tr>}
-                                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
+                                  {movRows.map(m=><tr key={m.id} className={`${favoritosMov.includes(m._docId||m.id)?'bg-amber-100 hover:bg-amber-200':'hover:bg-slate-50'} cursor-pointer`} onClick={()=>setDetalle(m._docId||m.id)}>
                   <BTd>
                     <div className="flex items-center gap-1.5">
                       <button onClick={e=>{e.stopPropagation();accMov.current.toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
@@ -4663,7 +4664,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <table className="w-full">
                 <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Banco</BTh><BTh>Concepto / Tercero</BTh><BTh>Referencia</BTh><BTh right>$</BTh><BTh right>Tasa</BTh><BTh>Estado</BTh><BTh></BTh></tr></thead>
                 <tbody>
-                  {movRows.map(m=><tr key={m.id} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setDetalle(m._docId||m.id)}>
+                  {movRows.map(m=><tr key={m.id} className={`${favoritosMov.includes(m._docId||m.id)?'bg-amber-100 hover:bg-amber-200':'hover:bg-slate-50'} cursor-pointer`} onClick={()=>setDetalle(m._docId||m.id)}>
                   <BTd>
                     <div className="flex items-center gap-1.5">
                       <button onClick={e=>{e.stopPropagation();accMov.current.toggleFavoritoMov(m._docId||m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m._docId||m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
@@ -7297,6 +7298,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     // Tabla de movimientos de caja: se arma UNA vez (cuando cambian los movimientos, los favoritos o las conciliaciones) y NO en cada tecla escrita
     // en el formulario (antes cada letra recreaba y comparaba todas las filas). Favorito y PDF llaman, vía accCaja, a la versión más reciente de la función.
+    // ⭐ Un movimiento marcado como favorito se resalta con toda la línea de color ámbar (tiene prioridad sobre el tinte verde / rojo de los que vienen del Banco).
     const accCaja = useRef(null);
     accCaja.current = {toggleFavoritoMov, generarPDFMovCaja};
     const tablaMovCaja = useMemo(()=>(
@@ -7305,7 +7307,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               <thead><tr><BTh>Fecha</BTh><BTh>Tipo</BTh><BTh>Moneda</BTh><BTh>Concepto</BTh><BTh>Tercero</BTh><BTh>Ref.</BTh><BTh right>Monto Bs.</BTh><BTh right>Monto USD</BTh><BTh right>Tasa</BTh><BTh>Acciones</BTh></tr></thead>
               <tbody>
                 {allMovsCaja.length===0&&<tr><td colSpan={10}><BEmptyState icon={Banknote} title="Sin movimientos de caja" desc="Registre ingresos y egresos de efectivo"/></td></tr>}
-                {allMovsCaja.map(m=><tr key={m.id} className={`hover:bg-slate-50 ${m._fromBanco?(m.tipo==='Egreso'?'bg-red-50/20':'bg-green-50/20'):''}`}>
+                {allMovsCaja.map(m=><tr key={m.id} className={favoritosMov.includes(m.id)?'bg-amber-100 hover:bg-amber-200':`hover:bg-slate-50 ${m._fromBanco?(m.tipo==='Egreso'?'bg-red-50/20':'bg-green-50/20'):''}`}>
                   <BTd>
                     <div className="flex items-center gap-1.5">
                       <button onClick={e=>{e.stopPropagation();accCaja.current.toggleFavoritoMov(m.id);}} title="Marcar como favorito para revisar (se guarda)" className={`flex-shrink-0 w-4 h-4 flex items-center justify-center text-[11px] leading-none ${favoritosMov.includes(m.id)?'':'opacity-25 hover:opacity-70'}`}>⭐</button>
