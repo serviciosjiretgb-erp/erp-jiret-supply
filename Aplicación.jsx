@@ -37557,6 +37557,16 @@ function App() {
     return !!pt[portalId];
   }, [appUser]);
 
+  // Precarga de Banco/Caja: poco después de iniciar sesión deja en marcha, en segundo plano, la carga de datos de Banco (cuentas, movimientos…),
+  // para que al entrar a «Bancos» ya esté lista y no haya que esperar. Si no se entra a Banco, la carga se libera sola al rato.
+  useEffect(() => {
+    if (!fbUser || !appUser || !hasPerm('banco')) return;
+    const t = setTimeout(() => {
+      try { if (!_sandboxMode && typeof window.__bancoPrecargar === 'function') window.__bancoPrecargar(fbUser); } catch (e) {}
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [fbUser, appUser, hasPerm]);
+
   // Verifica si el usuario tiene al menos algún permiso sobre un módulo-tab
   // (padre O cualquier submódulo). Permite acceso cross-portal en Option B.
   const hasAnyModulePerm = useCallback((tabId) => {
