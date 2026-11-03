@@ -21923,6 +21923,420 @@ const envPtPlan = (docs, destDoc, qty, costoUnit) => {
 };
 // == FIN ENVIO PT ==
 
+// == INICIO PRODLOTE ==
+// ═══ Producción por lotes (lógica pura, sin React ni Firestore): clasificación de insumos, programación por millares o kilos, resumen y costo por lote ═══
+//  · MP directa = categorías que cuentan como materia prima (kg de MP, merma y costo por kg de la mezcla). Costo asociado = químicos, pigmentos, tintas…:
+//    se imputa su costo y su cantidad, pero NO cuentan como kg de materia prima.
+//  · La clasificación se configura en Producción → Configuración de Cuentas Contables (settings/produccionCuentasContables.clasifCategorias);
+//    lo que no esté configurado usa PRODLOTE_CATS_BASE. Nada de esto escribe datos: los reportes recalculan todo (también lo ya registrado).
+const PRODLOTE_CATS_BASE = [['Materia Prima', 'MP'], ['Químicos', 'ASOC'], ['Tintas', 'ASOC'], ['Pigmentos', 'ASOC'], ['Semielaborados', 'MP'], ['Consumibles', 'ASOC'], ['Herramientas', 'ASOC'], ['Seguridad Industrial', 'ASOC'], ['Otros', 'ASOC']];
+// Categorías del inventario que NO son insumos de producción (producto terminado / mercancía): no se ofrecen para clasificar ni para solicitar.
+const PRODLOTE_CATS_FUERA = ['Productos Terminados', 'Stretch Film', 'Cintas', 'Papel Kraft', 'Dispensadores', 'Empaques Flexibles', 'Bolsas Plásticas', 'Termoencogibles', 'Fleje', 'Otros Terminados'];
+const prodCatKey = (c) => String(c == null ? '' : c).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[_\s]+/g, ' ').trim().replace(/^materias primas$/, 'materia prima').replace(/^(semielaborado|pigmento|tinta|quimico|consumible|herramienta)$/, '$1s');
+const PRODLOTE_BASE = (() => { const m = {}; PRODLOTE_CATS_BASE.forEach(([c, v]) => { m[prodCatKey(c)] = v; }); return m; })();
+const PRODLOTE_FUERA = (() => { const m = {}; PRODLOTE_CATS_FUERA.forEach((c) => { m[prodCatKey(c)] = true; }); return m; })();
+const prodClasifBase = (cat) => PRODLOTE_BASE[prodCatKey(cat)] || 'ASOC';
+// cfgMap = { 'Químicos': 'MP' | 'ASOC', … } (lo que el usuario cambió en la configuración). Categoría nueva sin configurar → costo asociado.
+const prodClasifCat = (cat, cfgMap) => {
+  const k = prodCatKey(cat);
+  if (cfgMap && typeof cfgMap === 'object') {
+    for (const n of Object.keys(cfgMap)) { if (prodCatKey(n) === k && (cfgMap[n] === 'MP' || cfgMap[n] === 'ASOC')) return cfgMap[n]; }
+  }
+  return prodClasifBase(cat);
+};
+// Categorías que se pueden clasificar y solicitar: las de siempre + las que existan en el inventario (menos producto terminado) + las ya configuradas.
+const prodCategoriasProd = (inventory, cfgMap) => {
+  const out = [], vistos = new Set();
+  const add = (c) => { const n = String(c == null ? '' : c).trim(); const k = prodCatKey(n); if (!n || vistos.has(k) || PRODLOTE_FUERA[k]) return; vistos.add(k); out.push(n); };
+  PRODLOTE_CATS_BASE.forEach(([c]) => add(c));
+  const extra = [];
+  const addX = (c) => { const n = String(c == null ? '' : c).trim(); const k = prodCatKey(n); if (!n || vistos.has(k) || PRODLOTE_FUERA[k]) return; vistos.add(k); extra.push(n); };
+  (inventory || []).forEach((d) => { if (d && d.activo !== false) addX(d.category); });
+  if (cfgMap && typeof cfgMap === 'object') Object.keys(cfgMap).forEach(addX);
+  extra.sort((a, b) => a.localeCompare(b, 'es'));
+  return out.concat(extra);
+};
+const prodRound = (n, d = 2) => { const k = Math.pow(10, d); return Math.round(((Number(n) || 0) + (Number(n) >= 0 ? 1e-9 : -1e-9)) * k) / k; };
+// Cantidad de millares/kilos «compacta»: sin decimales si es entera (5 → «5», 1000 → «1.000»), con 2 si no (5,5 → «5,50»)
+const prodFmtU = (n) => { const x = Math.round((Number(n) || 0) * 100) / 100; return Number.isInteger(x) ? new Intl.NumberFormat('es-VE', { maximumFractionDigits: 0, useGrouping: 'always' }).format(x) : formatNum(x); };
+// Porcentaje con un decimal y coma (6,0 · 5,3 · -1,2)
+const prodPct1 = (v) => (Math.round((Number(v) || 0) * 10) / 10).toFixed(1).replace('.', ',');
+const prodCodigo = (id) => String(id == null ? '' : id).split('___')[0].replace(/-RESTORE$/i, '').replace(/-BACKUP$/i, '').replace(/_inv$/i, '').trim().toUpperCase();
+// Índice del inventario (por id y por código limpio) para no recorrerlo entero en cada renglón.
+const prodInvIndex = (inventory) => {
+  const byId = new Map(), byCode = new Map();
+  (inventory || []).forEach((d) => {
+    if (!d) return;
+    byId.set(d.id, d);
+    const c = prodCodigo(d.displayId || d.id);
+    if (!c) return;
+    if (!byCode.has(c)) byCode.set(c, []);
+    byCode.get(c).push(d);
+  });
+  return { byId, byCode };
+};
+// Documento de inventario de un renglón: por id exacto; si no, por código limpio (prefiere el que tiene costo).
+const prodInvBuscar = (ix, id) => {
+  if (!ix || id == null) return null;
+  const d = ix.byId.get(id);
+  if (d) return d;
+  const lst = ix.byCode.get(prodCodigo(id));
+  if (!lst || !lst.length) return null;
+  return lst.find((x) => parseNum(x.cost) > 0) || lst[0];
+};
+// Unidades que NO son kilos (no suman a los kg de materia prima).
+const prodUnidEsKg = (u) => { const s = String(u == null ? '' : u).toLowerCase().trim() || 'kg'; return !(s.startsWith('mill') || ['und', 'unidad', 'unidades', 'm', 'mt', 'mts', 'metro', 'metros'].includes(s)); };
+// Un renglón { id, qty } de una solicitud/despacho/registro: documento, unidad, clase. Si el artículo ya no existe en el inventario no se puede clasificar → cuenta como MP (como antes).
+const prodItemInfo = (it, ix, cfgMap) => {
+  const inv = prodInvBuscar(ix, it && it.id);
+  const unit = String((inv && inv.unit) || (it && it.unit) || 'kg').toLowerCase().trim() || 'kg';
+  const catTxt = inv ? String(inv.category == null ? '' : inv.category).trim() : '';
+  // Artículo sin categoría: si su código empieza por MP- es materia prima (como en el resto de la app); si no, cuenta como «Otros»
+  const clase = !inv ? 'MP' : ((!catTxt && /^MP-/i.test(prodCodigo(inv.displayId || inv.id))) ? 'MP' : prodClasifCat(catTxt || 'Otros', cfgMap));
+  return { inv, qty: parseNum(it && it.qty), unit, esKg: prodUnidEsKg(unit), clase, cat: inv ? (catTxt || 'Otros') : '' };
+};
+// kg de una lista de renglones: mp = materia prima directa · asoc = costos asociados (químicos, pigmentos, tintas…)
+const prodKgItems = (items, ix, cfgMap) => {
+  let mp = 0, asoc = 0;
+  (items || []).forEach((it) => { const i = prodItemInfo(it, ix, cfgMap); if (!i.esKg || !(i.qty > 0)) return; if (i.clase === 'MP') mp += i.qty; else asoc += i.qty; });
+  return { mp: prodRound(mp, 6), asoc: prodRound(asoc, 6) };
+};
+const PRODLOTE_APROBADAS = ['APROBADA', 'APROBADO', 'PROCESADA', 'PROCESADO'];
+const prodNormOp = (id) => String(id == null ? '' : id).replace(/^OP-/i, '').trim();
+const prodReqsAprobadas = (invRequisitions, opId) => (invRequisitions || []).filter((r) => r && prodNormOp(r.opId) === prodNormOp(opId) && PRODLOTE_APROBADAS.includes(r.status));
+// Lote al que pertenece una requisición (igual que el reporte en proceso: loteIndex; si no, el número del nombre; si no, el lote 1)
+const prodLoteIdxReq = (r) => { if (Number.isInteger(r && r.loteIndex)) return Math.max(0, r.loteIndex); const m = String((r && (r.loteLabel || r.lote)) || '').match(/(\d+)/); return m ? Math.max(0, parseInt(m[1], 10) - 1) : 0; };
+// Costo de cada renglón de un despacho. Almacén guardó el costo TOTAL (costoDespachado) pero no el de cada renglón: se reparte con el costo actual del
+// artículo ajustado para que la suma cuadre con lo que realmente se despachó (sin costoDespachado, cantidad × costo actual del inventario).
+const prodReqLineas = (r, ix, cfgMap) => {
+  const L = ((r && r.items) || []).map((it) => {
+    const i = prodItemInfo(it, ix, cfgMap);
+    return { id: it && it.id, desc: String((i.inv && i.inv.desc) || (it && it.desc) || ''), unit: i.unit, esKg: i.esKg, clase: i.clase, cat: i.cat, qty: i.qty, cu: i.inv ? parseNum(i.inv.cost) : 0, inv: i.inv };
+  }).filter((x) => x.qty > 0);
+  const bruto = L.reduce((s, x) => s + x.qty * x.cu, 0);
+  const cd = parseNum(r && r.costoDespachado);
+  if (cd > 0 && bruto > 0) { const f = cd / bruto; L.forEach((x) => { x.costo = x.qty * x.cu * f; }); }
+  else if (cd > 0) { const tq = L.reduce((s, x) => s + x.qty, 0); L.forEach((x) => { x.costo = tq > 0 ? cd * x.qty / tq : 0; }); }
+  else L.forEach((x) => { x.costo = x.qty * x.cu; });
+  L.forEach((x) => { x.cuReal = x.qty > 0 ? x.costo / x.qty : 0; });
+  return L;
+};
+// ── Programación de lotes: cuántos millares (bolsas) o kilos (termoencogible) tendrá cada lote ──
+// ¿La OP se pide en millares o en kilos? (misma regla que la Requisición de Producción)
+const prodEsMillar = (req) => { const r = req || {}; const esTermo = String(r.tipoProducto || '').toUpperCase() === 'TERMOENCOGIBLE'; const pres = String(r.presentacion || '').toUpperCase(); return pres ? pres.startsWith('MILL') : !esTermo; };
+const prodOpBase = (req) => {
+  const r = req || {};
+  const esMillar = prodEsMillar(r);
+  const cantidad = parseNum(r.cantidad), pesoMillar = parseNum(r.pesoMillar), cargaKg = parseNum(r.requestedKg);
+  const netoKg = esMillar ? (pesoMillar > 0 ? cantidad * pesoMillar : 0) : cantidad;
+  const mermaPct = cargaKg > 0 && netoKg > 0 && cargaKg > netoKg ? (cargaKg - netoKg) / cargaKg * 100 : 0;
+  return { esMillar, cantidad, pesoMillar, cargaKg, netoKg, mermaPct };
+};
+// Lotes de la OP (mismo criterio que getLotes de la pantalla; solo lo necesario para el resumen)
+const prodLotesDeReq = (req) => {
+  const p = (req && req.production) || {};
+  if (Array.isArray(p.lotes) && p.lotes.length > 0) return p.lotes;
+  if (p.extrusion || p.impresion || p.sellado) return [{ id: 'L-001', nombre: 'Lote 1', cerrado: false }];
+  return [];
+};
+// Millares (o kilos) ya programados en los lotes de la OP, sin contar el lote `exceptoIdx`
+const prodProgramado = (req, exceptoIdx) => prodLotesDeReq(req).reduce((s, l, i) => (i === exceptoIdx ? s : s + Math.max(0, parseNum(l && l.progCant))), 0);
+// Carga a planta de un lote de `cant` millares (o kilos). Con el mismo peso por millar de la OP es la parte proporcional de la carga de la OP
+// (100 millares = 842,11 kg → 5 millares = 42,11 kg). Con otro peso por millar: neto del lote ÷ (1 − merma de la OP).
+const prodCargaLote = (op, cant, pesoMillarLote) => {
+  const c = parseNum(cant);
+  if (!(c > 0) || !(op.cantidad > 0)) return { cargaKg: 0, netoKg: 0, mermaKg: 0, pesoMillar: 0 };
+  const pm = op.esMillar ? (parseNum(pesoMillarLote) > 0 ? parseNum(pesoMillarLote) : op.pesoMillar) : 0;
+  const neto = op.esMillar ? (pm > 0 ? c * pm : 0) : c;
+  let carga = 0;
+  if (op.esMillar && op.pesoMillar > 0 && pm > 0 && op.cargaKg > 0) carga = op.cargaKg * (c * pm) / (op.cantidad * op.pesoMillar);
+  else if (!op.esMillar && op.cargaKg > 0) carga = op.cargaKg * c / op.cantidad;
+  else if (neto > 0) carga = neto / (1 - Math.min(op.mermaPct, 99) / 100);
+  carga = Math.round(carga * 100 + 1e-9) / 100;
+  const netoR = Math.round(neto * 100 + 1e-9) / 100;
+  return { cargaKg: carga, netoKg: netoR, mermaKg: Math.max(0, Math.round((carga - netoR) * 100) / 100), pesoMillar: pm };
+};
+// Receta del lote: la fórmula de la OP repartida sobre la carga del lote, en centésimas de kg (la suma cuadra exacto con la carga)
+const prodRecetaLote = (formula, cargaKg) => {
+  const ing = (formula && Array.isArray(formula.ingredientes)) ? formula.ingredientes : [];
+  if (!(cargaKg > 0) || !ing.length) return [];
+  const kgs = opReqReparto(ing.map((i) => parseNum(i && i.pct)), cargaKg);
+  return ing.map((i, k) => ({ id: i.id, qty: kgs[k], pct: parseNum(i.pct) })).filter((x) => x.qty > 0);
+};
+
+// ── Resumen de los lotes de una OP: MP inyectada, producción, costo, merma y avisos «revisar» ──
+const prodAgrega = (mapa, l, fase) => {
+  const k = prodCodigo(l.id) || (l.id == null ? '—' : String(l.id));
+  let m = mapa.get(k);
+  if (!m) { m = { key: k, code: (l.inv ? String(l.inv.displayId || String(l.inv.id || '').split('___')[0]) : String(l.id == null ? '' : l.id).split('___')[0]) || k, desc: l.desc || '', cat: l.cat || '', unit: l.unit, qty: 0, kg: 0, costo: 0, fases: [] }; mapa.set(k, m); }
+  m.qty += l.qty; if (l.esKg) m.kg += l.qty; m.costo += l.costo || 0;
+  if (fase && !m.fases.includes(fase)) m.fases.push(fase);
+  return m;
+};
+const prodMatsLista = (mapa) => [...mapa.values()].map((m) => ({ ...m, qty: prodRound(m.qty, 6), kg: prodRound(m.kg, 6), costo: prodRound(m.costo, 6), cu: m.qty > 0 ? m.costo / m.qty : 0 })).sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
+const prodSumKg = (bs) => (bs || []).reduce((s, b) => s + parseNum(b && b.producedKg), 0);
+// (igual que la barra de avance de la pantalla: solo cuentan los registros con kilos producidos)
+const prodSumMill = (bs) => (bs || []).reduce((s, b) => s + (parseNum(b && b.producedKg) > 0 ? parseNum((b && b.techParams && b.techParams.millares) || (b && b.millares) || 0) : 0), 0);
+// ctx = { inventory, invRequisitions, cfgMap, idx? (prodInvIndex ya armado) }
+const prodResumenLotes = (req, ctx) => {
+  const r = req || {}, c = ctx || {};
+  const ix = c.idx || prodInvIndex(c.inventory);
+  const cfg = c.cfgMap;
+  const op = prodOpBase(r);
+  const esTermo = String(r.tipoProducto || '').toUpperCase() === 'TERMOENCOGIBLE';
+  const def = prodLotesDeReq(r);
+  const aprob = prodReqsAprobadas(c.invRequisitions, r.id);
+  const nfmt = formatNum;
+  // Lotes que aparecen: los que tienen registros de fase, despachos de almacén, programación o ya están cerrados
+  const idxs = new Set();
+  ['extrusion', 'impresion', 'sellado'].forEach((f) => ((((r.production || {})[f] || {}).batches) || []).forEach((b) => { if (envPtEsReal(b)) { const n = Number(b.loteIndex ?? 0); if (Number.isFinite(n)) idxs.add(n); } }));
+  aprob.forEach((q) => idxs.add(prodLoteIdxReq(q)));
+  def.forEach((l, i) => { if (l && (parseNum(l.progCant) > 0 || l.cerrado)) idxs.add(i); });
+  const todasLineas = [];
+  const lotes = [...idxs].sort((a, b) => a - b).map((idx) => {
+    const bE = envPtBatchesFase(r, 'extrusion', idx), bI = envPtBatchesFase(r, 'impresion', idx), bS = envPtBatchesFase(r, 'sellado', idx);
+    const d = def[idx] || null;
+    const kgExt = prodSumKg(bE), kgImp = prodSumKg(bI), kgSel = prodSumKg(bS);
+    const kgFinal = esTermo ? kgExt : (bS.length ? kgSel : (bI.length ? kgImp : kgExt));
+    const millares = esTermo ? 0 : (prodSumMill(bS) || prodSumMill(bI) || prodSumMill(bE));
+    // Lo despachado al lote: requisiciones aprobadas; si no hay (OP antigua o insumos cargados directo en la fase), lo registrado en las fases
+    let lineas = [], fuente = 'ninguna';
+    aprob.filter((q) => prodLoteIdxReq(q) === idx).forEach((q) => prodReqLineas(q, ix, cfg).forEach((l) => lineas.push({ ...l, fase: String(q.phase || '').toUpperCase(), reqId: q.id })));
+    if (lineas.length) fuente = 'despacho';
+    else {
+      [['EXTRUSIÓN', bE], ['IMPRESIÓN', bI], ['SELLADO', bS]].forEach(([fase, bs]) => bs.forEach((b) => { if ((b.insumos || []).length) prodReqLineas({ items: b.insumos, costoDespachado: b.cost }, ix, cfg).forEach((l) => lineas.push({ ...l, fase })); }));
+      if (lineas.length) fuente = 'registros';
+    }
+    let mpKg = 0, asocKg = 0, costoMP = 0, costoAsoc = 0;
+    lineas.forEach((l) => { if (l.clase === 'MP') { costoMP += l.costo; if (l.esKg) mpKg += l.qty; } else { costoAsoc += l.costo; if (l.esKg) asocKg += l.qty; } });
+    if (!(mpKg > 0)) { // sin renglones de materia prima: lo que declaró la primera fase registrada como «kg recibidos»
+      const first = bE[0] || bI[0] || bS[0];
+      const kr = first ? parseNum(first.kgRecibidos || first.kgRecibidosImp || first.kgRecibidosSel || first.totalInsumosKg || 0) : 0;
+      if (kr > 0) { mpKg = kr; if (fuente === 'ninguna') fuente = 'registros'; }
+    }
+    if (!(costoMP + costoAsoc > 0) && fuente === 'registros') { costoMP = [...bE, ...bI, ...bS].reduce((s, b) => s + parseNum(b.cost), 0); }
+    mpKg = prodRound(mpKg, 6); asocKg = prodRound(asocKg, 6);
+    const costoTotal = prodRound(costoMP + costoAsoc, 6);
+    const conProd = kgFinal > 0 || millares > 0;
+    const mermaKg = (conProd && mpKg > 0) ? prodRound(mpKg - kgFinal, 6) : null;
+    const mermaPct = mermaKg == null ? null : mermaKg / mpKg * 100;
+    // Avisos «revisar»: la producción de una fase no puede ser mayor que lo que recibió
+    const revisar = [];
+    // Lo que entró en kilos = materia prima + otros insumos en kg (el pigmento y los aditivos forman parte del producto): la salida no puede ser mayor que eso
+    const entradaKg = mpKg + asocKg;
+    const tol = Math.max(0.5, entradaKg * 0.005);
+    if (conProd && mpKg > 0 && kgFinal > entradaKg + tol) revisar.push({ cod: 'salida>entrada', texto: `Produjo ${nfmt(kgFinal)} kg y solo se inyectaron ${nfmt(entradaKg)} kg de ${asocKg > 0 ? 'materia prima y otros insumos' : 'materia prima'}` });
+    // Una fase no puede sacar más kilos de los que recibe. Lo recibido = lo que la fase anterior sacó EN ESTE LOTE (y, si es menor, lo que el operador anotó como recibido:
+    // registros viejos traen ahí el total de toda la OP, que no sirve como tope).
+    [['IMPRESIÓN', bI, kgImp, kgExt], ['SELLADO', bS, kgSel, bI.length ? kgImp : kgExt]].forEach(([nom, bs, kg, kgPrev]) => {
+      const anotado = bs.reduce((s, b) => s + parseNum(b.kgRecibidos), 0);
+      const rec = (kgPrev > 0 && anotado > 0) ? Math.min(kgPrev, anotado) : (kgPrev > 0 ? kgPrev : anotado);
+      if (kg > 0 && rec > 0 && kg > rec + Math.max(0.5, rec * 0.005)) revisar.push({ cod: 'fase>recibido', texto: `${nom}: produjo ${nfmt(kg)} kg y solo recibió ${nfmt(rec)} kg` });
+    });
+    if (kgExt > 0 && mpKg > 0 && kgExt > entradaKg + tol && !revisar.some((x) => x.cod === 'salida>entrada')) revisar.push({ cod: 'ext>mp', texto: `Extrusión: ${nfmt(kgExt)} kg extruidos con solo ${nfmt(entradaKg)} kg de ${asocKg > 0 ? 'materia prima y otros insumos inyectados' : 'materia prima inyectada'}` });
+    const mm = new Map(), am = new Map();
+    lineas.forEach((l) => prodAgrega(l.clase === 'MP' ? mm : am, l, l.fase));
+    todasLineas.push(...lineas);
+    const prog = d && parseNum(d.progCant) > 0 ? { cant: parseNum(d.progCant), pesoMillar: parseNum(d.pesoMillar), cargaKg: parseNum(d.cargaKg) } : null;
+    const fecha = String(((bS[0] || bI[0] || bE[0]) || {}).date || '');
+    return {
+      idx, num: idx + 1, nombre: String((d && d.nombre) || `Lote ${idx + 1}`), cerrado: !!(d && d.cerrado), fechaCierre: String((d && d.fechaCierre) || ''), fecha,
+      prog, kgExt, kgImp, kgSel, kgFinal, millares, conProd, fuente, nBatches: bE.length + bI.length + bS.length,
+      mpKg, asocKg, costoMP: prodRound(costoMP, 6), costoAsoc: prodRound(costoAsoc, 6), costoTotal, sinCosto: !(costoTotal > 0),
+      mermaKg, mermaPct, revisar, mats: prodMatsLista(mm), asoc: prodMatsLista(am),
+      // costo por unidad: solo se informa cuando el lote está cerrado (mientras sigue produciendo saldría distorsionado)
+      costoMillar: (!esTermo && millares > 0 && costoTotal > 0) ? costoTotal / millares : null,
+      costoKg: (kgFinal > 0 && costoTotal > 0) ? costoTotal / kgFinal : null,
+      reqIds: [...new Set(lineas.map((x) => x.reqId).filter((x) => x != null))],
+    };
+  });
+  // Totales de la OP. Costo por millar/kg y merma SOLO con los lotes que ya produjeron (lo despachado a lotes sin producción es «MP en proceso»).
+  const S = (arr, f) => arr.reduce((s, l) => s + f(l), 0);
+  const conProd = lotes.filter((l) => l.conProd);
+  const enProceso = lotes.filter((l) => !l.conProd);
+  const kgCosto = lotes.filter((l) => l.kgFinal > 0 && !l.sinCosto), milCosto = lotes.filter((l) => l.millares > 0 && !l.sinCosto);
+  const mermaL = conProd.filter((l) => l.mermaKg != null);
+  const mermaKg = S(mermaL, (l) => l.mermaKg), mermaBase = S(mermaL, (l) => l.mpKg);
+  const progTotal = S(lotes, (l) => (l.prog ? l.prog.cant : 0));
+  const prodUnid = op.esMillar ? S(lotes, (l) => l.millares) : S(lotes, (l) => l.kgFinal);
+  const tot = {
+    mpKg: prodRound(S(lotes, (l) => l.mpKg), 6), asocKg: prodRound(S(lotes, (l) => l.asocKg), 6),
+    mpEnProceso: prodRound(S(enProceso, (l) => l.mpKg), 6), costoEnProceso: prodRound(S(enProceso, (l) => l.costoTotal), 6),
+    costoMP: prodRound(S(lotes, (l) => l.costoMP), 6), costoAsoc: prodRound(S(lotes, (l) => l.costoAsoc), 6), costoTotal: prodRound(S(lotes, (l) => l.costoTotal), 6),
+    kgExt: S(lotes, (l) => l.kgExt), kgSel: S(lotes, (l) => l.kgSel), kgFinal: S(lotes, (l) => l.kgFinal), millares: S(lotes, (l) => l.millares), prodUnid,
+    mermaKg: prodRound(mermaKg, 6), mermaBase: prodRound(mermaBase, 6), mermaPct: mermaBase > 0 ? mermaKg / mermaBase * 100 : null,
+    costoKg: S(kgCosto, (l) => l.kgFinal) > 0 ? S(kgCosto, (l) => l.costoTotal) / S(kgCosto, (l) => l.kgFinal) : null,
+    costoMillar: (!esTermo && S(milCosto, (l) => l.millares) > 0) ? S(milCosto, (l) => l.costoTotal) / S(milCosto, (l) => l.millares) : null,
+    progTotal, pendProg: Math.max(0, op.cantidad - progTotal), pendProd: Math.max(0, op.cantidad - prodUnid), nRevisar: lotes.filter((l) => l.revisar.length).length,
+  };
+  const mm = new Map(), am = new Map();
+  todasLineas.forEach((l) => prodAgrega(l.clase === 'MP' ? mm : am, l, l.fase));
+  return { esTermo, esMillar: op.esMillar, unidad: op.esMillar ? 'Mill.' : 'KG', op, lotes, tot, mats: prodMatsLista(mm), asoc: prodMatsLista(am) };
+};
+// Peso real por millar (kg/millar) de los lotes CERRADOS: kg terminados ÷ millares, sin contar los lotes marcados «revisar».
+const prodPesoMillarReal = (R) => {
+  const ok = ((R && R.lotes) || []).filter((l) => l.cerrado && l.millares > 0 && l.kgFinal > 0 && !l.revisar.length);
+  const mill = ok.reduce((s, l) => s + l.millares, 0);
+  return mill > 0 ? ok.reduce((s, l) => s + l.kgFinal, 0) / mill : 0;
+};
+// ── Avance de la OP por lote (para el PDF de la Requisición de Producción; SIN costos) ──
+// lineasF = líneas de la fórmula de la OP ({ id, desc, pct, kg }), cargaKg = carga total a planta de la OP
+const prodAvanceOP = (req, lineasF, cargaKg, ctx) => {
+  const R = prodResumenLotes(req, ctx);
+  const op = R.op;
+  if (!R.lotes.length && !(op.cantidad > 0)) return null;
+  const ped = op.cantidad;
+  const pct = (x) => (ped > 0 ? Math.max(0, Math.min(100, x / ped * 100)) : 0);
+  const lotes = R.lotes.map((l) => ({ idx: l.idx, num: l.num, nombre: l.nombre, cerrado: l.cerrado, fechaCierre: l.fechaCierre, prog: l.prog ? l.prog.cant : null, prod: R.esMillar ? l.millares : l.kgFinal, mpKg: l.mpKg, mermaKg: l.mermaKg, mermaPct: l.mermaPct, revisar: l.revisar.length > 0 }));
+  const kgDe = (l, code) => { const m = l.mats.find((x) => x.key === code); return m ? m.kg : 0; };
+  // Solo la materia prima directa: los insumos de costo asociado de la fórmula (químicos, pigmentos, tintas…) no cuentan como inyectados ni como «falta»;
+  // una materia prima repetida en dos renglones de la fórmula se suma en uno solo
+  const ixF = (ctx && ctx.idx) || prodInvIndex(ctx && ctx.inventory), cfgF = ctx && ctx.cfgMap;
+  const lineasMP = [];
+  (lineasF || []).forEach((f) => {
+    if (prodItemInfo(f, ixF, cfgF).clase !== 'MP') return;
+    const code = prodCodigo(f.id), ya = lineasMP.find((x) => x.code === code);
+    if (ya) { ya.kg += parseNum(f.kg); if (!ya.desc && f.desc) ya.desc = f.desc; return; }
+    lineasMP.push({ code, id: f.id, desc: f.desc, kg: parseNum(f.kg) });
+  });
+  const filas = [], usados = new Set();
+  lineasMP.forEach((f, i) => {
+    const code = f.code; usados.add(code);
+    const porLote = R.lotes.map((l) => kgDe(l, code));
+    const total = porLote.reduce((s, x) => s + x, 0);
+    const formulaKg = cargaKg > 0 ? f.kg : null;
+    filas.push({ n: i + 1, code: String(f.id || ''), desc: String(f.desc || ''), formulaKg, porLote, total, falta: formulaKg == null ? null : formulaKg - total, fueraFormula: false });
+  });
+  // Materias primas despachadas que no están en la fórmula de la OP
+  const extras = [];
+  R.lotes.forEach((l) => l.mats.forEach((m) => { if (!usados.has(m.key) && !extras.some((x) => x.key === m.key)) extras.push({ key: m.key, code: m.code, desc: m.desc }); }));
+  extras.forEach((x) => { const porLote = R.lotes.map((l) => kgDe(l, x.key)); filas.push({ n: filas.length + 1, code: x.code, desc: x.desc, formulaKg: null, porLote, total: porLote.reduce((s, y) => s + y, 0), falta: null, fueraFormula: true }); });
+  const sum = (f) => filas.reduce((s, r) => s + (f(r) || 0), 0);
+  // Sin fórmula (o sin carga) no hay «fórmula de la OP» ni «falta por inyectar»: se muestran como «—», no como 0
+  const conFormula = filas.some((r) => r.formulaKg != null);
+  const totales = { formulaKg: conFormula ? sum((r) => r.formulaKg) : null, porLote: R.lotes.map((l, i) => sum((r) => r.porLote[i])), total: sum((r) => r.total), falta: conFormula ? sum((r) => (r.fueraFormula ? 0 : r.falta)) : null };
+  return { esMillar: R.esMillar, unidad: R.esMillar ? 'millares' : 'kg', pedido: ped, programado: R.tot.progTotal, producido: R.tot.prodUnid, pendProg: R.tot.pendProg, pctProg: pct(R.tot.progTotal), pctProd: pct(R.tot.prodUnid), lotes, filas, totales, fechaTxt: opReqFechaTxt(getTodayDate()) };
+};
+const PRODLOTE_CSS = '.kp{display:flex;gap:7px;flex-wrap:wrap;}.kp>div{flex:1;min-width:96px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:6px 7px;text-align:center;}.kp span{display:block;font-size:7.5px;font-weight:900;letter-spacing:.7px;color:#64748b;text-transform:uppercase;}.kp b{display:block;font-size:14px;font-weight:900;color:#0f172a;margin-top:3px;}.kp small{display:block;font-size:8px;color:#94a3b8;font-weight:700;margin-top:1px;}.kp .hl{background:#fff7ed;border:1.5px solid #f97316;}.kp .hl b{color:#ea580c;}.kp .mal b{color:#dc2626;}' +
+  'table.av{width:100%;border-collapse:collapse;font-size:9.5px;}table.av th{background:#0f172a;color:#fff;padding:5px 7px;text-align:right;font-size:7.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;}table.av th.l,table.av td.l{text-align:left;}table.av td{padding:4px 7px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;vertical-align:middle;}table.av tbody tr:nth-child(even) td{background:#f8fafc;}table.av tfoot td{background:#f1f5f9;border-top:2px solid #0f172a;border-bottom:none;font-weight:900;}table.av td.mal{color:#dc2626;font-weight:900;}table.av td.sub{color:#64748b;font-weight:700;}table.av td.cod{color:#4338ca;font-weight:900;}' +
+  '.av-bar{height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden;display:flex;}.av-bar i{display:block;height:100%;}.av-leyenda{display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;font-size:8px;color:#64748b;font-weight:700;}.av-leyenda i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle;}.av-sub{margin:8px 0 4px;font-size:8.5px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;color:#0f172a;}' +
+  '.sub{color:#64748b;font-weight:700;}.rev{border:1px solid #fca5a5;background:#fef2f2;color:#991b1b;border-radius:8px;padding:7px 10px;font-size:9.5px;line-height:1.5;margin-top:8px;}.rev b{font-weight:900;}';
+// HTML de la sección «Avance de la OP · por lote» (la usa opReqDoc)
+const prodAvanceHtml = (A) => {
+  const esc = rhCierreEsc, n = formatNum, u = A.unidad;
+  const tit = `<div class="sec-t"><span>Avance de la OP · por lote</span><small>Situación al ${esc(A.fechaTxt)}</small></div>`;
+  const box = (l, v, s) => `<div><span>${l}</span><b>${v}</b><small>${s}</small></div>`;
+  const kp = `<div class="kp">${box('Pedido de la OP', n(A.pedido), u)}${box('Programados', n(A.programado), `${u} · ${Math.round(A.pctProg)} %`)}${box('Producidos', n(A.producido), `${u} · ${Math.round(A.pctProd)} %`)}${box('Pendientes por programar', n(A.pendProg), u)}</div>`;
+  const wProd = A.pctProd, wProg = Math.max(0, A.pctProg - A.pctProd), wPend = Math.max(0, 100 - A.pctProg);
+  const bar = `<div style="margin-top:7px"><div class="av-bar"><i style="width:${wProd}%;background:#16a34a"></i><i style="width:${wProg}%;background:#93c5fd"></i></div><div class="av-leyenda"><span><i style="background:#16a34a"></i>Verde: producido (${Math.round(A.pctProd)} %)</span><span><i style="background:#93c5fd"></i>Azul claro: programado en lotes (${Math.round(A.pctProg)} %)</span><span><i style="background:#e5e7eb"></i>Gris: pendiente por programar (${Math.round(wPend)} %)</span></div></div>`;
+  const uc = A.esMillar ? 'mill.' : 'kg';
+  const est = (l) => (l.cerrado ? `Cerrado${l.fechaCierre ? ' ' + opReqFechaTxt(l.fechaCierre) : ''}` : 'En proceso');
+  const merma = (l) => (l.cerrado && l.mermaKg != null ? `<td class="${l.mermaKg < 0 ? 'mal' : ''}">${n(l.mermaKg)} kg (${prodPct1(l.mermaPct)} %)</td>` : '<td class="sub">al cerrar</td>');
+  const filasL = A.lotes.map((l) => `<tr><td class="l"><b>${esc(l.nombre)}</b>${l.revisar ? ' <span style="color:#dc2626;font-weight:900">· revisar</span>' : ''}</td><td class="l">${esc(est(l))}</td><td>${l.prog != null ? n(l.prog) : '—'}</td><td>${l.prod > 0 ? n(l.prod) : '—'}</td><td>${l.mpKg > 0 ? n(l.mpKg) : '—'}</td>${merma(l)}</tr>`).join('');
+  const sumL = (f) => A.lotes.reduce((s, l) => s + (f(l) || 0), 0);
+  const tabL = A.lotes.length ? `<table class="av" style="margin-top:9px"><thead><tr><th class="l">Lote</th><th class="l">Estado</th><th>Programados (${uc})</th><th>Producidos (${uc})</th><th>MP inyectada (kg)</th><th>Merma</th></tr></thead><tbody>${filasL}</tbody><tfoot><tr><td class="l" colspan="2">TOTAL</td><td>${n(sumL((l) => l.prog))}</td><td>${n(sumL((l) => l.prod))}</td><td>${n(sumL((l) => l.mpKg))}</td><td></td></tr></tfoot></table>` : '<div class="nota">Todavía no hay lotes con programación, despachos ni producción registrados.</div>';
+  // Materia prima inyectada por lote: tablas de hasta 7 lotes por franja (menos si no caben en la hoja; la primera lleva la fórmula; la última, el total y lo que falta)
+  let tabM = '';
+  const notaMP = '<div class="nota">Kg inyectados = materia prima despachada por Almacén a cada lote (los químicos, pigmentos, tintas y demás insumos que no son materia prima directa no se cuentan aquí). Falta por inyectar = fórmula de la OP menos el total inyectado. En un lote sin despachos de Almacén, «MP inyectada» de la tabla de lotes usa los kg recibidos que anotó extrusión.</div>';
+  if (A.filas.length && A.lotes.length) {
+    // Lotes por franja: hasta 7, y menos cuando los números o los nombres de lote son tan anchos que la tabla no cabría en la hoja
+    // (se estima el ancho mínimo de cada columna; 690 px útiles al imprimir en carta o A4 con los márgenes normales del navegador)
+    const numW = (t) => String(t).split('').reduce((s, ch) => s + (/[0-9]/.test(ch) ? 5.4 : (ch === '—' ? 9.5 : 2.8)), 0) + 14;
+    const palW = (t, px) => Math.max(1, ...String(t).split(/\s+/).map((w) => w.length)) * px + 14;
+    const colW = (hdr, vals) => Math.max(palW(hdr, 6), ...vals.map(numW));
+    const vL = (v) => (v > 0 ? n(v) : '—'), vN = (v) => (v == null ? '—' : n(v)), TT = A.totales;
+    const wLote = A.lotes.map((l, i) => colW(l.nombre, A.filas.map((f) => vL(f.porLote[i])).concat(vL(TT.porLote[i]))));
+    const wForm = colW('Fórmula de la OP', A.filas.map((f) => vN(f.formulaKg)).concat(vN(TT.formulaKg)));
+    const wTot = colW('Total inyectado', A.filas.map((f) => n(f.total)).concat(n(TT.total)));
+    const wFal = colW('Falta por inyectar', A.filas.map((f) => vN(f.falta)).concat(vN(TT.falta)));
+    const wFijo = 24 + Math.max(70, ...A.filas.map((f) => Math.min(String(f.code).length, 9) * 6.6 + 14)) + Math.max(60, ...A.filas.map((f) => palW(f.desc, 6.4)));
+    const partir = (k) => { const fr = []; for (let i = 0; i < A.lotes.length; i += k) fr.push([i, Math.min(A.lotes.length, i + k)]); return fr; };
+    const cabe = (fr) => fr.every(([a, b], i) => wFijo + (i === 0 ? wForm : 0) + wLote.slice(a, b).reduce((s, x) => s + x, 0) + (i === fr.length - 1 ? wTot + wFal : 0) <= 690);
+    let POR = Math.min(7, A.lotes.length);
+    while (POR > 2 && !cabe(partir(POR))) POR--;
+    const franjas = partir(POR);
+    tabM = franjas.map(([a, b], fi) => {
+      const primera = fi === 0, ultima = fi === franjas.length - 1;
+      const th = `<th class="l">N°</th><th class="l">Código</th><th class="l">Materia prima</th>${primera ? '<th>Fórmula de la OP</th>' : ''}${A.lotes.slice(a, b).map((l) => `<th>${esc(l.nombre)}</th>`).join('')}${ultima ? '<th>Total inyectado</th><th>Falta por inyectar</th>' : ''}`;
+      const tr = A.filas.map((f) => `<tr><td class="l sub">${f.n}</td><td class="l cod">${esc(f.code)}</td><td class="l">${esc(f.desc)}${f.fueraFormula ? ' <span class="sub">(fuera de la fórmula)</span>' : ''}</td>${primera ? `<td>${f.formulaKg == null ? '—' : n(f.formulaKg)}</td>` : ''}${f.porLote.slice(a, b).map((x) => `<td>${x > 0 ? n(x) : '—'}</td>`).join('')}${ultima ? `<td>${n(f.total)}</td><td class="${f.falta != null && f.falta < -0.005 ? 'mal' : ''}">${f.falta == null ? '—' : n(f.falta)}</td>` : ''}</tr>`).join('');
+      const T = A.totales;
+      const tf = `<tr><td class="l" colspan="3">TOTAL</td>${primera ? `<td>${T.formulaKg == null ? '—' : n(T.formulaKg)}</td>` : ''}${T.porLote.slice(a, b).map((x) => `<td>${x > 0 ? n(x) : '—'}</td>`).join('')}${ultima ? `<td>${n(T.total)}</td><td>${T.falta == null ? '—' : n(T.falta)}</td>` : ''}</tr>`;
+      // el subtítulo va pegado a su tabla: no se queda solo al final de una hoja
+      return `<div style="break-inside:avoid;page-break-inside:avoid">${primera ? '<div class="av-sub">Materia prima inyectada por lote (kg)</div>' : ''}<table class="av" style="margin-bottom:6px"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody><tfoot>${tf}</tfoot></table>${ultima ? notaMP : ''}</div>`;
+    }).join('');
+  }
+  return `<div class="sec" style="break-inside:auto;page-break-inside:auto"><div style="break-inside:avoid;page-break-inside:avoid">${tit}${kp}${bar}</div>${tabL}${tabM}</div>`;
+};
+// ── Reporte de UN lote (botón «Ver lote» del Reporte de Producción en Proceso): se ve en pantalla y se imprime solo ──
+// a = { req, R (prodResumenLotes), L (un lote de R.lotes), formulaLineas ({ id, desc, pct } de la fórmula de la OP) }
+const prodLoteDoc = (a, emp, opts) => {
+  const esc = rhCierreEsc, o = opts || {}, e = emp || {};
+  const { req, R, L } = a;
+  const F = a.formulaLineas || [];
+  const n = formatNum, kg = (v) => `${formatNum(v)} kg`, usd = (v) => `$${formatNum(v)}`;
+  const mill = R.esMillar, u = mill ? 'millares' : 'kg';
+  const nd = '<span class="nd">—</span>', al = '<span class="nd">al cerrar el lote</span>';
+  const numOP = String((req && req.id) || '').replace('OP-', '').padStart(5, '0');
+  const tipoCol = R.esTermo ? '#15803d' : '#1d4ed8';
+  const estCol = L.cerrado ? '#15803d' : '#b45309';
+  const estTxt = L.cerrado ? `CERRADO${L.fechaCierre ? ' ' + opReqFechaTxt(L.fechaCierre) : ''}` : 'EN PROCESO';
+  const producido = mill ? L.millares : L.kgFinal;
+  const mal = (txt) => `<span style="color:#dc2626;font-weight:900">${txt}</span>`;
+  const tit = (txt, der) => `<div class="sec-t"><span>${txt}</span>${der ? `<small>${der}</small>` : ''}</div>`;
+  const t = (v) => (String(v == null ? '' : v).trim() ? esc(String(v).trim()) : nd);
+  const progTxt = L.prog ? `${n(L.prog.cant)} ${u} programados${L.prog.cargaKg > 0 ? ` · carga ${kg(L.prog.cargaKg)}` : ''}${mill && L.prog.pesoMillar > 0 ? ` · ${n(L.prog.pesoMillar)} kg por millar` : ''}` : 'Sin programación (lote anterior a la programación por lotes)';
+  const kv = (x, y) => `<tr><th>${x[0]}</th><td>${x[1]}</td><th>${y[0]}</th><td>${y[1]}</td></tr>`;
+  const info = `<table class="kv">${kv(['Cliente', t(req && req.client)], ['Producto', t(req && req.desc)])}${kv(['Categoría', t(req && req.categoria)], ['Lote', `<b>${esc(L.nombre)}</b> · <span style="color:${estCol};font-weight:900">${estTxt}</span>`])}${kv(['Fecha de producción', t(L.fecha ? opReqFechaTxt(L.fecha) : '')], ['Programación', esc(progTxt)])}</table>`;
+  // Indicadores
+  const cell = (l, v, s, cls) => `<div${cls ? ` class="${cls}"` : ''}><span>${l}</span><b>${v}</b>${s ? `<small>${s}</small>` : ''}</div>`;
+  const cc = (v) => (L.sinCosto ? nd : usd(v));
+  const mermaTxt = L.cerrado && L.mermaKg != null ? `${kg(L.mermaKg)} (${prodPct1(L.mermaPct)} %)` : null;
+  const kpis = [
+    cell('Producidos', `${n(producido)}${L.prog ? ` de ${n(L.prog.cant)}` : ''}`, u),
+    cell('MP inyectada', kg(L.mpKg), 'materia prima directa'),
+    cell('Costo MP del lote', cc(L.costoMP), 'a costo de despacho'),
+    L.asocKg > 0 || L.costoAsoc > 0 ? cell('Otros costos asociados', cc(L.costoAsoc), 'químicos, pigmentos, tintas…') : '',
+    cell('Costo total del lote', cc(L.costoTotal), 'MP + costos asociados', 'hl'),
+    mill ? cell('Costo por millar', L.cerrado ? (L.costoMillar != null ? usd(L.costoMillar) : nd) : al, '') : '',
+    cell('Costo por kg terminado', L.cerrado ? (L.costoKg != null ? usd(L.costoKg) : nd) : al, ''),
+    cell('Merma', mermaTxt ? (L.mermaKg < 0 ? mal(esc(mermaTxt)) : esc(mermaTxt)) : (L.cerrado ? nd : al), '', L.mermaKg != null && L.mermaKg < 0 && L.cerrado ? 'mal' : ''),
+  ].join('');
+  const fasesTxt = [['Extrusión', L.kgExt, true], ['Impresión', L.kgImp, !R.esTermo], ['Sellado', L.kgSel, !R.esTermo]].filter(([, v, ok]) => ok && v > 0).map(([nm, v]) => `${nm} <b>${kg(v)}</b>`).join(' → ');
+  const fases = fasesTxt ? `<div class="nota" style="font-style:normal;font-size:9.5px;color:#334155;margin-top:7px">Fases del lote: ${fasesTxt}${mill && L.millares > 0 ? ` (${n(L.millares)} millares)` : ''}</div>` : '';
+  const avisos = L.revisar.length ? `<div class="rev"><b>Revisar este lote:</b><br>${L.revisar.map((x) => '· ' + esc(x.texto)).join('<br>')}</div>` : '';
+  // Materia prima por material: lo que da la fórmula para el lote vs lo que Almacén despachó
+  const carga = L.prog && L.prog.cargaKg > 0 ? L.prog.cargaKg : 0;
+  const kgF = carga > 0 && F.length ? opReqReparto(F.map((f) => parseNum(f.pct)), carga) : null;
+  const filas = [], vistos = new Set();
+  // Solo materia prima directa (los insumos de costo asociado tienen su propia tabla); un código repetido en la fórmula se suma en un solo renglón
+  F.forEach((f, i) => {
+    if (f.asoc) return;
+    const k = prodCodigo(f.id); vistos.add(k);
+    const ya = filas.find((x) => x.key === k);
+    if (ya) { ya.pct += parseNum(f.pct); if (kgF) ya.fkg = (ya.fkg || 0) + kgF[i]; return; }
+    const m = L.mats.find((x) => x.key === k);
+    filas.push({ key: k, code: String(f.id || ''), desc: String(f.desc || (m && m.desc) || ''), pct: parseNum(f.pct), fkg: kgF ? kgF[i] : null, iny: m ? m.kg : 0, costo: m ? m.costo : 0, cu: m ? m.cu : 0 });
+  });
+  L.mats.forEach((m) => { if (!vistos.has(m.key)) filas.push({ code: m.code, desc: m.desc, pct: null, fkg: null, iny: m.kg, costo: m.costo, cu: m.cu, fuera: true }); });
+  // Sin programación no hay «fórmula del lote»: solo se muestra lo inyectado
+  const verFormula = !!kgF;
+  const lista = verFormula ? filas : filas.filter((f) => f.iny > 0 || f.costo > 0);
+  const sumF = (fn) => lista.reduce((s, r) => s + (fn(r) || 0), 0);
+  const trMP = lista.map((r) => `<tr><td class="l"><b class="cod">${esc(r.code)}</b> <span class="sub">${esc(r.desc)}${r.fuera ? ' (fuera de la fórmula)' : ''}</span></td><td>${r.pct == null ? '—' : opReqDec(r.pct, 3) + ' %'}</td><td>${verFormula ? (r.fkg == null ? '—' : n(r.fkg)) : '—'}</td><td>${r.iny > 0 ? n(r.iny) : '—'}</td><td class="${verFormula && r.fkg != null && Math.abs(r.iny - r.fkg) > 0.005 ? 'mal' : ''}">${verFormula && r.fkg != null ? n(r.iny - r.fkg) : '—'}</td><td>${r.cu > 0 ? usd(r.cu) : '—'}</td><td>${r.costo > 0 ? usd(r.costo) : '—'}</td></tr>`).join('');
+  const tabMP = lista.length
+    ? `<table class="av"><thead><tr><th class="l">Materia prima</th><th>% fórmula</th><th>Fórmula del lote (kg)</th><th>Inyectado (kg)</th><th>Dif. (kg)</th><th>Costo unit.</th><th>Costo total</th></tr></thead><tbody>${trMP}</tbody><tfoot><tr><td class="l">TOTAL ${esc(L.nombre.toUpperCase())}</td><td>${verFormula ? opReqDec(sumF((r) => r.pct), 3) + ' %' : ''}</td><td>${verFormula ? n(sumF((r) => r.fkg)) : ''}</td><td>${n(sumF((r) => r.iny))}</td><td>${verFormula ? n(sumF((r) => r.iny) - sumF((r) => r.fkg)) : ''}</td><td></td><td>${usd(sumF((r) => r.costo))}</td></tr></tfoot></table>`
+    : '<div class="aviso">Este lote todavía no tiene materia prima despachada por Almacén.</div>';
+  // Otros costos asociados del lote
+  const tabAs = L.asoc.length
+    ? `<table class="av"><thead><tr><th class="l">Insumo</th><th class="l">Categoría</th><th>Cantidad</th><th>Costo unit.</th><th>Costo total</th></tr></thead><tbody>${L.asoc.map((m) => `<tr><td class="l"><b class="cod">${esc(m.code)}</b> <span class="sub">${esc(m.desc)}</span></td><td class="l">${esc(m.cat)}</td><td>${n(m.qty)} ${esc(m.unit)}</td><td>${m.cu > 0 ? usd(m.cu) : '—'}</td><td>${m.costo > 0 ? usd(m.costo) : '—'}</td></tr>`).join('')}</tbody><tfoot><tr><td class="l" colspan="4">TOTAL OTROS COSTOS ASOCIADOS</td><td>${usd(L.costoAsoc)}</td></tr></tfoot></table>`
+    : '';
+  const nota = 'Costo = costo de cada material cuando Almacén lo despachó al lote. ' + (mill ? 'Costo por millar = costo total del lote ÷ millares producidos; costo por kg = costo total ÷ kg terminados. ' : 'Costo por kg = costo total del lote ÷ kg producidos. ') + 'El costo por ' + (mill ? 'millar, el costo por kg' : 'kg') + ' y la merma se calculan al cerrar el lote, para que no salgan distorsionados mientras sigue produciendo. «Dif.» = lo inyectado menos lo que da la fórmula para el lote (sirve para ver si se despachó de más o de menos).';
+  const titulo = `<div class="titulo"><div class="t-izq"><div class="t-kick">Orden de producción · Reporte de lote</div><div class="t-main">${esc(L.nombre)}</div><div class="tags"><span class="tag" style="background:${tipoCol}">${R.esTermo ? 'TERMOENCOGIBLE' : 'BOLSAS'}</span><span class="tag est" style="color:${estCol}">${estTxt}</span></div></div><div class="t-num"><span>OP N°</span><b>${esc(numOP)}</b></div></div>`;
+  const pie = `<div class="pie"><span>Emitido el ${esc(frmAhoraTxt())}${e.usuario ? ' · ' + esc(e.usuario) : ''}</span><span>${esc(e.empresa || '')} · OP N° ${esc(numOP)} · ${esc(L.nombre)}</span></div>`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Lote_${esc(L.num)}_OP_${esc(numOP)}</title><style>${OPREQ_CSS}${PRODLOTE_CSS}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(e.empresa || '')}</h2><p>RIF: ${esc(e.rif || '')}</p><p>${esc(e.direccion || '')}</p>${e.tel ? `<p>Tel: ${esc(e.tel)}</p>` : ''}</div></div>${o.preview ? '' : '<button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button>'}<div class="contenido">${titulo}<div class="sec">${tit('Datos del lote')}${info}</div><div class="sec">${tit('Resultado del lote')}<div class="kp">${kpis}</div>${fases}${avisos}</div><div class="sec" style="break-inside:auto;page-break-inside:auto">${tit('Materia prima del lote', 'costo a precio de despacho')}${tabMP}</div>${tabAs ? `<div class="sec" style="break-inside:auto;page-break-inside:auto">${tit('Otros costos asociados')}${tabAs}</div>` : ''}<div class="nota">${esc(nota)}</div>${pie}</div></div></body></html>`;
+};
+// == FIN PRODLOTE ==
+
 // ============================================================================
 // CONSTANTE DE SEGURIDAD - CLAVE ADMIN
 // ============================================================================
@@ -23833,7 +24247,7 @@ const opReqReparto = (pcts, baseKg) => {
   for (let k = 0; k < orden.length && resto > 0; k++, resto--) base[orden[k][1]]++;
   return base.map(c => c / 100);
 };
-const opReqDatos = (req, formulas, inventory) => {
+const opReqDatos = (req, formulas, inventory, ctx) => {
   const r = req || {};
   const esTermo = String(r.tipoProducto || '').toUpperCase() === 'TERMOENCOGIBLE';
   const catRaw = String(r.categoria == null ? '' : r.categoria).trim();
@@ -23863,7 +24277,7 @@ const opReqDatos = (req, formulas, inventory) => {
   lineas.forEach((l, i) => { l.kg = kgs[i]; });
   const totalKg = Math.round(kgs.reduce((s, k) => s + k, 0) * 100) / 100;
   const dest = String(r.productoDestinoId || '').trim();
-  return {
+  const D = {
     id: String(r.id || ''),
     numero: String(r.id || '').replace('OP-', '').padStart(5, '0'),
     fecha: opReqFechaTxt(r.fecha) || (r.timestamp ? frmFechaTxt(r.timestamp) : ''),
@@ -23877,6 +24291,9 @@ const opReqDatos = (req, formulas, inventory) => {
     formula: formula ? { id: formula.id || '', categoria: String(formula.categoria || ''), lineas, totalPct, totalKg, balanceOk: lineas.length > 0 && Math.abs(totalPct - 100) < 0.1 } : null,
     fases, fasesPorDefecto: !hayFases,
   };
+  // Avance de la OP por lote (solo si se entrega el contexto de Almacén y Producción y la OP ya tiene lotes). Sin costos. Si algo falla, el documento sale igual, sin esa sección.
+  if (ctx) { try { const A = prodAvanceOP(r, lineas, cargaKg, ctx); if (A && A.lotes.length) D.avance = A; } catch (e) { /* sin sección de avance */ } }
+  return D;
 };
 const OPREQ_CSS = `*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;background:#eef2f6;padding:16px;font-size:11px;color:#111827;}.reporte-wrap{max-width:820px;margin:0 auto;background:#fff;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.12);overflow:hidden;}.membrete{display:flex;justify-content:space-between;align-items:center;padding:16px 26px 12px;border-bottom:3px solid #f97316;}.logo-l1{font-size:10px;font-weight:700;color:#374151;letter-spacing:3px;text-transform:uppercase;}.logo-l2{font-size:28px;font-weight:900;color:#f97316;line-height:1;}.empresa-info{text-align:right;}.empresa-info h2{font-size:13px;font-weight:900;text-transform:uppercase;color:#111;}.empresa-info p{font-size:8.5px;color:#555;line-height:1.6;}.btn-print{display:block;margin:12px 26px 0;padding:12px 0;background:#f97316;color:#fff;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:2px;border:none;cursor:pointer;border-radius:4px;text-align:center;width:calc(100% - 52px);}.contenido{padding:14px 26px 20px;}` +
   `.titulo{display:flex;justify-content:space-between;align-items:stretch;gap:14px;}.t-izq{flex:1;display:flex;flex-direction:column;justify-content:center;}.t-kick{font-size:8.5px;font-weight:900;letter-spacing:2.2px;color:#f97316;text-transform:uppercase;}.t-main{font-size:21px;font-weight:900;text-transform:uppercase;letter-spacing:.2px;color:#0f172a;line-height:1.1;margin:2px 0 7px;}.tags{display:flex;flex-wrap:wrap;gap:7px;align-items:center;}.tag{display:inline-block;padding:3px 11px;border-radius:5px;font-size:9px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;color:#fff;}.tag.est{background:#fff;border:1.5px solid currentColor;padding:1.5px 10px;}.t-fecha{font-size:9.5px;color:#475569;}.t-fecha b{color:#0f172a;}.t-num{min-width:124px;background:#0f172a;color:#fff;border-radius:8px;padding:8px 14px;text-align:center;display:flex;flex-direction:column;justify-content:center;}.t-num span{font-size:8.5px;letter-spacing:2.4px;color:#fdba74;font-weight:900;text-transform:uppercase;}.t-num b{font-size:28px;font-weight:900;letter-spacing:1.5px;line-height:1.1;}` +
@@ -23971,11 +24388,12 @@ const opReqDoc = (D, emp, opts) => {
   }).join('');
   const notaFases = D.fasesPorDefecto ? `<div class="nota">${F ? 'La fórmula no tiene fases marcadas: se muestran las fases habituales de este tipo de producto.' : 'Sin fórmula asociada: se muestran las fases habituales de este tipo de producto.'}</div>` : '';
   const secRuta = `<div class="sec">${tit(`Ruta de producción · ${D.esTermo ? 'Termoencogible' : 'Bolsas'}`, esc(activas.map(a => a[1]).join(' → ')))}<div class="ruta">${cajas}</div>${notaFases}</div>`;
+  const avance = D.avance ? prodAvanceHtml(D.avance) : '';
   const obs = `<div class="sec">${tit('Observaciones')}<div class="obs"><i></i><i></i><i></i></div></div>`;
   const firmas = '<div class="firmas"><div class="firma">Ventas<small>Emite la OP</small></div><div class="firma">Planta<small>Recibe y programa</small></div><div class="firma">Almacén<small>Despacha la materia prima</small></div></div>';
   const pie = `<div class="pie"><span>Emitido el ${esc(frmAhoraTxt())}${e.usuario ? ' · ' + esc(e.usuario) : ''}</span><span>${esc(e.empresa || '')} · OP N° ${esc(D.numero)}</span></div>`;
   const titulo = `<div class="titulo"><div class="t-izq"><div class="t-kick">Orden de producción</div><div class="t-main">Requisición de Producción</div><div class="tags"><span class="tag" style="background:${tipoCol}">${esc(D.tipo)}</span>${D.estado ? `<span class="tag est" style="color:${estCol}">${esc(D.estado)}</span>` : ''}<span class="t-fecha">Fecha: <b>${esc(D.fecha || '—')}</b></span></div></div><div class="t-num"><span>N°</span><b>${esc(D.numero)}</b></div></div>`;
-  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Requisicion_${esc(D.id || ('OP-' + D.numero))}</title><style>${OPREQ_CSS}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(e.empresa || '')}</h2><p>RIF: ${esc(e.rif || '')}</p><p>${esc(e.direccion || '')}</p>${e.tel ? `<p>Tel: ${esc(e.tel)}</p>` : ''}</div></div>${o.preview ? '' : '<button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button>'}<div class="contenido">${titulo}<div class="sec">${tit('Datos del pedido')}${pedido}</div><div class="sec">${tit('Especificaciones del producto')}${specs}</div><div class="sec">${tit('Cantidad y carga a planta')}<div class="calc">${piezas.join('')}</div>${cargaFloja ? `<div class="aviso rojo">La carga total planta (${esc(kg(D.cargaKg))}) es menor que el producto neto (${esc(kg(D.netoKg))}). Revise la cantidad o la carga de la OP.</div>` : ''}</div>${secF}${secRuta}<div class="cierre">${obs}${firmas}${pie}</div></div></div></body></html>`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>Requisicion_${esc(D.id || ('OP-' + D.numero))}</title><style>${OPREQ_CSS}${D.avance ? PRODLOTE_CSS : ''}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(e.empresa || '')}</h2><p>RIF: ${esc(e.rif || '')}</p><p>${esc(e.direccion || '')}</p>${e.tel ? `<p>Tel: ${esc(e.tel)}</p>` : ''}</div></div>${o.preview ? '' : '<button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button>'}<div class="contenido">${titulo}<div class="sec">${tit('Datos del pedido')}${pedido}</div><div class="sec">${tit('Especificaciones del producto')}${specs}</div><div class="sec">${tit('Cantidad y carga a planta')}<div class="calc">${piezas.join('')}</div>${cargaFloja ? `<div class="aviso rojo">La carga total planta (${esc(kg(D.cargaKg))}) es menor que el producto neto (${esc(kg(D.netoKg))}). Revise la cantidad o la carga de la OP.</div>` : ''}</div>${secF}${secRuta}${avance}<div class="cierre">${obs}${firmas}${pie}</div></div></div></body></html>`;
 };
 // == FIN OPREQ ==
 // == INICIO MPREQ ==
@@ -24177,7 +24595,8 @@ const mpreqAvisos = (R, ctx) => {
   const out = [];
   const fmt = (n) => formatNum(n);
   if (!R || !R.nFormulas) {
-    out.push({ nivel: 'warn', txt: c.nIncluidas === 0 ? 'No hay fórmulas incluidas: marque al menos una.' : c.modo === 'producido' ? 'Ninguna de las fórmulas incluidas tiene producción registrada en ese período.' : c.modo === 'producto' ? 'Escriba los kilos de al menos un producto.' : 'No hay fórmulas incluidas: marque al menos una.' });
+    const todasSinConv = c.modo !== 'producto' && c.nIncluidas > 0 && !!c.sinConversion && c.sinConversion.length >= c.nIncluidas;
+    out.push({ nivel: 'warn', txt: c.nIncluidas === 0 ? 'No hay fórmulas incluidas: marque al menos una.' : todasSinConv ? 'Ninguna de las fórmulas incluidas tiene ancho, largo y micras: no se pueden pasar de millares a kilos. Complete sus dimensiones en Fórmulas o use «Por producto» y escriba sus kilos.' : c.modo === 'producido' ? 'Ninguna de las fórmulas incluidas tiene producción registrada en ese período.' : c.modo === 'producto' ? (c.usaMillares ? 'Escriba los millares (bolsas) o los kilos (termoencogible) de al menos un producto.' : 'Escriba los kilos de al menos un producto.') : 'No hay fórmulas incluidas: marque al menos una.' });
     return out;
   }
   if (R.avisos.sinInventario.length) out.push({ nivel: 'warn', txt: `Estas materias primas están en las fórmulas pero NO en el Inventario General (o están desactivadas); se cuentan sin existencia y sin costo: ${R.avisos.sinInventario.map(x => `${x.code} (usada en ${x.formulas.join(', ')})`).join(' · ')}.` });
@@ -24186,19 +24605,123 @@ const mpreqAvisos = (R, ctx) => {
   if (R.avisos.unidad.length) out.push({ nivel: 'warn', txt: `Materias primas cuya unidad en el inventario no es kg (el cálculo está en kilos): ${R.avisos.unidad.map(x => `${x.code} (${x.unit})`).join(' · ')}.` });
   if (c.modo === 'producido' && c.sinFormulaKg > 0) out.push({ nivel: 'info', txt: `${fmt(c.sinFormulaKg)} kg producidos en OPs que no tienen fórmula asociada no entran en el cálculo.` });
   if (c.modo === 'producido' && c.sinProduccion > 0) out.push({ nivel: 'info', txt: `${c.sinProduccion} fórmula${c.sinProduccion !== 1 ? 's' : ''} incluida${c.sinProduccion !== 1 ? 's' : ''} sin producción en el período (no pesan en la mezcla).` });
-  if (c.modo === 'producto' && c.sinKilos > 0) out.push({ nivel: 'info', txt: `${c.sinKilos} fórmula${c.sinKilos !== 1 ? 's' : ''} incluida${c.sinKilos !== 1 ? 's' : ''} sin kilos (no pesan en la mezcla).` });
+  if (c.modo === 'producto' && c.sinKilos > 0) out.push({ nivel: 'info', txt: `${c.sinKilos} fórmula${c.sinKilos !== 1 ? 's' : ''} incluida${c.sinKilos !== 1 ? 's' : ''} sin ${c.usaMillares ? 'cantidad' : 'kilos'} (no pesan en la mezcla).` });
+  if (c.sinConversion && c.sinConversion.length && (c.modo !== 'producto' || c.usaMillares)) out.push(c.modo === 'producto'
+    ? { nivel: 'info', txt: `Fórmulas de bolsas sin ancho, largo y micras (no se pueden pasar de millares a kilos): se escriben directamente en kilos: ${c.sinConversion.join(' · ')}.` }
+    : { nivel: 'warn', txt: `Fórmulas de bolsas sin ancho, largo y micras: no se pueden pasar de millares a kilos y no entran en el cálculo: ${c.sinConversion.join(' · ')}. Complete sus dimensiones en Fórmulas o use «Por producto» y escriba sus kilos.` });
   return out;
 };
 
 // Cómo se obtiene el «peso en la mezcla» de cada fórmula y las columnas de kilos (se escribe en pantalla, en el PDF y en el Excel para que no quede duda)
-const mpreqExplicaPeso = (modo, n) => {
+const mpreqExplicaPeso = (modo, n, mill) => {
+  if (mill) return mpreqExplicaPesoMill(modo, n);
   if (modo === 'promedio') return n > 0 ? `todas las fórmulas pesan igual: 100 % ÷ ${n} fórmula${n !== 1 ? 's' : ''} = ${formatNum(100 / n)} % cada una` : 'todas las fórmulas pesan igual (100 % repartido entre las fórmulas incluidas)';
   if (modo === 'producto') return 'cada fórmula pesa según los kilos escritos para ella (su parte del total de kilos)';
   return 'cada fórmula pesa según los kilos de producto terminado que produjo en el período (su parte del total producido)';
 };
-const mpreqExplicaKg = (mermaPct) => `Kg producto terminado = kilos a producir × peso en la mezcla · Kg a planta = kg producto terminado ÷ (1 − merma ${formatNum(mermaPct)} %) · Balance = suma de los % de las materias primas de la fórmula (100 % = fórmula completa)`;
+const mpreqExplicaKg = (mermaPct, mill) => mill ? mpreqExplicaKgMill(mermaPct) : `Kg producto terminado = kilos a producir × peso en la mezcla · Kg a planta = kg producto terminado ÷ (1 − merma ${formatNum(mermaPct)} %) · Balance = suma de los % de las materias primas de la fórmula (100 % = fórmula completa)`;
 const MPREQ_NOTA_MEZCLA = '% mezcla = suma de (% de la materia prima en cada fórmula × peso de esa fórmula)';
 // == FIN MPREQ ==
+
+// == INICIO MPREQ MILL ==
+// ═══ Requerimiento de materia prima: las BOLSAS se escriben en MILLARES (el termoencogible y cualquier otro tipo siguen en kilos) ═══
+// Cada fórmula de bolsas pasa de millares a kilos con su KG/Mill. = (Ancho + Fuelle) × Largo × Micras: el mismo cálculo de la pantalla de Fórmulas.
+// Una fórmula sin esas dimensiones no se puede pasar de millares a kilos: en «Por producto» se escribe directo en kilos y en los otros modos no entra en el cálculo.
+// Todo lo demás (merma, carga a planta, % de cada materia prima, existencia, costo) se calcula igual que siempre con los kilos que resultan (mpreqCalcular no cambia).
+const mpreqTipoDe = (f) => mpreqTxt(f && f.tipoProducto).toUpperCase() || 'BOLSAS';
+const mpreqKgMillar = (f) => {
+  if (!f || !(f.ancho || f.largo || f.micras)) return 0;
+  const v = (mpreqNum(f.ancho) + mpreqNum(f.fuelles)) * mpreqNum(f.largo) * mpreqNum(f.micras);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+};
+// ¿En qué unidad se escribe cada fórmula en «Por producto»? Bolsas con dimensiones → millares; el resto (termoencogible, bolsas sin dimensiones) → kilos.
+const mpreqUnidadFormula = (f) => (mpreqTipoDe(f) === 'BOLSAS' && mpreqKgMillar(f) > 0 ? 'mill' : 'kg');
+// ¿Y el campo único de «Promedio simple» y «Según lo producido»? Con BOLSAS elegido: millares. Con «Todos» o con otro tipo: kilos (como siempre).
+const mpreqUnidadTotal = (modo, tipo) => (modo !== 'producto' && tipo === 'BOLSAS' ? 'mill' : 'kg');
+// ¿La pantalla trabaja con millares? (decide las columnas y los textos; no depende de lo que se haya escrito)
+const mpreqUsaMillares = (modo, tipo, formulas) => (modo === 'producto' ? (formulas || []).some((f) => mpreqUnidadFormula(f) === 'mill') : mpreqUnidadTotal(modo, tipo) === 'mill');
+const mpreqFmtMill = (n) => { const x = Math.round((Number(n) || 0) * 100) / 100; return Number.isInteger(x) ? new Intl.NumberFormat('es-VE', { maximumFractionDigits: 0, useGrouping: 'always' }).format(x) : formatNum(x); };
+const mpreqFmtKgMill = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4, useGrouping: 'always' }).format(Number(n) || 0);
+// «Todos» solo es «cada uno en su unidad» en «Por producto»; en los otros modos hay un solo campo y todo va en kilos
+const mpreqTipoRotulo = (k, modo) => (k === 'TODOS' ? (modo && modo !== 'producto' ? 'Todos · se escribe en kilos' : 'Todos (cada uno en su unidad)') : k === 'BOLSAS' ? 'Bolsas · se escribe en millares' : `${k} · se escribe en kilos`);
+
+// Plan de producción: pasa lo escrito (millares o kilos) a kilos de producto terminado por fórmula y da el peso de cada fórmula en la mezcla.
+//   modo / tipo = los de la pantalla · formulas = las incluidas · total = lo escrito en el campo único (millares si mpreqUnidadTotal() da 'mill', si no kilos)
+//   porFormula = { id: lo escrito en cada producto } (solo «Por producto») · producido = { id: kg producidos en el período } (solo «Según lo producido»)
+// Devuelve { unidadTotal, conMillares, kilos, millares, kilosDirectos, pesos[] (uno por fórmula, en el mismo orden), filas[], sinConversion[] }
+//   fila = { id, categoria, tipo, unidad: 'mill' | 'kg', kgMillar, millares (o null), kilos, peso, sinConversion }
+//   kilos = kilos de producto terminado de TODO el plan · millares = millares del plan (bolsas) · kilosDirectos = kilos escritos directamente en kilos
+const mpreqPlan = ({ modo, tipo, formulas, total, porFormula, producido }) => {
+  const fl = formulas || [];
+  const unidadTotal = mpreqUnidadTotal(modo, tipo);
+  const filas = fl.map((f) => ({ id: f.id, categoria: f.categoria, tipo: mpreqTipoDe(f), unidad: 'kg', kgMillar: mpreqKgMillar(f), millares: null, kilos: 0, peso: 0, sinConversion: false }));
+  let pesos = fl.map(() => 0);
+  let kilos = 0, millares = 0;
+  if (modo === 'producto') {
+    // Cada producto con lo que se escribió: millares (bolsas con dimensiones) o kilos (lo demás)
+    filas.forEach((r, i) => {
+      const t = Math.max(0, mpreqLeer(porFormula && porFormula[r.id]));
+      if (mpreqUnidadFormula(fl[i]) === 'mill') { r.unidad = 'mill'; r.millares = t; r.kilos = mpreqR2(t * r.kgMillar); millares += t; }
+      else { r.kilos = t; r.sinConversion = r.tipo === 'BOLSAS'; }
+    });
+    kilos = filas.reduce((s, r) => s + r.kilos, 0);
+    pesos = mpreqPesos('producto', fl, Object.fromEntries(filas.map((r) => [r.id, r.kilos])));
+  } else if (unidadTotal === 'mill') {
+    // Un solo total en millares: solo entran las fórmulas que se pueden pasar a kilos
+    const conv = [];
+    filas.forEach((r, i) => { r.unidad = 'mill'; if (r.kgMillar > 0) conv.push(i); else r.sinConversion = true; });
+    const M = Math.max(0, mpreqLeer(total));
+    if (modo === 'promedio') {
+      // Los millares se reparten en partes iguales; cada fórmula pesa según los kilos que le salen (millares × KG/Mill.)
+      const sumK = conv.reduce((s, i) => s + filas[i].kgMillar, 0);
+      conv.forEach((i) => { const r = filas[i]; pesos[i] = r.peso = sumK > 0 ? r.kgMillar / sumK : 0; r.millares = M / conv.length; r.kilos = mpreqR2(r.millares * r.kgMillar); });
+    } else {
+      // «Según lo producido»: cada fórmula pesa lo que produjo (kilos); los millares escritos se pasan a kilos conservando esa proporción: kilos = millares ÷ Σ(peso ÷ KG/Mill.)
+      const base = {};
+      conv.forEach((i) => { base[filas[i].id] = Math.max(0, mpreqNum(producido && producido[filas[i].id])); });
+      const w = mpreqPesos('producido', conv.map((i) => fl[i]), base);
+      const H = conv.reduce((s, i, j) => s + (w[j] > 0 ? w[j] / filas[i].kgMillar : 0), 0);
+      const K = H > 0 ? M / H : 0;
+      conv.forEach((i, j) => { const r = filas[i]; pesos[i] = r.peso = w[j]; r.kilos = mpreqR2(K * w[j]); r.millares = r.kilos / r.kgMillar; });
+    }
+    kilos = conv.reduce((s, i) => s + filas[i].kilos, 0);
+    millares = kilos > 0 ? M : 0;
+  } else {
+    // En kilos (Todos / termoencogible): igual que siempre
+    kilos = Math.max(0, mpreqLeer(total));
+    pesos = mpreqPesos(modo, fl, producido);
+    filas.forEach((r, i) => { r.kilos = kilos * pesos[i]; });
+  }
+  filas.forEach((r, i) => { r.peso = pesos[i]; });
+  const kilosDirectos = modo === 'producto' ? filas.reduce((s, r) => s + (r.unidad === 'kg' ? r.kilos : 0), 0) : (unidadTotal === 'mill' ? 0 : kilos);
+  return { unidadTotal, conMillares: filas.some((r) => r.unidad === 'mill' && r.millares > 0), kilos, millares, kilosDirectos, pesos, filas, sinConversion: filas.filter((r) => r.sinConversion).map((r) => r.categoria) };
+};
+// «1.120 millares» / «4.436,00 kg» y su equivalencia, para la tarjeta «A producir», el PDF y el Excel. Sin millares: solo los kilos (como siempre).
+const mpreqMillTxt = (m) => `${mpreqFmtMill(m)} ${Math.abs(Number(m) - 1) < 1e-9 ? 'millar' : 'millares'}`;
+const mpreqAProducir = (plan, kilos) => {
+  if (plan && plan.conMillares) {
+    const m = mpreqMillTxt(plan.millares);
+    if (plan.kilosDirectos > 0) return { grande: `${formatNum(kilos)} kg`, sub: `${m} + ${formatNum(plan.kilosDirectos)} kg escritos en kilos`, linea: `${formatNum(kilos)} kg (${m} + ${formatNum(plan.kilosDirectos)} kg escritos en kilos)`, corta: `${formatNum(kilos)} kg (${mpreqFmtMill(plan.millares)} mill. + ${formatNum(plan.kilosDirectos)} kg)` };
+    return { grande: m, sub: `= ${formatNum(kilos)} kg`, linea: `${m} (${formatNum(kilos)} kg)`, corta: `${mpreqFmtMill(plan.millares)} mill. = ${formatNum(kilos)} kg` };
+  }
+  return { grande: `${formatNum(kilos)} kg`, sub: '', linea: `${formatNum(kilos)} kg`, corta: `${formatNum(kilos)} kg` };
+};
+// Kilos de producto terminado y de carga a planta de una fórmula en el detalle del PDF y del Excel. Con millares son los mismos de la pantalla (millares × KG/Mill., redondeados al centavo):
+// su suma es el total «A producir» y cada renglón se puede comprobar con su KG/Mill. Sin plan (kilos, como siempre) es el reparto de siempre (mpreqCalcular).
+const mpreqKilosFila = (R, x, p) => (p && R && R.kilos > 0 ? { prod: p.kilos, carga: R.carga * p.kilos / R.kilos } : { prod: x.kgProducto, carga: x.kgCarga });
+const MPREQ_DESC_MODO_MILL = {
+  promedio: (n) => `Los millares se reparten en partes iguales entre las fórmulas incluidas${n ? ' (' + n + ' fórmula' + (n !== 1 ? 's' : '') + ')' : ''} y cada fórmula se pasa a kilos con su KG/Mill.; el % de cada materia prima es el promedio de sus porcentajes, ponderado por esos kilos (la fórmula que no la usa cuenta 0 %).`,
+  producto: () => 'Usted escribe cuántos millares va a hacer de cada producto: el sistema los pasa a kilos con el peso por millar (KG/Mill.) de cada fórmula y cada fórmula pesa según sus kilos.',
+  producido: () => 'Cada fórmula pesa según los kilos de producto terminado que produjo en el período (según las órdenes de producción); los millares escritos se pasan a kilos con el KG/Mill. de cada fórmula, manteniendo esa proporción.',
+};
+// Cómo se obtiene el «peso en la mezcla» cuando se trabaja en millares (pantalla, PDF y Excel)
+const mpreqExplicaPesoMill = (modo, n) => {
+  if (modo === 'promedio') return n === 1 ? 'todos los millares son de la única fórmula incluida, que se pasa a kilos con su KG/Mill.' : `los millares se reparten en partes iguales entre las ${n || 0} fórmulas y cada una se pasa a kilos con su KG/Mill.; pesa su parte de los kilos resultantes`;
+  if (modo === 'producto') return 'cada fórmula pesa según los kilos que resultan de sus millares (millares × KG/Mill.); lo escrito directamente en kilos se toma tal cual';
+  return 'cada fórmula pesa según los kilos de producto terminado que produjo en el período; los millares escritos se pasan a kilos con el KG/Mill. de cada fórmula, manteniendo esa proporción';
+};
+const mpreqExplicaKgMill = (mermaPct) => `Kg producto terminado = millares × KG/Mill. de la fórmula, con KG/Mill. = (Ancho + Fuelle) × Largo × Micras (lo escrito directamente en kilos se toma tal cual) · Kg a planta = kg producto terminado ÷ (1 − merma ${formatNum(mermaPct)} %) · Balance = suma de los % de las materias primas de la fórmula (100 % = fórmula completa)`;
+// == FIN MPREQ MILL ==
 
 // == INICIO MPREQ EXP ==
 // ═══ Requerimiento de materia prima: Excel y PDF (lo que se ve en pantalla es lo que baja) ═══
@@ -24215,6 +24738,7 @@ const mpreqDocPdf = (D) => {
   const R = D.R, E = D.empresa || {};
   const n2 = formatNum;
   const hayKg = R.kilos > 0;
+  const ap = D.plan ? mpreqAProducir(D.plan, R.kilos) : null;   // con millares: «1.120 millares = 4.436,00 kg»
   const dash = '—';
   const filas = R.filas.map((r, i) => {
     const faltaCls = hayKg && r.faltante > 0 ? ' bad' : '';
@@ -24224,16 +24748,17 @@ const mpreqDocPdf = (D) => {
   const pie = `<tfoot><tr><td></td><td colspan="2">TOTAL · ${T.nMp} materia${T.nMp !== 1 ? 's' : ''} prima${T.nMp !== 1 ? 's' : ''}</td><td class="n">${n2(T.pct)} %</td><td class="n">${hayKg ? n2(T.kg) : dash}</td><td></td><td class="n">${hayKg ? n2(T.faltante) : dash}</td><td></td><td class="n">${hayKg ? n2(T.costo) : dash}</td><td></td></tr></tfoot>`;
   const kpi = (lbl, val, sub, cls) => `<div class="kpi${cls ? ' ' + cls : ''}"><span>${esc(lbl)}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
   const kpis = hayKg
-    ? kpi('Kilos a producir (terminado)', `${n2(R.kilos)} kg`) + kpi(`Merma ${n2(R.mermaPct)} %`, `${n2(R.mermaKg)} kg`) + kpi('Carga a planta', `${n2(R.carga)} kg`, 'kilos ÷ (1 − merma)')
+    ? (ap && ap.sub ? kpi('A producir (terminado)', esc(ap.grande), esc(ap.sub)) : kpi('Kilos a producir (terminado)', `${n2(R.kilos)} kg`)) + kpi(`Merma ${n2(R.mermaPct)} %`, `${n2(R.mermaKg)} kg`) + kpi('Carga a planta', `${n2(R.carga)} kg`, 'kilos ÷ (1 − merma)')
       + kpi('Costo estimado de la materia prima', `$ ${n2(T.costo)}`) + (T.nFaltan ? kpi('Materias primas con faltante', `${T.nFaltan} de ${T.nMp}`, `Valor del faltante: $ ${n2(T.costoFaltante)}`, 'warn') : kpi('Existencia', 'Alcanza para todo', `${T.nMp} materias primas`, 'good'))
     : kpi('Kilos a producir', dash, 'sin kilos: solo se muestra la mezcla') + kpi('Materias primas', String(T.nMp));
   const av = (D.avisos || []).map(a => `<div class="aviso ${a.nivel}">${a.nivel === 'warn' ? '⚠ ' : 'ℹ '}${esc(a.txt)}</div>`).join('');
   const per = D.periodo ? ` · producción ${esc(mpreqPeriodoTxt(D.periodo))}` : '';
+  const pl = D.plan && D.plan.filas ? new Map(D.plan.filas.map(x => [x.id, x])) : null;
   const detalle = R.detalle.length
-    ? `<div class="anexo-tit">Fórmulas consideradas y su peso en la mezcla</div><div class="nota-peso"><b>Cómo se calcula.</b> <b>Peso en la mezcla:</b> ${esc(mpreqExplicaPeso(D.modo, R.nFormulas))}. ${esc(mpreqExplicaKg(R.mermaPct))}.</div><table><thead><tr><th>Fórmula</th><th>Tipo</th><th class="n">Peso en la mezcla</th><th class="n">Kg producto terminado</th><th class="n">Kg a planta</th><th class="n">Balance de la fórmula</th></tr></thead><tbody>${R.detalle.map(x => `<tr><td><b>${esc(x.categoria)}</b></td><td>${esc(x.tipo)}</td><td class="n">${n2(x.peso * 100)} %</td><td class="n">${hayKg ? n2(x.kgProducto) : dash}</td><td class="n">${hayKg ? n2(x.kgCarga) : dash}</td><td class="n ${Math.abs(x.balance - 100) < 0.1 ? 'ok' : 'bad'}">${n2(x.balance)} %</td></tr>`).join('')}</tbody></table>`
+    ? `<div class="anexo-tit">Fórmulas consideradas y su peso en la mezcla</div><div class="nota-peso"><b>Cómo se calcula.</b> <b>Peso en la mezcla:</b> ${esc(mpreqExplicaPeso(D.modo, R.nFormulas, !!pl))}. ${esc(mpreqExplicaKg(R.mermaPct, !!pl))}.</div><table><thead><tr><th>Fórmula</th><th>Tipo</th>${pl ? '<th class="n">KG/Mill.</th><th class="n">Millares</th>' : ''}<th class="n">Peso en la mezcla</th><th class="n">Kg producto terminado</th><th class="n">Kg a planta</th><th class="n">Balance de la fórmula</th></tr></thead><tbody>${R.detalle.map(x => { const p = pl && pl.get(x.id); const kf = mpreqKilosFila(R, x, p); return `<tr><td><b>${esc(x.categoria)}</b></td><td>${esc(x.tipo)}</td>${pl ? `<td class="n">${p && p.kgMillar > 0 ? mpreqFmtKgMill(p.kgMillar) : dash}</td><td class="n">${p && p.millares != null ? mpreqFmtMill(p.millares) : dash}</td>` : ''}<td class="n">${n2(x.peso * 100)} %</td><td class="n">${hayKg ? n2(kf.prod) : dash}</td><td class="n">${hayKg ? n2(kf.carga) : dash}</td><td class="n ${Math.abs(x.balance - 100) < 0.1 ? 'ok' : 'bad'}">${n2(x.balance)} %</td></tr>`; }).join('')}</tbody></table>`
     : '';
   const quien = `${esc(frmAhoraTxt())}${D.usuario ? ' · ' + esc(D.usuario) : ''}`;
-  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${mpreqNombreArchivo('pdf').replace(/\.pdf$/, '')}</title><style>${MPREQ_CSS_PDF}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(E.empresa)}</h2><p>RIF: ${esc(E.rif)}</p><p>${esc(E.direccion)}</p>${E.tel ? `<p>Tel: ${esc(E.tel)}</p>` : ''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">Requerimiento de materia prima</div><div class="rep-sub">Cuánta materia prima se necesita para el plan de producción, con la existencia y el costo del Inventario General</div><div class="kpis">${kpis}</div><div class="param"><b>Modo de reparto:</b> ${esc(mpreqModoTxt(D.modo))}${per} — ${esc(mpreqExplicaPeso(D.modo, R.nFormulas))} · <b>Fórmulas:</b> ${esc(mpreqAlcanceTxt(D))} · <b>Emitido:</b> ${quien}</div><table><thead><tr><th class="c">#</th><th>Código</th><th>Materia prima</th><th class="n">% mezcla</th><th class="n">Kg requeridos</th><th class="n">Existencia (kg)</th><th class="n">Faltante (kg)</th><th class="n">Costo U. ($)</th><th class="n">Costo ($)</th><th class="c">Estado</th></tr></thead><tbody>${filas}</tbody>${pie}</table>${av ? `<div class="avisos">${av}</div>` : ''}${detalle}<div class="pie">${esc(MPREQ_NOTA_MEZCLA)} · Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga) · Existencia y costo = Inventario General, consolidados por código · ${esc(E.empresa)}</div></div></div></body></html>`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${mpreqNombreArchivo('pdf').replace(/\.pdf$/, '')}</title><style>${MPREQ_CSS_PDF}</style></head><body><div class="reporte-wrap"><div class="membrete"><div><div class="logo-l1">Supply</div><div class="logo-l2">G&amp;B</div></div><div class="empresa-info"><h2>${esc(E.empresa)}</h2><p>RIF: ${esc(E.rif)}</p><p>${esc(E.direccion)}</p>${E.tel ? `<p>Tel: ${esc(E.tel)}</p>` : ''}</div></div><button class="btn-print" onclick="window.print()">&#128424;&nbsp; IMPRIMIR / GUARDAR PDF</button><div class="contenido"><div class="rep-titulo">Requerimiento de materia prima</div><div class="rep-sub">Cuánta materia prima se necesita para el plan de producción, con la existencia y el costo del Inventario General</div><div class="kpis">${kpis}</div><div class="param"><b>Modo de reparto:</b> ${esc(mpreqModoTxt(D.modo))}${per} — ${esc(mpreqExplicaPeso(D.modo, R.nFormulas, !!D.plan))} · <b>Fórmulas:</b> ${esc(mpreqAlcanceTxt(D))} · <b>Emitido:</b> ${quien}</div><table><thead><tr><th class="c">#</th><th>Código</th><th>Materia prima</th><th class="n">% mezcla</th><th class="n">Kg requeridos</th><th class="n">Existencia (kg)</th><th class="n">Faltante (kg)</th><th class="n">Costo U. ($)</th><th class="n">Costo ($)</th><th class="c">Estado</th></tr></thead><tbody>${filas}</tbody>${pie}</table>${av ? `<div class="avisos">${av}</div>` : ''}${detalle}<div class="pie">${esc(MPREQ_NOTA_MEZCLA)} · Kg requeridos = carga a planta × % mezcla (la suma cuadra exacto con la carga) · Existencia y costo = Inventario General, consolidados por código · ${esc(E.empresa)}</div></div></div></body></html>`;
 };
 
 // Excel (ExcelJS): hoja «Requerimiento» (la tabla de pantalla, con fórmulas vivas para faltante, costo y totales) y hoja «Fórmulas» (peso de cada una en la mezcla).
@@ -24241,6 +24766,7 @@ const mpreqXlsxBuffer = async (D) => {
   const EJ = await ccLoadExcelJS();
   const R = D.R, E = D.empresa || {}, T = R.total;
   const hayKg = R.kilos > 0;
+  const ap = D.plan ? mpreqAProducir(D.plan, R.kilos) : null;
   const INK = 'FF0F172A', ORANGE = 'FFF97316', WHITE = 'FFFFFFFF', GRID = 'FFD1D5DB', SLATE = 'FFF1F5F9', ZEBRA = 'FFF8FAFC', MUTED = 'FF64748B', GREEN = 'FF15803D', RED = 'FFB91C1C', AMBER = 'FFFFFBEB';
   const NF_KG = '#,##0.00', NF_PCT = '0.00"%"', NF_USD = '"$" #,##0.00';
   const fill = a => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: a } });
@@ -24280,7 +24806,7 @@ const mpreqXlsxBuffer = async (D) => {
   put(ws, 3, 1, 7, String(E.direccion || ''), AR(8, MUTED));
   put(ws, 4, 1, 7, 'REQUERIMIENTO DE MATERIA PRIMA', AR(17, ORANGE, true));
   put(ws, 1, 8, 11, 'PRODUCCIÓN  ·  REQUERIMIENTO DE MP', AR(9, 'FFEA580C', true), CENTER).fill = fill(SLATE);
-  put(ws, 2, 8, 11, hayKg ? `KILOS A PRODUCIR:  ${formatNum(R.kilos)} kg` : 'KILOS A PRODUCIR:  —', AR(10, INK, true), CENTER).fill = fill(SLATE);
+  put(ws, 2, 8, 11, hayKg ? (ap && ap.sub ? `A PRODUCIR:  ${ap.corta}` : `KILOS A PRODUCIR:  ${formatNum(R.kilos)} kg`) : 'KILOS A PRODUCIR:  —', AR(10, INK, true), CENTER).fill = fill(SLATE);
   put(ws, 3, 8, 11, hayKg ? `MERMA ${formatNum(R.mermaPct)} %  ·  CARGA A PLANTA:  ${formatNum(R.carga)} kg` : `MERMA ${formatNum(R.mermaPct)} %`, AR(10, INK, true), CENTER).fill = fill(SLATE);
   put(ws, 4, 8, 11, `MODO:  ${mpreqModoTxt(D.modo)}${D.periodo ? '  ·  ' + mpreqPeriodoTxt(D.periodo) : ''}`, AR(9, 'FF475569'), CENTER).fill = fill(SLATE);
   [24, 15, 14, 28].forEach((h, i) => { ws.getRow(i + 1).height = h; });
@@ -24336,24 +24862,32 @@ const mpreqXlsxBuffer = async (D) => {
   });
 
   // ═══ Hoja 2: Fórmulas ═══
-  const NC2 = 6;
+  // Con millares se agregan dos columnas después del tipo: KG/MILL. y MILLARES (sin millares, la hoja queda exactamente como siempre)
+  const pl2 = D.plan && D.plan.filas ? new Map(D.plan.filas.map(x => [x.id, x])) : null;
+  const EX = pl2 ? 2 : 0;
+  const NC2 = 6 + EX;
   const ws2 = mkSheet('Fórmulas', 'FF0891B2', 4);
-  [44, 18, 16, 20, 16, 18].forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
+  [44, 18, ...(pl2 ? [12, 14] : []), 16, 20, 16, 18].forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
   put(ws2, 1, 1, 3, String(E.empresa || ''), AR(14, INK, true)); ws2.getRow(1).height = 22;
   put(ws2, 2, 1, 4, 'REQUERIMIENTO DE MATERIA PRIMA — FÓRMULAS CONSIDERADAS', AR(12, ORANGE, true)); ws2.getRow(2).height = 20;
   put(ws2, 3, 1, NC2, infoTxt, AR(9, MUTED, false, true)); ws2.getRow(3).height = 16;
-  headRow(ws2, 4, ['FÓRMULA', 'TIPO', 'PESO EN LA MEZCLA', 'KG PRODUCTO TERMINADO', 'KG A PLANTA', 'BALANCE DE LA FÓRMULA']);
+  headRow(ws2, 4, ['FÓRMULA', 'TIPO', ...(pl2 ? ['KG/MILL.', 'MILLARES'] : []), 'PESO EN LA MEZCLA', 'KG PRODUCTO TERMINADO', 'KG A PLANTA', 'BALANCE DE LA FÓRMULA']);
   let r2 = 5;
   R.detalle.forEach((x, i) => {
-    const vals = [x.categoria, x.tipo, p6(x.peso * 100), hayKg ? mpreqR2(x.kgProducto) : null, hayKg ? mpreqR2(x.kgCarga) : null, x.balance];
+    const p = pl2 && pl2.get(x.id);
+    const kf = mpreqKilosFila(R, x, p);
+    const vals = [x.categoria, x.tipo, ...(pl2 ? [p && p.kgMillar > 0 ? p.kgMillar : null, p && p.millares != null ? p.millares : null] : []), p6(x.peso * 100), hayKg ? mpreqR2(kf.prod) : null, hayKg ? mpreqR2(kf.carga) : null, x.balance];
     vals.forEach((v, ci) => {
       const col = ci + 1, c = ws2.getCell(r2, col);
+      const extra = EX > 0 && (col === 3 || col === 4);        // KG/MILL. y MILLARES
+      const k = extra ? 0 : (col > 2 ? col - EX : col);          // columna de siempre (1 a 6) sin contar las dos nuevas
       c.value = v;
-      c.font = AR(9, col === 1 ? 'FF6D28D9' : col === 6 ? (Math.abs(x.balance - 100) < 0.1 ? GREEN : RED) : INK, col === 1 || col === 6);
+      c.font = AR(9, k === 1 ? 'FF6D28D9' : k === 6 ? (Math.abs(x.balance - 100) < 0.1 ? GREEN : RED) : INK, k === 1 || k === 6);
       c.fill = fill(i % 2 ? ZEBRA : WHITE); c.border = bd;
       c.alignment = { vertical: 'middle', horizontal: col <= 2 ? 'left' : 'right', indent: 1 };
-      if (col === 3 || col === 6) c.numFmt = NF_PCT;
-      if (col === 4 || col === 5) c.numFmt = NF_KG;
+      if (k === 3 || k === 6) c.numFmt = NF_PCT;
+      if (k === 4 || k === 5) c.numFmt = NF_KG;
+      if (extra) c.numFmt = col === 3 ? '#,##0.00##' : '#,##0.00';
     });
     ws2.getRow(r2).height = 16;
     r2++;
@@ -24361,7 +24895,7 @@ const mpreqXlsxBuffer = async (D) => {
   if (R.detalle.length) ws2.autoFilter = { from: { row: 4, column: 1 }, to: { row: Math.max(r2 - 1, 5), column: NC2 } };
   if (R.detalle.length) {
     r2 += 1;
-    [`PESO EN LA MEZCLA: ${mpreqExplicaPeso(D.modo, R.nFormulas)}.`, `${mpreqExplicaKg(R.mermaPct)}.`].forEach(t => {
+    [`PESO EN LA MEZCLA: ${mpreqExplicaPeso(D.modo, R.nFormulas, !!pl2)}.`, `${mpreqExplicaKg(R.mermaPct, !!pl2)}.`].forEach(t => {
       put(ws2, r2, 1, NC2, t, AR(8, MUTED, false, true), { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true });
       ws2.getRow(r2).height = Math.max(14, Math.ceil(t.length / 140) * 11 + 4);
       r2++;
@@ -24400,6 +24934,7 @@ const MPREQ_ESTADO_CHIP = {
 function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDialog, onClose }) {
   const [modo, setModo] = useState('promedio');
   const [kilosTxt, setKilosTxt] = useState('');
+  const [millTxt, setMillTxt] = useState('');   // millares a producir (bolsas); los kilos se guardan aparte para no confundir las unidades al cambiar de tipo
   const [mermaTxt, setMermaTxt] = useState('5');
   const [tipo, setTipo] = useState('TODOS');
   const [excl, setExcl] = useState(() => new Set());
@@ -24416,28 +24951,35 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
   const incluidas = useMemo(() => delTipo.filter(f => !excl.has(f.id)), [delTipo, excl]);
   const inv = useMemo(() => mpreqInventario(inventory), [inventory]);
   const prod = useMemo(() => (modo === 'producido' ? mpreqProducido(requirements, ordenadas, desde, hasta) : null), [modo, requirements, ordenadas, desde, hasta]);
-  const kgPorId = useMemo(() => {
+  const kgPorId = useMemo(() => {   // kilos producidos en el período por fórmula («Según lo producido»)
     const o = {};
-    if (modo === 'producto') ordenadas.forEach(f => { o[f.id] = Math.max(0, mpreqLeer(kgProd[f.id])); });
-    else if (modo === 'producido' && prod) prod.porFormula.forEach((v, id) => { o[id] = v.kg; });
+    if (modo === 'producido' && prod) prod.porFormula.forEach((v, id) => { o[id] = v.kg; });
     return o;
-  }, [modo, kgProd, prod, ordenadas]);
-  const kilos = modo === 'producto' ? incluidas.reduce((s, f) => s + (kgPorId[f.id] || 0), 0) : mpreqLeer(kilosTxt);
+  }, [modo, prod]);
+  // Bolsas en millares: lo escrito (millares o kilos) pasa a kilos de producto terminado por fórmula (ver mpreqPlan); el resto del cálculo no cambia
+  const unidadTotal = mpreqUnidadTotal(modo, tipo);
+  const usaMillares = mpreqUsaMillares(modo, tipo, delTipo);
+  const plan = useMemo(() => mpreqPlan({ modo, tipo, formulas: incluidas, total: unidadTotal === 'mill' ? millTxt : kilosTxt, porFormula: kgProd, producido: kgPorId }), [modo, tipo, incluidas, unidadTotal, millTxt, kilosTxt, kgProd, kgPorId]);
+  const planPorId = useMemo(() => new Map(plan.filas.map(x => [x.id, x])), [plan]);
+  const kilos = plan.kilos;
   const merma = mpreqLeer(mermaTxt);
-  const pesos = useMemo(() => mpreqPesos(modo, incluidas, kgPorId), [modo, incluidas, kgPorId]);
+  const pesos = plan.pesos;
   const R = useMemo(() => mpreqCalcular({ formulas: incluidas, pesos, kilos, mermaPct: merma, inv }), [incluidas, pesos, kilos, merma, inv]);
+  const aProd = mpreqAProducir(plan, R.kilos);
   const detallePorId = useMemo(() => new Map(R.detalle.map(d => [d.id, d])), [R]);
   const avisos = useMemo(() => mpreqAvisos(R, {
     modo,
     nIncluidas: incluidas.length,
     sinFormulaKg: prod ? prod.sinFormulaKg : 0,
     sinProduccion: modo === 'producido' && prod ? incluidas.filter(f => !((prod.porFormula.get(f.id) || {}).kg > 0)).length : 0,
-    sinKilos: modo === 'producto' ? incluidas.filter(f => !(kgPorId[f.id] > 0)).length : 0,
-  }), [R, modo, prod, incluidas, kgPorId]);
+    sinKilos: modo === 'producto' ? plan.filas.filter(r => !(r.kilos > 0)).length : 0,
+    usaMillares,
+    sinConversion: plan.sinConversion,
+  }), [R, modo, prod, incluidas, plan, usaMillares]);
   const hayKg = R.kilos > 0;
   const listaAbierta = modo === 'producto' || verLista;
 
-  const datosExp = () => ({ R, modo, kilos: R.kilos, mermaPct: R.mermaPct, tipo, nTotal: ordenadas.length, nIncluidas: R.nFormulas, periodo: modo === 'producido' ? { desde, hasta } : null, empresa, usuario, avisos });
+  const datosExp = () => ({ R, modo, kilos: R.kilos, mermaPct: R.mermaPct, tipo, nTotal: ordenadas.length, nIncluidas: R.nFormulas, periodo: modo === 'producido' ? { desde, hasta } : null, empresa, usuario, avisos, plan: usaMillares ? plan : null });
   const bajarExcel = async () => {
     if (exportando) return;
     if (!R.nFormulas) return setDialog({ title: 'Aviso', text: 'No hay nada que exportar: incluya al menos una fórmula con peso en la mezcla.', type: 'alert' });
@@ -24467,7 +25009,7 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
     </div>
   );
   const T = R.total;
-  const descModo = modo === 'promedio'
+  const descModo = usaMillares ? MPREQ_DESC_MODO_MILL[modo](plan.filas.filter(r => r.kgMillar > 0).length) + (modo === 'producto' && delTipo.some(f => mpreqUnidadFormula(f) === 'kg') ? ' Las fórmulas que no son de bolsas (o no tienen dimensiones) se escriben directo en kilos.' : '') : modo === 'promedio'
     ? `Todas las fórmulas incluidas pesan igual${incluidas.length ? ': 100 % ÷ ' + incluidas.length + ' fórmula' + (incluidas.length !== 1 ? 's' : '') + ' = ' + formatNum(100 / incluidas.length) + ' % cada una' : ''}. El % de cada materia prima es el promedio de sus porcentajes en esas fórmulas (la fórmula que no la usa cuenta 0 %).`
     : MPREQ_DESC_MODO[modo];
 
@@ -24477,7 +25019,7 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 pb-4">
           <div>
             <h3 className="text-sm font-black uppercase text-black flex items-center gap-2"><Calculator size={18} className="text-indigo-600" /> Requerimiento de materia prima</h3>
-            <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase">Escriba cuántos kilos va a producir y vea cuánto necesita de cada materia prima, según el porcentaje de las fórmulas</p>
+            <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase">Escriba cuántos millares (bolsas) o cuántos kilos (termoencogible) va a producir y vea cuánto necesita de cada materia prima, según el porcentaje de las fórmulas</p>
           </div>
           <button type="button" data-mpreq="cerrar" onClick={onClose} className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-gray-100 text-gray-600 hover:bg-gray-200 flex items-center gap-1.5 shrink-0"><X size={14} /> Cerrar</button>
         </div>
@@ -24485,13 +25027,36 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
         {ordenadas.length === 0 ? (
           <p data-mpreq="sin-formulas" className="text-sm font-bold text-gray-500">Todavía no hay fórmulas creadas. Cree las fórmulas primero y luego calcule el requerimiento.</p>
         ) : (<>
+          {/* Tipo de producto: las bolsas se escriben en millares; el termoencogible y lo demás, en kilos */}
+          <div data-mpreq="tipo-producto">
+            <label className={lbl}>Tipo de producto</label>
+            <div className="flex flex-wrap gap-2">
+              {[['TODOS', ordenadas.length], ...tipos].map(([k, n]) => (
+                <button key={k} type="button" data-mpreq={'tipo-' + k} onClick={() => setTipo(k)} className={chip(tipo === k)}>{mpreqTipoRotulo(k, modo)} <span className="opacity-70">{n}</span></button>
+              ))}
+            </div>
+          </div>
+
           {/* Parámetros */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-start">
             <div>
-              <label className={lbl}>Kilos a producir (producto terminado)</label>
+              <label className={lbl}>{usaMillares ? (modo === 'producto' ? 'A producir (producto terminado)' : 'Millares a producir (producto terminado)') : 'Kilos a producir (producto terminado)'}</label>
               {modo === 'producto' ? (
-                <div data-mpreq="kilos-total" className="w-full border-2 border-gray-100 bg-gray-50 rounded-xl p-3 font-black text-lg text-gray-700 tabular-nums">{formatNum(kilos)} kg <span className="block text-[9px] font-bold text-gray-400 uppercase">suma de los kilos de cada producto</span></div>
-              ) : (<>
+                <div data-mpreq="kilos-total" className="w-full border-2 border-gray-100 bg-gray-50 rounded-xl p-3 font-black text-lg text-gray-700 tabular-nums">{aProd.grande}{aProd.sub ? <span data-mpreq="a-producir-sub" className="block text-xs font-black text-blue-700 normal-case">{aProd.sub}</span> : null} <span className="block text-[9px] font-bold text-gray-400 uppercase">{usaMillares ? 'suma de lo escrito en cada producto, pasado a kilos' : 'suma de los kilos de cada producto'}</span></div>
+              ) : unidadTotal === 'mill' ? (<>
+                <input data-mpreq="millares" type="text" inputMode="decimal" value={millTxt} placeholder="Ej: 1.000"
+                  onChange={e => setMillTxt(mpreqSoloNum(e.target.value))}
+                  onBlur={() => setMillTxt(mpreqFmtInput(mpreqLeer(millTxt)))}
+                  onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                  className="w-full border-2 border-gray-200 rounded-xl p-3 font-black text-lg outline-none focus:border-indigo-500 tabular-nums" />
+                <div className="flex gap-1.5 mt-2 flex-wrap">
+                  {[500, 1000, 2000, 5000].map(n => (
+                    <button key={n} type="button" data-mpreq={'millares-' + n} onClick={() => setMillTxt(mpreqFmtInput(n))}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-gray-100 text-gray-600 hover:bg-indigo-100 hover:text-indigo-700 tabular-nums">{mpreqFmtInput(n)}</button>
+                  ))}
+                </div>
+                <p data-mpreq="mill-a-kg" className="text-[11px] font-black text-blue-700 mt-2">{plan.kilos > 0 ? `= ${formatNum(plan.kilos)} kg de producto terminado` : 'Se pasa a kilos con el KG/Mill. de cada fórmula'}</p>
+              </>) : (<>
                 <input data-mpreq="kilos" type="text" inputMode="decimal" value={kilosTxt} placeholder="Ej: 60.000"
                   onChange={e => setKilosTxt(mpreqSoloNum(e.target.value))}
                   onBlur={() => setKilosTxt(mpreqFmtInput(mpreqLeer(kilosTxt)))}
@@ -24563,9 +25128,6 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
               <span className="text-[10px] font-black text-gray-500 uppercase mr-1">Fórmulas</span>
-              {[['TODOS', ordenadas.length], ...tipos].map(([k, n]) => (
-                <button key={k} type="button" data-mpreq={'tipo-' + k} onClick={() => setTipo(k)} className={chip(tipo === k)}>{k === 'TODOS' ? 'Todas' : k} <span className="opacity-70">{n}</span></button>
-              ))}
               <span data-mpreq="incluidas" className="text-[10px] font-bold text-gray-500 ml-2">{incluidas.length} de {delTipo.length} incluidas</span>
               <button type="button" data-mpreq="marcar-todas" onClick={() => marcar(true)} className="text-[10px] font-black uppercase text-indigo-600 hover:underline ml-1">Marcar todas</button>
               <button type="button" data-mpreq="quitar-todas" onClick={() => marcar(false)} className="text-[10px] font-black uppercase text-gray-500 hover:underline">Quitar todas</button>
@@ -24584,9 +25146,12 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
                         <th className="px-3 py-2 w-8"></th>
                         <th className="px-3 py-2">Fórmula</th>
                         <th className="px-3 py-2">Tipo</th>
-                        {modo === 'producto' && <th className="px-3 py-2 text-right">Kilos de este producto</th>}
+                        {usaMillares && <th className="px-3 py-2 text-right" title="KG/Mill. = (Ancho + Fuelle) × Largo × Micras, el mismo cálculo de la pantalla de Fórmulas">KG/Mill.</th>}
+                        {modo === 'producto' && <th className="px-3 py-2 text-right">{!usaMillares ? 'Kilos de este producto' : (delTipo.every(f => mpreqUnidadFormula(f) === 'mill') ? 'Millares a producir' : 'A producir (millares o kg)')}</th>}
                         {modo === 'producido' && <th className="px-3 py-2 text-right">Producido en el período</th>}
-                        <th className="px-3 py-2 text-right" title={'Peso en la mezcla: ' + mpreqExplicaPeso(modo, R.nFormulas)}>Peso en la mezcla</th>
+                        {usaMillares && modo !== 'producto' && <th className="px-3 py-2 text-right">Millares</th>}
+                        {usaMillares && <th className="px-3 py-2 text-right">Kilos de producto terminado</th>}
+                        <th className="px-3 py-2 text-right" title={'Peso en la mezcla: ' + mpreqExplicaPeso(modo, R.nFormulas, usaMillares)}>Peso en la mezcla</th>
                         <th className="px-3 py-2 text-right">Balance</th>
                       </tr>
                     </thead>
@@ -24596,20 +25161,30 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
                         const d = detallePorId.get(f.id);
                         const bal = (f.ingredientes || []).reduce((s, x) => s + mpreqNum(x.pct), 0);
                         const pr = prod && prod.porFormula.get(f.id);
+                        const fp = planPorId.get(f.id);
+                        const kgm = mpreqKgMillar(f);
+                        const uni = mpreqUnidadFormula(f);
+                        const dims = usaMillares && mpreqTipoDe(f) === 'BOLSAS' && (f.ancho || f.largo || f.micras);
+                        const inp = modo === 'producto' ? (
+                          <input data-mpreq={(uni === 'mill' ? 'mill-' : 'kg-') + f.id} type="text" inputMode="decimal" value={kgProd[f.id] == null ? '' : kgProd[f.id]} placeholder="0" disabled={!marcada}
+                            onChange={e => { const v = mpreqSoloNum(e.target.value); setKgProd(p => ({ ...p, [f.id]: v })); }}
+                            onBlur={() => setKgProd(p => ({ ...p, [f.id]: mpreqFmtInput(mpreqLeer(p[f.id])) }))}
+                            className="w-32 border-2 border-gray-200 rounded-lg p-1.5 text-right font-black text-xs outline-none focus:border-indigo-500 tabular-nums disabled:bg-gray-50" />
+                        ) : null;
                         return (
                           <tr key={f.id} data-mpreq-formula={f.categoria} className={`border-t border-gray-100 ${marcada ? '' : 'opacity-50'}`}>
                             <td className="px-3 py-1.5"><input type="checkbox" data-mpreq={'chk-' + f.id} checked={marcada} onChange={() => alternar(f.id)} className="accent-indigo-600 w-4 h-4" /></td>
-                            <td className="px-3 py-1.5 text-[11px] font-black text-gray-800">{f.categoria}</td>
+                            <td className="px-3 py-1.5 text-[11px] font-black text-gray-800">{f.categoria}{dims ? <span className="block text-[9px] font-bold text-gray-400">A: {mpreqNum(f.ancho)}{mpreqNum(f.fuelles) > 0 ? ` · F: ${mpreqNum(f.fuelles)}` : ''} · L: {mpreqNum(f.largo)} · M: {String(f.micras == null ? '' : f.micras)}</span> : null}</td>
                             <td className="px-3 py-1.5 text-[9px] font-black uppercase text-gray-400">{tipoDe(f)}</td>
+                            {usaMillares && <td data-mpreq={'kgmill-' + f.id} className="px-3 py-1.5 text-right text-[11px] font-bold text-gray-600 tabular-nums whitespace-nowrap">{kgm > 0 && uni === 'mill' ? mpreqFmtKgMill(kgm) : '—'}</td>}
                             {modo === 'producto' && (
                               <td className="px-3 py-1.5 text-right">
-                                <input data-mpreq={'kg-' + f.id} type="text" inputMode="decimal" value={kgProd[f.id] == null ? '' : kgProd[f.id]} placeholder="0" disabled={!marcada}
-                                  onChange={e => { const v = mpreqSoloNum(e.target.value); setKgProd(p => ({ ...p, [f.id]: v })); }}
-                                  onBlur={() => setKgProd(p => ({ ...p, [f.id]: mpreqFmtInput(mpreqLeer(p[f.id])) }))}
-                                  className="w-32 border-2 border-gray-200 rounded-lg p-1.5 text-right font-black text-xs outline-none focus:border-indigo-500 tabular-nums disabled:bg-gray-50" />
+                                {usaMillares ? <div className="flex items-center justify-end gap-1.5">{inp}<span className="w-10 text-left text-[9px] font-black uppercase text-gray-400">{uni === 'mill' ? 'mill.' : 'kg'}</span></div> : inp}
                               </td>
                             )}
                             {modo === 'producido' && <td className="px-3 py-1.5 text-right text-[11px] font-bold text-gray-600 tabular-nums">{pr ? `${formatNum(pr.kg)} kg · ${pr.ops} ${pr.ops !== 1 ? 'órdenes' : 'orden'}` : '—'}</td>}
+                            {usaMillares && modo !== 'producto' && <td data-mpreq={'millcalc-' + f.id} className="px-3 py-1.5 text-right text-[11px] font-bold text-gray-600 tabular-nums whitespace-nowrap">{marcada && fp && fp.millares != null ? mpreqFmtMill(fp.millares) : '—'}</td>}
+                            {usaMillares && <td data-mpreq={'kiloscalc-' + f.id} className="px-3 py-1.5 text-right text-[11px] font-bold text-gray-600 tabular-nums whitespace-nowrap">{marcada && fp ? (fp.sinConversion && modo !== 'producto' ? <span className="text-amber-700 text-[9px] font-black uppercase" title="Sin ancho, largo y micras: no se puede pasar de millares a kilos">sin KG/Mill.</span> : (fp.kilos > 0 ? formatNum(fp.kilos) + ' kg' : '—')) : '—'}</td>}
                             <td data-mpreq={'peso-' + f.id} className="px-3 py-1.5 text-right text-[11px] font-black text-indigo-700 tabular-nums">{d ? formatNum(d.peso * 100) + ' %' : '—'}</td>
                             <td className={`px-3 py-1.5 text-right text-[11px] font-black tabular-nums ${Math.abs(bal - 100) < 0.1 ? 'text-emerald-600' : 'text-red-600'}`}>{formatNum(bal)} %</td>
                           </tr>
@@ -24620,12 +25195,13 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
                 </div>
               </div>
             )}
+            {usaMillares && <p data-mpreq="nota-kgmill" className="text-[10px] font-bold text-gray-500 mt-2">KG/Mill. = (Ancho + Fuelle) × Largo × Micras, el mismo cálculo de la pantalla de Fórmulas. {modo === 'producto' ? 'Si una fórmula de bolsas no tiene ancho, largo y micras no se puede pasar de millares a kilos: ese renglón pide los kilos directamente.' : 'Si una fórmula de bolsas no tiene ancho, largo y micras no se puede pasar de millares a kilos y no entra en el cálculo.'}</p>}
           </div>
 
           {/* Resultado */}
           <div className="border-t border-gray-100 pt-6 space-y-4" data-mpreq="resultado">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h4 className="text-xs font-black uppercase text-black">Materia prima necesaria {hayKg ? <span className="text-gray-400 font-bold normal-case">· para {formatNum(R.kilos)} kg de producto terminado</span> : null}</h4>
+              <h4 className="text-xs font-black uppercase text-black">Materia prima necesaria {hayKg ? <span className="text-gray-400 font-bold normal-case">· para {aProd.linea} de producto terminado</span> : null}</h4>
               <div className="flex items-center gap-2">
                 <button type="button" data-mpreq="btn-excel" onClick={bajarExcel} disabled={exportando || !R.nFormulas}
                   className="bg-white border-2 border-emerald-200 text-emerald-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-50 hover:border-emerald-400 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -24652,7 +25228,7 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
             {R.nFormulas > 0 && (<>
               {hayKg ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {kpi('kilos', 'Producto terminado', formatNum(R.kilos) + ' kg', `merma ${formatNum(R.mermaPct)} % = ${formatNum(R.mermaKg)} kg`)}
+                  {kpi('kilos', 'Producto terminado', formatNum(R.kilos) + ' kg', `${plan.conMillares ? mpreqMillTxt(plan.millares) + (plan.kilosDirectos > 0 ? ' + ' + formatNum(plan.kilosDirectos) + ' kg' : '') + ' · ' : ''}merma ${formatNum(R.mermaPct)} % = ${formatNum(R.mermaKg)} kg`)}
                   {kpi('carga', 'Carga a planta', formatNum(R.carga) + ' kg', `${T.nMp} materia${T.nMp !== 1 ? 's' : ''} prima${T.nMp !== 1 ? 's' : ''}`)}
                   {kpi('costo', 'Costo estimado de la MP', '$ ' + formatNum(T.costo), 'con el costo promedio del inventario')}
                   {T.nFaltan > 0
@@ -24660,7 +25236,7 @@ function MpReqPanel({ formulas, inventory, requirements, empresa, usuario, setDi
                     : kpi('faltante', 'Existencia', 'Alcanza para todo', `${T.nMp} materias primas`, 'good')}
                 </div>
               ) : (
-                <p data-mpreq="sin-kilos" className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5">Escriba los kilos a producir para ver cuánta materia prima necesita. Mientras tanto se muestra el % de cada materia prima en la mezcla.</p>
+                <p data-mpreq="sin-kilos" className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-2.5">Escriba {usaMillares ? 'los millares' : 'los kilos'} a producir para ver cuánta materia prima necesita. Mientras tanto se muestra el % de cada materia prima en la mezcla.</p>
               )}
 
               <div className="border border-gray-200 rounded-2xl overflow-hidden">
@@ -32940,6 +33516,11 @@ function App() {
   const [ncFiltEstado, setNcFiltEstado] = useState('TODAS');
   const [showLotePanel, setShowLotePanel] = useState(false);
   const [phaseIngId, setPhaseIngId] = useState('');
+  // Programación del lote en la Solicitud de Insumos: { 'OP|lote': { cant, peso } } = lo que el usuario escribió (si no escribió, se sugiere)
+  const [loteProg, setLoteProg] = useState({});
+  // Reporte de Producción en Proceso: lote que se está viendo con el botón «Ver lote» ({ opId, idx }). Se limpia al cambiar de pestaña.
+  const [verLoteRep, setVerLoteRep] = useState(null);
+  useEffect(() => { setVerLoteRep(null); }, [prodView, activeTab]);
   const [phaseIngQty, setPhaseIngQty] = useState('');
 
   // Simulador Inverso
@@ -35291,7 +35872,13 @@ function App() {
     consumosInternosId:'', consumosInternosNombre:'',
     muestrasClientesId:'', muestrasClientesNombre:'',
     perdidaId:'', perdidaNombre:'',
+    clasifCategorias:{},
   });
+  // ── Clasificación de los insumos de Producción: MP directa vs costo asociado (se configura en «Cuentas Contables de Producción») ──
+  // Químicos, pigmentos y tintas se imputan por costo y cantidad, pero NO suman como kg de materia prima.
+  const prodIxApp = useMemo(()=>prodInvIndex(inventory),[inventory]);
+  const prodCfgMapApp = cuentasProduccionCfg?.clasifCategorias;
+  const kgMpIns = (items)=>prodKgItems(items, prodIxApp, prodCfgMapApp).mp;
   // ── Configuración de Cuentas Contables — Anticipos (Clientes/Proveedores) ────────────────
   // Configurable por si se modifica el Plan de Cuentas, mismo patrón que arriba. Se usa en dos
   // momentos: (1) al REGISTRAR un anticipo sin factura, como contrapartida en vez de CxC/CxP
@@ -35313,9 +35900,17 @@ function App() {
     const u=onSnapshot(doc(db,'settings','produccionCuentasContables'),d=>d.exists()&&setCuentasProduccionCfg(x=>({...x,...d.data()})));
     return()=>u();
   },[]);
+  // Clasificación de categorías (MP directa / costo asociado): lo que se cambia en la ventana vale solo si se pulsa Guardar; Cancelar, ✕ o clic fuera la restauran
+  const clasifSnapRef = useRef(null);
+  const cerrarCuentasProduccion = () => {
+    const s = clasifSnapRef.current; clasifSnapRef.current = null;
+    if (s) setCuentasProduccionCfg(x => { const n = { ...x }; if (s.v === undefined) delete n.clasifCategorias; else n.clasifCategorias = s.v; return n; });
+    setShowCuentasProduccionModal(false);
+  };
   const guardarCuentasProduccion=async()=>{
     try{
       await setDoc(doc(db,'settings','produccionCuentasContables'),cuentasProduccionCfg,{merge:true});
+      clasifSnapRef.current = null;
       setShowCuentasProduccionModal(false);
       setDialog({title:'✅ Guardado',text:'Cuentas contables de Producción guardadas. Aplican a todas las salidas de inventario, incluidas las ya registradas.',type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -36610,9 +37205,9 @@ function App() {
             const batch = currentPhase.batches[bIdx]; 
             setEditingBackup({ reqId, phase, batch: JSON.parse(JSON.stringify(batch)) }); // respaldo para Cancelar
             const restoreForm = { ...initialPhaseForm, date: batch?.date || getTodayDate(), producedKg: batch?.producedKg || '', mermaKg: batch?.mermaKg || '', insumos: batch?.insumos || [] };
-            if(phase === 'extrusion' && batch?.techParams) { restoreForm.operadorExt = batch.techParams.operador || ''; restoreForm.tratado = batch.techParams.tratado || ''; restoreForm.motorExt = batch.techParams.motor || ''; restoreForm.ventilador = batch.techParams.ventilador || ''; restoreForm.jalador = batch.techParams.jalador || ''; restoreForm.zona1 = batch.techParams.zonas?.[0] || ''; restoreForm.zona2 = batch.techParams.zonas?.[1] || ''; restoreForm.zona3 = batch.techParams.zonas?.[2] || ''; restoreForm.zona4 = batch.techParams.zonas?.[3] || ''; restoreForm.zona5 = batch.techParams.zonas?.[4] || ''; restoreForm.zona6 = batch.techParams.zonas?.[5] || ''; restoreForm.cabezalA = batch.techParams.cabezalA || ''; restoreForm.cabezalB = batch.techParams.cabezalB || ''; }
-            if(phase === 'impresion' && batch?.techParams) { restoreForm.operadorImp = batch.techParams.operador || ''; restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || ''; restoreForm.cantColores = batch.techParams.cantColores || ''; restoreForm.relacionImp = batch.techParams.relacion || ''; restoreForm.motorImp = batch.techParams.motor || ''; restoreForm.tensores = batch.techParams.tensores || ''; restoreForm.tempImp = batch.techParams.temp || ''; restoreForm.solvente = batch.techParams.solvente || ''; }
-            if(phase === 'sellado' && batch?.techParams) { restoreForm.operadorSel = batch.techParams.operador || ''; restoreForm.kgRecibidosSel = batch.techParams.kgRecibidos || ''; restoreForm.impresa = batch.techParams.impresa || 'NO'; restoreForm.tipoSello = batch.techParams.tipoSello || 'Sello FC'; restoreForm.tempCabezalA = batch.techParams.tempCabezalA || ''; restoreForm.tempCabezalB = batch.techParams.tempCabezalB || ''; restoreForm.tempPisoA = batch.techParams.tempPisoA || ''; restoreForm.tempPisoB = batch.techParams.tempPisoB || ''; restoreForm.velServo = batch.techParams.velServo || ''; restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.troquelSel = batch.techParams.troquel || ''; }
+            if(phase === 'extrusion' && batch?.techParams) { restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.operadorExt = batch.techParams.operador || ''; restoreForm.tratado = batch.techParams.tratado || ''; restoreForm.motorExt = batch.techParams.motor || ''; restoreForm.ventilador = batch.techParams.ventilador || ''; restoreForm.jalador = batch.techParams.jalador || ''; restoreForm.zona1 = batch.techParams.zonas?.[0] || ''; restoreForm.zona2 = batch.techParams.zonas?.[1] || ''; restoreForm.zona3 = batch.techParams.zonas?.[2] || ''; restoreForm.zona4 = batch.techParams.zonas?.[3] || ''; restoreForm.zona5 = batch.techParams.zonas?.[4] || ''; restoreForm.zona6 = batch.techParams.zonas?.[5] || ''; restoreForm.cabezalA = batch.techParams.cabezalA || ''; restoreForm.cabezalB = batch.techParams.cabezalB || ''; }
+            if(phase === 'impresion' && batch?.techParams) { restoreForm.operadorImp = batch.techParams.operador || ''; restoreForm.kgRecibidosImp = batch.techParams.kgRecibidos || ''; restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.pesoMillarReal = batch.techParams.pesoMillarReal || ''; restoreForm.cantColores = batch.techParams.cantColores || ''; restoreForm.relacionImp = batch.techParams.relacion || ''; restoreForm.motorImp = batch.techParams.motor || ''; restoreForm.tensores = batch.techParams.tensores || ''; restoreForm.tempImp = batch.techParams.temp || ''; restoreForm.solvente = batch.techParams.solvente || ''; }
+            if(phase === 'sellado' && batch?.techParams) { restoreForm.operadorSel = batch.techParams.operador || ''; restoreForm.kgRecibidosSel = batch.techParams.kgRecibidos || ''; restoreForm.pesoMillarReal = batch.techParams.pesoMillarReal || ''; restoreForm.impresa = batch.techParams.impresa || 'NO'; restoreForm.tipoSello = batch.techParams.tipoSello || 'Sello FC'; restoreForm.tempCabezalA = batch.techParams.tempCabezalA || ''; restoreForm.tempCabezalB = batch.techParams.tempCabezalB || ''; restoreForm.tempPisoA = batch.techParams.tempPisoA || ''; restoreForm.tempPisoB = batch.techParams.tempPisoB || ''; restoreForm.velServo = batch.techParams.velServo || ''; restoreForm.millaresProd = batch.techParams.millares || ''; restoreForm.troquelSel = batch.techParams.troquel || ''; }
             setPhaseForm(restoreForm);
             const fbBatch = writeBatch(db); for (let ing of (batch?.insumos || [])) { const item = (inventory || []).find(i => i?.id === ing?.id); if (item) fbBatch.update(getDocRef('inventory', item.id), { stock: (item?.stock || 0) + (ing?.qty || 0) }); } await fbBatch.commit(); 
             currentPhase.batches.splice(bIdx, 1); 
@@ -37621,7 +38216,7 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
             <div className="w-16 h-1 bg-orange-500 mx-auto mt-2 rounded-full"/>
           </div>
           {selectedPortal==='produccion' && (
-            <button onClick={()=>setShowCuentasProduccionModal(true)}
+            <button onClick={()=>{ clasifSnapRef.current = { v: cuentasProduccionCfg?.clasifCategorias }; setShowCuentasProduccionModal(true); }}
               className="absolute top-4 right-4 sm:right-6 flex items-center gap-1.5 bg-white border-2 border-gray-200 hover:border-orange-400 text-gray-600 hover:text-orange-600 px-3 py-2 rounded-xl text-[9px] font-black uppercase shadow-sm transition-colors">
               <Settings2 size={12}/> Configuración de Cuentas Contables
             </button>
@@ -37638,11 +38233,11 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
               </div>
             );
             return (
-              <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowCuentasProduccionModal(false)}>
+              <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={cerrarCuentasProduccion}>
                 <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
                   <div className="flex items-center justify-between">
                     <h3 className="font-black text-lg text-gray-800">⚙️ Cuentas Contables de Producción</h3>
-                    <button onClick={()=>setShowCuentasProduccionModal(false)} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
+                    <button onClick={cerrarCuentasProduccion} className="text-gray-400 hover:text-red-500 font-black text-xl">✕</button>
                   </div>
                   <p className="text-[11px] text-gray-500">Define a qué cuenta va cada tipo de salida de inventario. Se configuran una sola vez y generan el asiento contable automáticamente — Inventario en crédito, y la cuenta correspondiente en débito.</p>
                   <p className="text-[10px] font-black text-gray-500 uppercase pt-1">Inventario por almacén (crédito)</p>
@@ -37655,8 +38250,27 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
                   <CampoCuenta label="Consumos Internos / Averías" campo="consumosInternos" hint="Autoconsumo y avería van a la misma cuenta (tipos AUTOCONSUMO y AVERIA)."/>
                   <CampoCuenta label="Muestras Clientes" campo="muestrasClientes" hint="Muestras entregadas a clientes (tipo MUESTRA)."/>
                   <CampoCuenta label="Pérdida / Merma" campo="perdida" hint="Opcional — si se deja vacío, usa Consumos Internos / Averías."/>
+                  <div className="pt-3 mt-2 border-t-2 border-gray-100" data-testid="clasif-categorias">
+                    <p className="text-[10px] font-black text-gray-500 uppercase">Clasificación de categorías en Producción</p>
+                    <p className="text-[10px] text-gray-400 mt-1 mb-2">Define qué categorías del inventario cuentan como <b>materia prima directa</b> (kg de materia prima, merma y costo por kg de la mezcla) y cuáles son <b>costos asociados</b>: de esas se imputa el costo y la cantidad, pero no suman como kg de materia prima. Si mañana se crea otra categoría aparece aquí; mientras no la clasifique cuenta como costo asociado. Aplica a todos los reportes de producción, también a los lotes ya registrados (se recalculan con las requisiciones); la merma que ya quedó guardada en una fase no cambia.</p>
+                    {prodCategoriasProd(inventory, cuentasProduccionCfg.clasifCategorias).map(cat=>{
+                      const base = prodClasifBase(cat);
+                      const actual = prodClasifCat(cat, cuentasProduccionCfg.clasifCategorias);
+                      return (
+                        <div key={cat} className="flex items-center gap-2 mb-1.5" data-testid={`clasif-fila-${cat}`}>
+                          <span className="flex-1 text-xs font-black text-gray-700 uppercase">{cat}</span>
+                          <select aria-label={`Clasificación de ${cat}`} data-testid={`clasif-sel-${cat}`} value={actual}
+                            onChange={e=>{ const v=e.target.value; setCuentasProduccionCfg(x=>({...x, clasifCategorias:{...(x.clasifCategorias||{}), [cat]:v}})); }}
+                            className={`border-2 rounded-xl px-2 py-1.5 text-[11px] font-black outline-none ${actual==='MP'?'border-red-300 bg-red-50 text-red-700':'border-blue-300 bg-blue-50 text-blue-700'}`}>
+                            <option value="MP">MP directa{base==='MP'?' (predeterminado)':''}</option>
+                            <option value="ASOC">Costo asociado{base==='ASOC'?' (predeterminado)':''}</option>
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
                   <div className="flex gap-2 pt-2">
-                    <button onClick={()=>setShowCuentasProduccionModal(false)} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
+                    <button onClick={cerrarCuentasProduccion} className="bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300">Cancelar</button>
                     <button onClick={guardarCuentasProduccion} className="bg-orange-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-orange-600">Guardar</button>
                   </div>
                 </div>
@@ -42946,7 +43560,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         tel: settings?.empresaTelefono || '',
         usuario: appUser?.name || '',
       };
-      const datosReq = opReqDatos(req, formulas, inventory);
+      const datosReq = opReqDatos(req, formulas, inventory, { inventory, invRequisitions, cfgMap: prodCfgMapApp, idx: prodIxApp });
       const imprimirReq = () => {
         const w = window.open('', '_blank');
         if (!w) return setDialog({ title: 'Aviso', text: 'El navegador bloqueó la ventana del PDF. Permita las ventanas emergentes de este sitio e inténtelo de nuevo.', type: 'alert' });
@@ -57010,6 +57624,22 @@ ${resumen}
     return lotes[activeLoteIndex] || lotes[lotes.length - 1] || { id: 'L-001', nombre: 'Lote 1', extrusion:{batches:[]}, impresion:{batches:[]}, sellado:{batches:[]}, cerrado: false };
   };
 
+  // «KG recibidos» que se propone en Impresión / Sellado: lo que la fase anterior sacó EN ESE LOTE (se recalcula al cambiar de pestaña y al cambiar de lote)
+  const kgRecibidosPrevio = (req, key, idx) => {
+    const reqProd = req.production || {};
+    const delLote = (bs) => (bs||[]).filter(b=>envPtEsReal(b) && Number(b.loteIndex ?? 0) === idx);
+    if (key === 'impresion') {
+      const ekg = delLote(reqProd.extrusion?.batches).reduce((s,b)=>s+parseNum(b.producedKg),0);
+      return { kgRecibidosImp: ekg > 0 ? ekg.toFixed(2) : '' };
+    }
+    if (key === 'sellado') {
+      const impB = delLote(reqProd.impresion?.batches);
+      const ikg = impB.length>0 ? impB.reduce((s,b)=>s+parseNum(b.producedKg),0) : delLote(reqProd.extrusion?.batches).reduce((s,b)=>s+parseNum(b.producedKg),0);
+      return { kgRecibidosSel: ikg > 0 ? ikg.toFixed(2) : '' };
+    }
+    return {};
+  };
+
   const handleCrearNuevoLote = async (req) => {
     const lotes = getLotes(req);
     const n = lotes.length + 1;
@@ -57211,10 +57841,10 @@ ${resumen}
     return <button type="button" data-testid="btn-env-inv" data-estado="pendiente" onClick={()=>handleRecalcInventarioLote(req, loteIdx, bId)} title="Enviar al inventario lo producido en este lote (eliges el almacén)" className={est.on}>{est.txtOn}</button>;
   };
 
-  const handleSavePhaseDirectly = async (req, isClose) => {
+  const handleSavePhaseDirectly = async (req, isClose, omitirAvisoKg) => {
     if (!req) return;
     const prodKg = parseNum(phaseForm?.producedKg);
-    const totalInsumosKg = (phaseForm?.insumos || []).reduce((s, ing) => s + parseNum(ing?.qty), 0);
+    const totalInsumosKg = kgMpIns(phaseForm?.insumos);
 
     // ── Ruta de fases según la fórmula del producto ──
     const _fmla = (formulas||[]).find(f => f.categoria && req.categoria && f.categoria.toUpperCase() === (req.categoria||'').toUpperCase());
@@ -57225,7 +57855,7 @@ ${resumen}
     const _norm = (id)=>String(id||'').replace(/^OP-/i,'').trim();
     const _loteIdxOfReq = (r)=>{ if(Number.isInteger(r.loteIndex)) return r.loteIndex; const m=String(r.loteLabel||r.lote||'').match(/(\d+)/); return m?parseInt(m[1],10)-1:0; };
     const approvedLote = (invRequisitions||[]).filter(r=>_norm(r.opId)===_norm(req.id) && ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status) && _loteIdxOfReq(r)===activeLoteIndex);
-    const mpLoteKg = approvedLote.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>{ const inv=(inventory||[]).find(i=>i.id===it.id); const u=(inv?.unit||'kg').toLowerCase(); if(u.startsWith('mill')||u==='und'||u==='unidad') return ss; return ss+parseNum(it.qty||0); },0),0);
+    const mpLoteKg = approvedLote.reduce((s,r)=>s+kgMpIns(r.items),0);
 
     // ── KG salidos de la fase previa DEL MISMO LOTE (para encadenar) ──
     const kgSalidosFasePrevia = (ph) => {
@@ -57251,6 +57881,24 @@ ${resumen}
 
     if (prodKg === 0 && kgRecibidos === 0 && (phaseForm?.insumos || []).length === 0) {
       return setDialog({ title: 'Aviso', text: 'Ingrese KG producidos y/o insumos consumidos antes de guardar.', type: 'alert' });
+    }
+    // Impresión y Sellado no pueden sacar más kilos de los que reciben (ni más de lo que la fase anterior sacó en este lote): se avisa antes de guardar (corregir o confirmar)
+    if (!omitirAvisoKg && (activePhaseTab === 'impresion' || activePhaseTab === 'sellado')) {
+      const tolKg = (x) => Math.max(0.5, x * 0.005);
+      const kgPrevLote = kgSalidosFasePrevia(activePhaseTab);
+      const yaEnFase = (req.production?.[activePhaseTab]?.batches || []).filter(b => b && b.operator !== 'ALMACÉN (DESPACHO)' && Number(b.loteIndex ?? 0) === activeLoteIndex).reduce((s, b) => s + parseNum(b.producedKg), 0);
+      const faseTxt = activePhaseTab === 'impresion' ? 'Impresión' : 'Sellado';
+      let motivoKg = '';
+      if (kgRecibidos > 0 && prodKg > kgRecibidos + tolKg(kgRecibidos)) motivoKg = `${faseTxt}: va a guardar ${formatNum(prodKg)} kg producidos, pero esta fase solo recibió ${formatNum(kgRecibidos)} kg (${formatNum(prodKg - kgRecibidos)} kg de más).`;
+      else if (kgPrevLote > 0 && yaEnFase + prodKg > kgPrevLote + tolKg(kgPrevLote)) motivoKg = `${faseTxt}: con este registro sumaría ${formatNum(yaEnFase + prodKg)} kg en este lote, pero la fase anterior solo sacó ${formatNum(kgPrevLote)} kg (${formatNum(yaEnFase + prodKg - kgPrevLote)} kg de más).`;
+      if (motivoKg) {
+        return setDialog({
+          title: 'Revise los kilos',
+          text: `${motivoKg} Una fase no puede sacar más kilos de los que recibe. Pulse «Cancelar» para corregir las cifras, o «Confirmar» para guardarlo así: el lote quedará marcado «revisar» en el Reporte de Producción en Proceso.`,
+          type: 'confirm',
+          onConfirm: async () => { await handleSavePhaseDirectly(req, isClose, true); }
+        });
+      }
     }
     try {
       // Usar estructura plana prod.extrusion/impresion/sellado (compatible con todos los reportes)
@@ -57397,8 +58045,8 @@ ${resumen}
     const normOp = (id) => String(id||'').replace(/^OP-/i,'').trim();
     const approvedReqs = (invRequisitions||[]).filter(r=>['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status) && normOp(r.opId)===normOp(req.id));
     const mpKg = approvedReqs.length > 0
-      ? approvedReqs.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>{ const inv=(inventory||[]).find(i=>i.id===it.id); const u=(inv?.unit||'kg').toLowerCase(); if(u.startsWith('mill')||u==='und') return ss; return ss+parseNum(it.qty||0); },0),0)
-      : (extB.reduce((s,b)=>{ const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||0)); },0) || selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0));
+      ? approvedReqs.reduce((s,r)=>s+kgMpIns(r.items),0)
+      : (extB.reduce((s,b)=>{ const ins=kgMpIns(b.insumos); return s+(ins>0?ins:parseNum(b.kgRecibidos||0)); },0) || selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0));
     const kgFinal = lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
     const millFinal = selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
     const mermaTotal = allB.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
@@ -57555,16 +58203,9 @@ ${resumen}
       ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status)
     );
     const mpInyectadaKg = approvedReqsForOP.length > 0
-      ? approvedReqsForOP.reduce((s,r)=>{
-          return s + (r.items||[]).reduce((ss,it)=>{
-            const inv=(inventory||[]).find(i=>i.id===it.id);
-            const unit=(inv?.unit||it.unit||'kg').toLowerCase();
-            if(unit.startsWith('mill')||unit==='und'||unit==='unidad'||unit==='m'||unit==='mts') return ss;
-            return ss + parseNum(it.qty||0);
-          },0);
-        },0)
+      ? approvedReqsForOP.reduce((s,r)=>s + kgMpIns(r.items),0)
       : (extBatches.reduce((s,b)=>{
-          const insumosUsados=(b.insumos||[]).reduce((ss,ing)=>ss+parseNum(ing.qty),0);
+          const insumosUsados=kgMpIns(b.insumos);
           return s+(insumosUsados>0?insumosUsados:parseNum(b.kgRecibidos||b.totalInsumosKg||0));
         },0) || impBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0)
            || selBatches.reduce((s,b)=>s+parseNum(b.kgRecibidos||b.totalInsumosKg||0),0));
@@ -57864,6 +58505,15 @@ ${resumen}
                       {costsMode ? `$${formatNum(totalCostoMP)}` : `${formatNum(totalInsumosKg)} KG`}
                     </td>
                   </tr>
+                  {!costsMode && (() => {
+                    const kOtros = insumosporLoteFinal.reduce((s, ins) => { const i = prodItemInfo({ id: ins.id, qty: ins.qty }, prodIxApp, prodCfgMapApp); return s + (i.esKg && i.clase !== 'MP' && i.qty > 0 ? i.qty : 0); }, 0);
+                    return kOtros > 0 ? (
+                      <tr className="font-black" data-testid="finiquito-otros-insumos">
+                        <td colSpan={3} className="p-3 text-right uppercase text-[10px]">Otros insumos (costos asociados):</td>
+                        <td className="p-3 text-center text-gray-600 text-sm">{formatNum(kOtros)} KG</td>
+                      </tr>
+                    ) : null;
+                  })()}
                 </tfoot>
               </table>
             </div>
@@ -57937,7 +58587,7 @@ ${resumen}
 
                       fasesDelLote.forEach((f, fi) => {
                         const { label, b, colorCls } = f;
-                        const insumosUsados = (b.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                        const insumosUsados = kgMpIns(b.insumos);
                         const kgEntrada = label==='EXTRUSIÓN' && insumosUsados>0 ? insumosUsados : parseNum(b.kgRecibidos||b.totalInsumosKg||0);
                         const pctM = kgEntrada > 0 ? ((parseNum(b.mermaKg)/kgEntrada)*100).toFixed(1) : '0.0';
                         const millBatch = parseNum(b.techParams?.millares||0);
@@ -58479,7 +59129,7 @@ ${resumen}
     approved.forEach(r => (r.items||[]).forEach(it => {
       if(it?.id) allItems[it.id] = (allItems[it.id]||0) + parseNum(it.qty);
     }));
-    const kgTotalOP = Object.values(allItems).reduce((s,v)=>s+v, 0);
+    const kgTotalOP = kgMpIns(approved.flatMap(r => r.items || []));   // solo materia prima directa; químicos, pigmentos, tintas… son costos asociados
 
     if(approved.length === 0) return (
       <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
@@ -58495,7 +59145,9 @@ ${resumen}
     reqsLoteActivo.forEach(r => (r.items||[]).forEach(it => {
       if(it?.id) loteItems[it.id] = (loteItems[it.id]||0) + parseNum(it.qty);
     }));
-    const kgLote = Object.values(loteItems).reduce((s,v)=>s+v,0);
+    const itemsLoteActivo = reqsLoteActivo.flatMap(r => r.items || []);
+    const kgLote = kgMpIns(itemsLoteActivo);   // MP directa del lote: sobre esto se calcula la merma automática, igual que al guardar la fase
+    const kgLoteAsoc = prodKgItems(itemsLoteActivo, prodIxApp, prodCfgMapApp).asoc;
 
     // Batches de la fase pertenecientes al lote activo (estructura plana etiquetada por loteIndex)
     const _batchesFaseLote = (p) => (req.production?.[p]?.batches||[])
@@ -58529,12 +59181,12 @@ ${resumen}
               {approved.map((r,ri)=>{
                 const rItems = {};
                 (r.items||[]).forEach(it=>{ if(it?.id) rItems[it.id]=(rItems[it.id]||0)+parseNum(it.qty); });
-                const rTotal = Object.values(rItems).reduce((s,v)=>s+v,0);
+                const rK = prodKgItems(r.items || [], prodIxApp, prodCfgMapApp), rTotal = rK.mp;
                 return (
                   <div key={r.id} className="bg-gray-800 rounded-lg px-3 py-2">
                     <div className="flex justify-between mb-1">
                       <span className="text-[9px] font-black text-orange-300">Solicitud #{ri+1} · {r.loteLabel || (loteIdxOf(r)!=null?`Lote ${loteIdxOf(r)+1}`:'Lote —')} · {r.date||''}</span>
-                      <span className="text-[8px] text-gray-300 font-bold">{formatNum(rTotal)} KG</span>
+                      <span className="text-[8px] text-gray-300 font-bold">{formatNum(rTotal)} KG{rK.asoc>0?` + ${formatNum(rK.asoc)} KG de costos asociados`:''}</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {Object.entries(rItems).map(([id,qty])=>{
@@ -58561,7 +59213,7 @@ ${resumen}
           <div className="flex items-center justify-between mb-3">
             <p className="text-[9px] font-black uppercase text-orange-400">📦 MP — {lotes.length>1?currentLoteLabel:'Esta OP'}</p>
             <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full ${phaseAlreadyDone?'bg-green-800 text-green-300':'text-blue-300 bg-gray-700'}`}>
-              {phaseAlreadyDone ? '✓ Fase registrada — 0 KG pendientes' : `${formatNum(kgLote)} KG`}
+              {phaseAlreadyDone ? '✓ Fase registrada — 0 KG pendientes' : `${formatNum(kgLote)} KG${kgLoteAsoc>0?` + ${formatNum(kgLoteAsoc)} KG de costos asociados`:''}`}
             </span>
           </div>
           {phaseAlreadyDone ? (
@@ -58665,6 +59317,43 @@ ${resumen}
       const qty = (parseNum(ing.pct)/100) * parseNum(requestedKg);
       return { id: ing.id, qty: parseFloat(qty.toFixed(2)), desc: invItem?.desc || ing.id, pct: ing.pct };
     }).filter(i => i.qty > 0);
+  };
+
+  // Programación de un lote: millares (bolsas) o kilos (termoencogible) que se van a producir en él, peso por millar y carga a planta
+  const loteProgInfo = (req, li) => {
+    const op = prodOpBase(req);
+    const lote = getLotes(req)[li] || {};
+    const k = `${req.id}|${li}`;
+    const t = loteProg[k] || {};
+    const progOtros = prodProgramado(req, li);
+    const pend = Math.max(0, prodRound(op.cantidad - progOtros, 2));
+    const guardado = parseNum(lote.progCant) > 0;
+    const cantTxt = t.cant !== undefined ? t.cant : (guardado ? String(lote.progCant) : (pend > 0 ? String(pend) : ''));
+    const R = prodResumenLotes(req, { idx: prodIxApp, invRequisitions, cfgMap: prodCfgMapApp });
+    const pesoReal = op.esMillar ? prodRound(prodPesoMillarReal(R), 3) : 0;
+    const pesoBase = pesoReal > 0 ? pesoReal : op.pesoMillar;
+    const pesoTxt = t.peso !== undefined ? t.peso : (parseNum(lote.pesoMillar) > 0 ? String(lote.pesoMillar) : (pesoBase > 0 ? String(pesoBase) : ''));
+    const cant = parseNum(cantTxt);
+    const calc = prodCargaLote(op, cant, parseNum(pesoTxt));
+    return { op, k, lote, progOtros, pend, cantTxt, pesoTxt, cant, calc, pesoReal, progTotal: progOtros + (cant > 0 ? cant : 0) };
+  };
+  // «Aplicar receta»: carga la fórmula de la OP para los millares/kilos de ESTE lote (sin cantidad escrita: la carga de toda la OP, como antes)
+  const aplicarRecetaLote = (req, formula, titulo) => {
+    const L = loteProgInfo(req, activeLoteIndex);
+    if (L.cant > 0 && L.op.cantidad > 0 && L.op.esMillar && !(L.calc.cargaKg > 0)) {
+      setDialog({ title: titulo, text: 'No se puede calcular la carga de este lote porque falta el peso por millar. Escríbalo en la tarjeta «Peso por millar (kg)» y vuelva a aplicar la receta (así no se pide por error la receta de toda la OP).', type: 'alert' });
+      return;
+    }
+    if (L.cant > 0 && L.calc.cargaKg > 0) {
+      const items = prodRecetaLote(formula, L.calc.cargaKg).map(x => ({ id: x.id, qty: x.qty }));
+      setPhaseForm({ ...phaseForm, insumos: items });
+      setDialog({ title: titulo, text: `Se pre-cargaron ${items.length} materiales según la receta para ${prodFmtU(L.cant)} ${L.op.esMillar ? 'millares' : 'kg'} de este lote (carga ${formatNum(L.calc.cargaKg)} KG). Ajuste cantidades o agregue materiales si es necesario.`, type: 'alert' });
+      return;
+    }
+    const kgBase = parseNum(req.requestedKg) || 1;
+    const items = applyFormulaToPhase(formula, kgBase);
+    setPhaseForm({ ...phaseForm, insumos: items.map(i => ({ id: i.id, qty: i.qty })) });
+    setDialog({ title: titulo, text: `Se pre-cargaron ${items.length} materiales según la receta (${formatNum(kgBase)} KG base). Ajuste cantidades si es necesario.`, type: 'alert' });
   };
 
   const renderFormulasModule = () => {
@@ -60283,6 +60972,7 @@ ${resumen}
                                 <select value={activeLoteIndex} onChange={e=>{
                                   const idx=parseInt(e.target.value);
                                   setActiveLoteIndex(idx);
+                                  setPhaseForm(pf => ({...pf, ...kgRecibidosPrevio(req, activePhaseTab, idx)}));
                                   if(loteDone(idx)) setDialog({
                                     title:`⚠ Lote ${idx+1} ya registrado`,
                                     text:`El Lote ${idx+1} ya tiene producción registrada${lotes[idx]?.cerrado?' y está cerrado':''}. No registres de nuevo sobre este lote: crea o selecciona el siguiente lote con el botón +. (Si eliminas su registro, el lote vuelve a quedar disponible.)`,
@@ -60401,10 +61091,29 @@ ${resumen}
                               <span className={`font-black uppercase ${l.cerrado?'text-green-700':'text-orange-600'}`}>{l.cerrado?'✓':''} {lbl}{l.fechaCierre?` — ${l.fechaCierre}`:''}</span>
                               {(kgL>0||millL>0)&&<span className="text-gray-500 font-bold">{esTermo?`${formatNum(kgL)} KG`:(millL>0?`${formatNum(millL)} Mill.`:`${formatNum(kgL)} KG`)}</span>}
                               {!l.cerrado&&<span className="text-orange-500 font-bold">EN PROCESO</span>}
+                              {parseNum(l.progCant)>0&&<span className="text-gray-700 font-bold" data-testid={`chip-prog-${li}`}>{formatNum(l.progCant)} {prodEsMillar(req)?'millares':'kg'} programados{parseNum(l.cargaKg)>0?` · carga ${formatNum(l.cargaKg)} kg`:''}</span>}
                               {l.cerrado&&req.productoDestinoId&&renderBtnEnvioInv(req, li, null, 'lista')}
                             </div>);
                           })}
                         </div>)}
+                        {/* Programación de la OP: cuánto se ha repartido entre los lotes (millares o kilos) */}
+                        {(()=>{
+                          const opB = prodOpBase(req);
+                          const pt = prodProgramado(req, -1);
+                          if(!(opB.cantidad>0) || !(pt>0)) return null;
+                          const pend = Math.max(0, opB.cantidad - pt);
+                          const sobre = pt > opB.cantidad + 0.005;
+                          const u = opB.esMillar ? '' : ' kg';
+                          return (
+                            <div className={`mt-2 rounded-xl border-2 px-4 py-2.5 ${sobre?'border-red-300 bg-red-50':'border-blue-600 bg-white'}`} data-testid="prog-op-card">
+                              <div className="flex justify-between items-center gap-3 flex-wrap">
+                                <span className="text-[10px] font-black uppercase tracking-wide text-blue-900">Programación de la OP en {opB.esMillar?'millares':'kilos'}</span>
+                                <span className="text-[11px] font-bold text-gray-700">Programados {formatNum(pt)} de {formatNum(opB.cantidad)}{u} · {sobre?'pasa de lo pedido por':'pendientes por programar'} <b className={sobre?'text-red-600':'text-orange-600'}>{formatNum(sobre?pt-opB.cantidad:pend)}{u}</b></span>
+                              </div>
+                              <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden mt-1.5"><div className={`h-full ${sobre?'bg-red-500':'bg-blue-600'}`} style={{width:`${Math.min(100, pt/opB.cantidad*100)}%`}}/></div>
+                            </div>
+                          );
+                        })()}
                         {/* Estado del lote activo si no está cerrado */}
                         {!activeLote?.cerrado&&(()=>{
                           const loteLbl=lotes[activeLoteIndex]?.nombre||`Lote ${activeLoteIndex+1}`;
@@ -60427,6 +61136,74 @@ ${resumen}
                                     <button onClick={()=>setProdSubMode('fase')} className="text-xs font-black text-gray-500 hover:text-orange-500 underline">Ir directamente a Registro de Fase →</button>
                                   </div>
 
+                                  {/* Millares (bolsas) o kilos (termoencogible) a producir en ESTE lote: la receta se prorratea sobre ellos */}
+                                  {(() => {
+                                    const L = loteProgInfo(req, activeLoteIndex);
+                                    const op = L.op;
+                                    if(!(op.cantidad > 0)) return null;
+                                    const esM = op.esMillar;
+                                    const uL = esM ? 'millares' : 'kg';
+                                    const quick = esM ? [5,10,25,50] : [50,100,250,500];
+                                    const setP = (campo, v) => setLoteProg(p=>({...p, [L.k]: {...(p[L.k]||{}), [campo]: v}}));
+                                    const pendDesp = Math.max(0, op.cantidad - L.progTotal);
+                                    const sobre = L.progTotal > op.cantidad + 0.005;
+                                    const mermaPct = L.calc.cargaKg > 0 ? L.calc.mermaKg / L.calc.cargaKg * 100 : 0;
+                                    const caja = (tid, titulo, valor, sub, cls) => (
+                                      <div className={`flex-1 min-w-[110px] rounded-lg px-2 py-2 text-center border ${cls||'bg-gray-50 border-gray-300'}`} data-testid={tid}>
+                                        <div className="text-[8px] font-black uppercase tracking-wide text-gray-500">{titulo}</div>
+                                        <div className="text-base font-black mt-1 text-gray-900">{valor}</div>
+                                        {sub && <div className="text-[9px] font-bold text-gray-500">{sub}</div>}
+                                      </div>
+                                    );
+                                    const sig = (s) => <div className="flex items-center text-lg font-black text-gray-400">{s}</div>;
+                                    return (
+                                      <div className="bg-white border-2 border-blue-700 rounded-2xl p-4 mb-4 space-y-3" data-testid="lote-prog">
+                                        <div className="flex items-end gap-4 flex-wrap">
+                                          <div>
+                                            <label htmlFor="lote-cant" className="text-[10px] font-black text-blue-900 uppercase block mb-1 tracking-wide">{esM ? 'Millares a producir en este lote' : 'Kilos a producir en este lote (producto terminado)'}</label>
+                                            <input id="lote-cant" data-testid="lote-cant" type="number" step="0.01" min="0" value={L.cantTxt} onChange={e=>setP('cant', e.target.value)}
+                                              className="w-40 border-2 border-blue-300 rounded-xl px-3 py-2 text-xl font-black text-right outline-none focus:border-blue-600" placeholder="0"/>
+                                          </div>
+                                          <div className="flex gap-2 flex-wrap items-center pb-1">
+                                            {quick.map(n=>(
+                                              <button key={n} type="button" data-testid={`lote-rapido-${n}`} onClick={()=>setP('cant', String(n))}
+                                                className={`px-3 py-1.5 rounded-lg border-2 text-[11px] font-black ${L.cant===n?'bg-blue-700 border-blue-700 text-white':'bg-white border-gray-300 text-gray-700 hover:border-blue-400'}`}>{n}</button>
+                                            ))}
+                                            {L.pend>0 && (
+                                              <button type="button" data-testid="lote-rapido-todo" onClick={()=>setP('cant', String(L.pend))}
+                                                className={`px-3 py-1.5 rounded-lg border-2 text-[11px] font-black ${L.cant===L.pend?'bg-blue-700 border-blue-700 text-white':'bg-white border-gray-300 text-gray-700 hover:border-blue-400'}`}>Todo lo pendiente ({formatNum(L.pend)})</button>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <p className="text-[11px] font-bold text-gray-500" data-testid="lote-prog-texto">Pendientes de la OP: {formatNum(L.pend)} {uL}. Con este lote {sobre ? <span className="text-red-600 font-black">se programan {formatNum(L.progTotal)} y la OP pide {formatNum(op.cantidad)}: pasas por {formatNum(L.progTotal-op.cantidad)} (puedes enviar igual, se te pedirá confirmar)</span> : <>quedan {formatNum(pendDesp)} por programar</>}. Programados en los otros lotes: {formatNum(L.progOtros)}.</p>
+                                        <div className="flex items-stretch gap-2 flex-wrap">
+                                          {caja('eq-cant', esM ? 'Cantidad del lote' : 'Kilos del lote', L.cant>0?formatNum(L.cant):'—', esM?'millares':'producto terminado')}
+                                          {esM && sig('×')}
+                                          {esM && (
+                                            <div className="flex-1 min-w-[130px] rounded-lg px-2 py-2 text-center border bg-amber-50 border-amber-300" data-testid="eq-peso">
+                                              <label htmlFor="lote-peso" className="text-[8px] font-black uppercase tracking-wide text-amber-700 block">Peso por millar (kg)</label>
+                                              <input id="lote-peso" data-testid="lote-peso" type="number" step="0.001" min="0" value={L.pesoTxt} onChange={e=>setP('peso', e.target.value)}
+                                                className="w-full text-center text-base font-black bg-white border border-amber-300 rounded-md mt-1 outline-none" placeholder="kg"/>
+                                            </div>
+                                          )}
+                                          {esM && sig('=')}
+                                          {esM && caja('eq-neto', 'Producto neto', L.cant>0&&L.calc.netoKg>0?`${formatNum(L.calc.netoKg)} kg`:'—')}
+                                          {sig('+')}
+                                          {caja('eq-merma', 'Merma estimada', L.cant>0&&L.calc.cargaKg>0?`${formatNum(L.calc.mermaKg)} kg`:'—', L.cant>0&&L.calc.cargaKg>0?`${String(Math.round(mermaPct*10)/10).replace('.',',')} % de la carga`:'')}
+                                          {sig('=')}
+                                          {caja('eq-carga', 'Carga de este lote', L.cant>0&&L.calc.cargaKg>0?`${formatNum(L.calc.cargaKg)} kg`:'—', 'a cargar en planta', 'bg-orange-50 border-orange-500 border-2')}
+                                        </div>
+                                        {esM && (
+                                          <p className="text-[10px] font-bold text-gray-500" data-testid="lote-peso-hint">
+                                            Peso por millar de la OP: {formatNum(op.pesoMillar)} kg{L.pesoReal>0?` · real de los lotes cerrados: ${formatNum(L.pesoReal)} kg`:' · todavía no hay lotes cerrados'}.
+                                            {L.pesoReal>0 && Math.abs(parseNum(L.pesoTxt)-L.pesoReal)>0.0005 && <button type="button" data-testid="lote-peso-real" onClick={()=>setP('peso', String(L.pesoReal))} className="ml-2 underline text-amber-700 font-black">Usar el peso real</button>}
+                                            {op.pesoMillar>0 && Math.abs(parseNum(L.pesoTxt)-op.pesoMillar)>0.0005 && <button type="button" data-testid="lote-peso-op" onClick={()=>setP('peso', String(op.pesoMillar))} className="ml-2 underline text-amber-700 font-black">Usar el de la OP</button>}
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                  {/* Banner: Fórmula disponible para esta OP */}
                                   {/* Banner: Fórmula disponible para esta OP */}
                                   {(() => {
                                     // Coincidencia por palabras (ignora orden y signos): "KIRI - CHUPETA" == "CHUPETA - KIRI"
@@ -60449,12 +61226,7 @@ ${resumen}
                                           <div className="flex flex-wrap gap-2">
                                             {relacionadas.map(f=>(
                                               <button key={f.id} type="button"
-                                                onClick={()=>{
-                                                  const kgBase = parseNum(req.requestedKg)||1;
-                                                  const items = applyFormulaToPhase(f, kgBase);
-                                                  setPhaseForm({...phaseForm, insumos: items.map(i=>({id:i.id,qty:i.qty}))});
-                                                  setDialog({title:`✅ Fórmula aplicada: ${f.categoria}`,text:`Se pre-cargaron ${items.length} materiales según la receta (${formatNum(kgBase)} KG base). Ajuste cantidades si es necesario.`,type:'alert'});
-                                                }}
+                                                onClick={()=>aplicarRecetaLote(req, f, `✅ Fórmula aplicada: ${f.categoria}`)}
                                                 className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-[9px] font-black hover:bg-purple-700 flex items-center gap-1">
                                                 <Beaker size={10}/> {f.categoria}
                                               </button>
@@ -60473,14 +61245,10 @@ ${resumen}
                                             </p>
                                           </div>
                                           <button type="button"
-                                            onClick={()=>{
-                                              const kgBase = parseNum(req.requestedKg)||1;
-                                              const items = applyFormulaToPhase(matchFormula, kgBase);
-                                              setPhaseForm({...phaseForm, insumos: items.map(i=>({id:i.id,qty:i.qty}))});
-                                              setDialog({title:`✅ Fórmula aplicada`,text:`${items.length} materiales pre-cargados para ${formatNum(kgBase)} KG. Puede agregar materiales adicionales.`,type:'alert'});
-                                            }}
+                                            data-testid="btn-aplicar-receta"
+                                            onClick={()=>aplicarRecetaLote(req, matchFormula, '✅ Fórmula aplicada')}
                                             className="bg-purple-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase hover:bg-purple-700 flex items-center gap-1 shadow-md">
-                                            <Beaker size={12}/> APLICAR RECETA
+                                            <Beaker size={12}/> {(()=>{ const L=loteProgInfo(req, activeLoteIndex); return L.op.cantidad>0&&L.cant>0&&L.calc.cargaKg>0 ? `APLICAR RECETA PARA ${prodFmtU(L.cant)} ${L.op.esMillar?'MILLARES':'KG'}` : 'APLICAR RECETA'; })()}
                                           </button>
                                         </div>
                                       </div>
@@ -60507,18 +61275,20 @@ ${resumen}
                                       Materiales a Solicitar
                                       <span className="text-[8px] font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">Almacén ZI</span>
                                       <span className="ml-auto text-[8px] font-black text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-200">
-                                        Para: {getLotes(req)[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`}
+                                        Para: {getLotes(req)[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`}{(()=>{ const L=loteProgInfo(req, activeLoteIndex); return L.op.cantidad>0&&L.cant>0 ? ` · ${prodFmtU(L.cant)} ${L.op.esMillar?'millares':'kg'}` : ''; })()}
                                       </span>
                                     </h5>
                                     {/* Phase-appropriate categories */}
                                     {(()=>{
                                       // Show ALL categories — user selects what is needed for this phase
                                       // Categorías que coinciden exactamente con el inventario
-                                      const ALL_CATS = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      // Las de siempre + cualquier categoría nueva del inventario (menos producto terminado), para clasificarla en la configuración
+                                      const ALL_CATS = prodCategoriasProd(inventory, prodCfgMapApp);
+                                      const _catCanon = {}; ALL_CATS.forEach(c=>{ _catCanon[prodCatKey(c)] = c; });
 
                                       // Consolidate ALL inventory items (prefer ALMACEN ZI stock, show all with stock > 0)
                                       const seen = {};
-                                      (inventory||[]).filter(i => i.activo !== false && ALL_CATS.includes(i.category||'Otros')).forEach(i => {
+                                      (inventory||[]).filter(i => i.activo !== false && _catCanon[prodCatKey(i.category||'Otros')]).forEach(i => {
                                         const rawId = i.id||'';
                                         const alm = (i.almacen || rawId.split('___')[1]?.replace(/-/g,' ') || '').toUpperCase();
                                         const isZI = alm.includes('ZI') || alm === '' || !rawId.includes('___');
@@ -60538,8 +61308,8 @@ ${resumen}
 
                                       // Group by category
                                       const catGroups = {};
-                                      uniqueItems.forEach(i=>{ const c=i.category||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
-                                      const catOrder = ['Materia Prima','Químicos','Tintas','Pigmentos','Semielaborados','Consumibles','Herramientas','Seguridad Industrial','Otros'];
+                                      uniqueItems.forEach(i=>{ const c=_catCanon[prodCatKey(i.category||'Otros')]||'Otros'; if(!catGroups[c])catGroups[c]=[]; catGroups[c].push(i); });
+                                      const catOrder = ALL_CATS;
 
                                       return (
                                         <div className="flex gap-2 mb-3">
@@ -60551,7 +61321,7 @@ ${resumen}
                                                 const items = catGroups[cat] || [];
                                                 if(items.length === 0) return null;
                                                 return (
-                                                  <optgroup key={cat} label={`── ${cat.toUpperCase()} ──`}>
+                                                  <optgroup key={cat} label={`── ${cat.toUpperCase()} · ${prodClasifCat(cat, prodCfgMapApp)==='MP'?'MP DIRECTA':'COSTO ASOCIADO'} ──`}>
                                                     {items.map(i => (
                                                       <option key={i.id} value={i.id}
                                                         disabled={parseNum(i.stock)<=0}>
@@ -60588,15 +61358,18 @@ ${resumen}
                                     {/* Mostrar insumos agrupados por categoría */}
                                     {(()=>{
                                       const ingList = phaseForm.insumos||[];
-                                      const mpList = ingList.filter(ins=>{ const it=(inventory||[]).find(i=>i.id===ins.id); return it?.category==='Materia Prima'||it?.category==='Pigmentos'; });
-                                      const semList = ingList.filter(ins=>{ const it=(inventory||[]).find(i=>i.id===ins.id); return it?.category==='Semielaborados'; });
-                                      const consList = ingList.filter(ins=>{ const it=(inventory||[]).find(i=>i.id===ins.id); return !mpList.includes(ins)&&!semList.includes(ins); });
+                                      // Clasificación configurable (Cuentas Contables de Producción): MP directa vs costos asociados (químicos, pigmentos, tintas…)
+                                      const infoIng = ingList.map(ins=>({ ins, i: prodItemInfo(ins, prodIxApp, prodCfgMapApp) }));
+                                      const esSemi = (x)=>prodCatKey(x.i.cat)==='semielaborados';
+                                      const semList = infoIng.filter(esSemi).map(x=>x.ins);
+                                      const mpList = infoIng.filter(x=>!esSemi(x)&&x.i.clase==='MP').map(x=>x.ins);
+                                      const consList = infoIng.filter(x=>!esSemi(x)&&x.i.clase!=='MP').map(x=>x.ins);
                                       const renderGrp = (list, label, color) => list.length>0&&(
                                         <div key={label} className="mb-2">
                                           <div className={`text-[8px] font-black uppercase px-2 py-0.5 rounded mb-1 ${color}`}>{label}</div>
                                           {list.map((ins,i)=>{
                                             const globalIdx = ingList.indexOf(ins);
-                                            const invItem=(inventory||[]).find(iv=>iv.id===ins.id);
+                                            const invItem=prodInvBuscar(prodIxApp, ins.id);
                                             return <div key={i} className="flex justify-between items-center bg-blue-50 p-2 rounded-lg border border-blue-100 mb-1">
                                               <div><span className="text-xs font-black text-blue-700">{ins.id}</span><span className="text-[9px] text-gray-500 ml-2">{invItem?.desc||''}</span></div>
                                               <span className="text-xs font-black">{formatNum(ins.qty)} {invItem?.unit||'kg'}</span>
@@ -60606,28 +61379,46 @@ ${resumen}
                                         </div>
                                       );
                                       return (<>
-                                        {renderGrp(mpList,'🔴 Materia Prima','bg-red-100 text-red-700')}
+                                        {renderGrp(mpList,'🔴 Materia Prima directa','bg-red-100 text-red-700')}
                                         {renderGrp(semList,'🔄 Semielaborados / Bobinas','bg-indigo-100 text-indigo-700')}
-                                        {renderGrp(consList,'📦 Consumibles / Otros','bg-gray-100 text-gray-600')}
+                                        {renderGrp(consList,'📦 Costos asociados (químicos, pigmentos, tintas, consumibles…)','bg-gray-100 text-gray-600')}
                                         {ingList.length===0&&<div className="text-center text-xs text-gray-400 py-4 font-bold">Agregue materiales a la solicitud</div>}
+                                        {ingList.length>0&&(()=>{ const k=prodKgItems(ingList, prodIxApp, prodCfgMapApp); return (
+                                          <div className="mt-2 flex justify-between items-center bg-gray-900 text-white rounded-lg px-3 py-2 text-[10px] font-black uppercase gap-3 flex-wrap" data-testid="total-solicitar">
+                                            <span>Total a solicitar</span>
+                                            <span>{formatNum(k.mp)} kg de materia prima directa{k.asoc>0?` · ${formatNum(k.asoc)} kg de costos asociados`:''}</span>
+                                          </div>); })()}
                                       </>);
                                     })()}
                                   </div>
 
                                   <div className="flex gap-3 justify-end">
-                                    <button onClick={async ()=>{
+                                    <button data-testid="btn-enviar-solicitud" onClick={async ()=>{
                                       if(!phaseForm.insumos||phaseForm.insumos.length===0) return setDialog({title:'Aviso',text:'Agregue al menos un material.',type:'alert'});
                                       const notes = document.getElementById(`req-notes-${req.id}`)?.value || '';
                                       const newReq = { opId: req.id, phase: activePhaseTab, items: phaseForm.insumos, status:'PENDIENTE', timestamp:Date.now(), date:getTodayDate(), user:appUser?.name||'Planta', notes,
                                         loteIndex: activeLoteIndex,
                                         loteLabel: getLotes(req)[activeLoteIndex]?.nombre || `Lote ${activeLoteIndex+1}`
                                       };
-                                      try {
-                                        await addDoc(getColRef('inventoryRequisitions'), newReq);
-                                        setPhaseForm({...phaseForm, insumos:[]});
-                                        setProdSubMode('fase');
-                                        setDialog({title:'✅ Enviado',text:'Solicitud enviada al Almacén. Apruébela desde Proyección MP.',type:'alert'});
-                                      } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                      const L = loteProgInfo(req, activeLoteIndex);
+                                      const enviar = async ()=>{
+                                        try {
+                                          // Programación del lote (millares o kilos, peso por millar y carga): solo si se indicó una cantidad; primero esto, para que un reintento no duplique la solicitud
+                                          if(L.op.cantidad>0 && L.cant>0){
+                                            const lts0 = getLotes(req); const lts = (lts0.length ? lts0 : [{ id:'L-001', nombre:'Lote 1', extrusion:{batches:[], isClosed:false}, impresion:{batches:[], isClosed:false}, sellado:{batches:[], isClosed:false}, cerrado:false, fechaCreacion:getTodayDate(), creadoPor:appUser?.name||'' }]).map((l,i)=> i===activeLoteIndex ? {...l, progCant: L.cant, ...(L.op.esMillar && L.calc.pesoMillar>0 ? {pesoMillar: L.calc.pesoMillar} : {}), cargaKg: L.calc.cargaKg} : l);
+                                            await updateDoc(getDocRef('requirements', req.id), {'production.lotes': lts});
+                                            setLoteProg(p=>{ const n={...p}; delete n[L.k]; return n; });
+                                          }
+                                          await addDoc(getColRef('inventoryRequisitions'), newReq);
+                                          setPhaseForm({...phaseForm, insumos:[]});
+                                          setProdSubMode('fase');
+                                          setDialog({title:'✅ Enviado',text:'Solicitud enviada al Almacén. Apruébela desde Proyección MP.',type:'alert'});
+                                        } catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
+                                      };
+                                      if(L.op.cantidad>0 && L.cant>0 && L.progOtros + L.cant > L.op.cantidad + 0.005){
+                                        return setDialog({title:'⚠ La programación pasa de lo pedido', text:`Con este lote se programarían ${formatNum(L.progOtros + L.cant)} ${L.op.esMillar?'millares':'kg'} y la OP pide ${formatNum(L.op.cantidad)}. ¿Enviar la solicitud de todas formas?`, type:'confirm', onConfirm: enviar});
+                                      }
+                                      await enviar();
                                     }} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-xs uppercase hover:bg-blue-700 shadow-md flex items-center gap-2"><ArrowRight size={14}/> ENVIAR SOLICITUD A ALMACÉN</button>
                                     <button onClick={()=>setProdSubMode('fase')} className="bg-orange-500 text-white px-6 py-3 rounded-xl font-black text-xs uppercase hover:bg-orange-600 flex items-center gap-2"><Plus size={14}/> REGISTRAR FASE SIN SOLICITUD</button>
                                   </div>
@@ -60667,18 +61458,7 @@ ${resumen}
                                   {fasesConfig.map(([key, label]) => (
                                     <button key={key} onClick={() => {
                                       setActivePhaseTab(key);
-                                      let newForm = {...initialPhaseForm, date: getTodayDate()};
-                                      const reqProd = req.production || {};
-                                      if (key === 'impresion') {
-                                        const ekg = (reqProd.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
-                                        newForm.kgRecibidosImp = ekg > 0 ? ekg.toFixed(2) : '';
-                                      }
-                                      if (key === 'sellado') {
-                                        const impB = reqProd.impresion?.batches||[];
-                                        const ikg = impB.length>0 ? impB.reduce((s,b)=>s+parseNum(b.producedKg),0) : (reqProd.extrusion?.batches||[]).reduce((s,b)=>s+parseNum(b.producedKg),0);
-                                        newForm.kgRecibidosSel = ikg > 0 ? ikg.toFixed(2) : '';
-                                      }
-                                      setPhaseForm(newForm);
+                                      setPhaseForm({...initialPhaseForm, date: getTodayDate(), ...kgRecibidosPrevio(req, key, activeLoteIndex)});
                                     }} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${activePhaseTab===key ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{label}{(req.production||{})[key]?.isClosed ? ' ✓' : (req.production||{})[key]?.skipped ? ' ⊘' : ''}</button>
                                   ))}
                                   <div className="flex gap-2 ml-auto">
@@ -60732,7 +61512,7 @@ ${resumen}
                                         <input type="number" step="0.01" value={phaseForm.producedKg}
                                           onChange={e => {
                                             const kg = e.target.value;
-                                            const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                            const insumosTotal = kgMpIns(phaseForm.insumos);
                                             const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : activePhaseTab === 'sellado' ? parseNum(phaseForm.kgRecibidosSel) : 0;
                                             const autoMerma = kgBase > 0 && parseNum(kg) >= 0 ? Math.max(0, kgBase - parseNum(kg)).toFixed(2) : phaseForm.mermaKg;
                                             setPhaseForm({...phaseForm, producedKg: kg, mermaKg: autoMerma});
@@ -60747,7 +61527,7 @@ ${resumen}
                                           onChange={e => {
                                             const kg = e.target.value;
                                             const kgNum = parseNum(kg);
-                                            const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                            const insumosTotal = kgMpIns(phaseForm.insumos);
                                             const kgBase = insumosTotal > 0 ? insumosTotal : 0;
                                             const autoMerma = kgBase > 0 && kgNum >= 0 ? Math.max(0, kgBase - kgNum).toFixed(2) : phaseForm.mermaKg;
                                             // Calcular millares teóricos automáticamente
@@ -60774,7 +61554,7 @@ ${resumen}
                                             const pesoRealIngresado = parseNum(phaseForm.pesoMillarReal);
                                             const pesoUsado = pesoRealIngresado > 0 ? pesoRealIngresado : kgPorMillar;
                                             const kgCalculado = pesoUsado > 0 ? (millNum * pesoUsado).toFixed(2) : phaseForm.producedKg;
-                                            const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                            const insumosTotal = kgMpIns(phaseForm.insumos);
                                             const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : parseNum(phaseForm.kgRecibidosSel);
                                             const kgFinal = pesoUsado > 0 ? kgCalculado : phaseForm.producedKg;
                                             const autoMerma = kgBase > 0 && parseNum(kgFinal) >= 0 ? Math.max(0, kgBase - parseNum(kgFinal)).toFixed(2) : phaseForm.mermaKg;
@@ -60791,7 +61571,7 @@ ${resumen}
                                               const millNum = parseNum(phaseForm.millaresProd);
                                               if (millNum > 0 && prNum > 0) {
                                                 const kgRecalc = (millNum * prNum).toFixed(2);
-                                                const insumosTotal = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0);
+                                                const insumosTotal = kgMpIns(phaseForm.insumos);
                                                 const kgBase = insumosTotal > 0 ? insumosTotal : activePhaseTab === 'impresion' ? parseNum(phaseForm.kgRecibidosImp) : parseNum(phaseForm.kgRecibidosSel);
                                                 const autoMerma = kgBase > 0 ? Math.max(0, kgBase - parseNum(kgRecalc)).toFixed(2) : phaseForm.mermaKg;
                                                 setPhaseForm({...phaseForm, pesoMillarReal: pr, producedKg: kgRecalc, mermaKg: autoMerma});
@@ -60811,7 +61591,7 @@ ${resumen}
                                     )}
                                     <div>
                                       {(() => {
-                                        const base = (phaseForm.insumos||[]).reduce((s,ing)=>s+parseNum(ing.qty),0) || parseNum(phaseForm.kgRecibidosImp) || parseNum(phaseForm.kgRecibidosSel);
+                                        const base = kgMpIns(phaseForm.insumos) || parseNum(phaseForm.kgRecibidosImp) || parseNum(phaseForm.kgRecibidosSel);
                                         const mermaAuto = parseNum(phaseForm.mermaKg);
                                         const mermaDesglose = parseNum(phaseForm.mermaTroquelTransp)+parseNum(phaseForm.mermaTroquelPigm)+parseNum(phaseForm.mermaTorta);
                                         const pct = base > 0 ? (mermaAuto/base)*100 : 0;
@@ -60929,7 +61709,7 @@ ${resumen}
                                         || extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
                                       const producido = esTermo ? producidoKg : producidoMill;
                                       const mpInyectada = extB.reduce((s,b)=>{
-                                        const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
+                                        const ins=kgMpIns(b.insumos);
                                         return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0));
                                       },0)||impB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
                                       const allB = [...extB.map(b=>({...b})),...impB.map(b=>({...b})),...selB.map(b=>({...b}))];
@@ -61064,6 +61844,40 @@ ${resumen}
 
     // ── HISTORIAL / FINIQUITOS ────────────────────────────────────────
     if (prodView === 'en_proceso') {
+      // ── Reporte de UN lote (botón «Ver lote» del detalle por lote): se ve en pantalla y se imprime solo ──
+      if (verLoteRep) {
+        const reqL = (requirements||[]).find(r => r && r.id === verLoteRep.opId);
+        const RL = reqL ? prodResumenLotes(reqL, { inventory, invRequisitions, cfgMap: prodCfgMapApp, idx: prodIxApp }) : null;
+        const LL = RL ? RL.lotes.find(l => l.idx === verLoteRep.idx) : null;
+        if (reqL && RL && LL) {
+          const empL = {
+            empresa: settings?.empresaRazonSocial || 'SERVICIOS JIRET G&B, C.A.',
+            rif: settings?.empresaRif || settings?.empresaRIF || 'J-412309374',
+            direccion: settings?.empresaDireccion || settings?.direccion || 'AV CIRCUNVALACION NRO 02 C.C EL DIVIDIVI LOCAL G-9 NIVEL PB SECTOR EL TREBOL MARACAIBO-ZULIA',
+            tel: settings?.empresaTelefono || '',
+            usuario: appUser?.name || '',
+          };
+          const DL = opReqDatos(reqL, formulas, inventory);
+          const argsL = { req: reqL, R: RL, L: LL, formulaLineas: (DL.formula && DL.formula.lineas ? DL.formula.lineas : []).map(x => ({ id: x.id, desc: x.desc, pct: x.pct, asoc: prodItemInfo(x, prodIxApp, prodCfgMapApp).clase !== 'MP' })) };
+          const imprimirLote = () => {
+            const w = window.open('', '_blank');
+            if (!w) return setDialog({ title: 'Aviso', text: 'El navegador bloqueó la ventana del PDF. Permita las ventanas emergentes de este sitio e inténtelo de nuevo.', type: 'alert' });
+            try { w.document.write(prodLoteDoc(argsL, empL, {})); w.document.close(); }
+            catch (e) { try { w.close(); } catch (_) {} setDialog({ title: 'Error', text: 'No se pudo generar el PDF: ' + (e && e.message ? e.message : String(e)), type: 'alert' }); }
+          };
+          return (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-200 p-6 space-y-4 animate-in fade-in" data-testid="vista-lote">
+              <div className="flex justify-between items-center gap-3 flex-wrap">
+                <button type="button" data-testid="btn-volver-lote" onClick={() => setVerLoteRep(null)} className="bg-gray-100 px-6 py-2 rounded-xl font-black text-xs uppercase hover:bg-gray-200">Volver al reporte</button>
+                <button type="button" data-testid="btn-imprimir-lote" onClick={imprimirLote} className="bg-black text-white px-8 py-3 rounded-xl flex items-center gap-2 font-black text-xs uppercase shadow-lg hover:bg-gray-800"><Printer size={16} /> Imprimir / Guardar PDF</button>
+              </div>
+              <iframe title={`Reporte del ${LL.nombre} · OP ${DL.numero}`} srcDoc={prodLoteDoc(argsL, empL, { preview: true })}
+                onLoad={e => { try { const d = e.target.contentDocument; if (d && d.body) e.target.style.height = (d.body.scrollHeight + 4) + 'px'; } catch (_) {} }}
+                className="w-full rounded-2xl border border-gray-200 bg-white" style={{ height: 1180 }} />
+            </div>
+          );
+        }
+      }
       const activeOPs = (requirements||[]).filter(r=>r.status==='EN PROCESO');
       const filteredOPs = enProcesoOpFilter === 'TODAS' ? activeOPs : activeOPs.filter(r=>r.id===enProcesoOpFilter);
       return (
@@ -61101,99 +61915,25 @@ ${resumen}
               {filteredOPs.length === 0 ? (
                 <div className="text-center py-12 text-gray-400"><Gauge size={48} className="mx-auto mb-4 opacity-30"/><p className="font-black text-xs uppercase">No hay OPs en proceso</p></div>
               ) : filteredOPs.map(req => {
-                const prod = req.production || {};
-                const norm2 = (id) => String(id||'').replace(/^OP-/i,'').trim();
-                const filterReal = b => b && b.operator!=='ALMACÉN (DESPACHO)'; // accept any valid batch
-
-                // Read batches from FLAT structure (donde se guardan los registros, etiquetados con loteIndex)
-                const allLotes = getLotes(req);
-                let extB, impB, selB;
-                extB=(prod.extrusion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'EXTRUSIÓN'}));
-                impB=(prod.impresion?.batches||[]).filter(filterReal).map(b=>({...b,fase:'IMPRESIÓN'}));
-                selB=(prod.sellado?.batches||[]).filter(filterReal).map(b=>({...b,fase:'SELLADO'}));
-                const allBatches=[...extB,...impB,...selB];
-                const lastB=selB.length>0?selB:impB.length>0?impB:extB;
-
-                // ── MP Inyectada from approved requisitions (authoritative) ──
-                const approvedReqsOP = (invRequisitions||[]).filter(r=>
-                  ['APROBADA','APROBADO','PROCESADA','PROCESADO'].includes(r.status) &&
-                  norm2(r.opId)===norm2(req.id)
-                );
-                const mpInjectada = approvedReqsOP.length > 0
-                  ? approvedReqsOP.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>{
-                      const inv=(inventory||[]).find(i=>i.id===it.id);
-                      const u=(inv?.unit||'kg').toLowerCase();
-                      if(u.startsWith('mill')||u==='und'||u==='unidad'||u==='m'||u==='mts') return ss;
-                      return ss+parseNum(it.qty||0);
-                    },0),0)
-                  : extB.reduce((s,b)=>{ const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0); return s+(ins>0?ins:parseNum(b.kgRecibidos||b.totalInsumosKg||0)); },0);
-
-                // MP por lote = suma de requisiciones aprobadas etiquetadas a ese lote
-                const loteReqMap = {};
-                const _loteIdxReq = (r)=>{ if(Number.isInteger(r.loteIndex)) return r.loteIndex; const m=String(r.loteLabel||r.lote||'').match(/(\d+)/); return m?parseInt(m[1],10)-1:0; };
-                approvedReqsOP.forEach(r=>{
-                  const idx=_loteIdxReq(r);
-                  const kg=(r.items||[]).reduce((s,it)=>{
-                    const inv=(inventory||[]).find(i=>i.id===it.id);
-                    const u=(inv?.unit||'kg').toLowerCase();
-                    if(u.startsWith('mill')||u==='und'||u==='unidad'||u==='m'||u==='mts') return s;
-                    return s+parseNum(it.qty||0);
-                  },0);
-                  loteReqMap[idx]=(loteReqMap[idx]||0)+kg;
-                });
-                const getEntKgForBatch = (b, batchLoteIdx) => {
-                  if(loteReqMap[batchLoteIdx] > 0) return loteReqMap[batchLoteIdx];
-                  const ins=(b?.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);
-                  if(ins > 0) return ins;
-                  const kr = parseNum(b?.kgRecibidos||b?.kgRecibidosImp||b?.kgRecibidosSel||b?.totalInsumosKg||0);
-                  if(kr > 0) return kr;
-                  return mpInjectada > 0 ? mpInjectada : 0;
-                };
-
-                const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
-                const millProd=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-                const mermaTotal=allBatches.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
-                const pctMerma=mpInjectada>0?((mermaTotal/mpInjectada)*100).toFixed(1):'0.0';
-                const esTermo=req.tipoProducto==='TERMOENCOGIBLE';
+                // Resumen por lote: MP directa inyectada, producción, costo (MP + costos asociados, a precio de despacho), merma y avisos «revisar»
+                const RS = prodResumenLotes(req, { inventory, invRequisitions, cfgMap: prodCfgMapApp, idx: prodIxApp });
+                const T = RS.tot;
+                const esTermo = RS.esTermo;
+                const lotesRS = RS.lotes;
+                const mpInjectada = T.mpKg;      // solo materia prima directa (químicos, pigmentos y tintas son «otros costos asociados»)
+                const kgProd = T.kgFinal;
+                const millProd = T.millares;
+                const mermaTotal = T.mermaKg;    // solo con los lotes que ya produjeron (lo despachado a lotes sin producir es «MP en proceso»)
+                const pctMermaTxt = T.mermaPct == null ? '—' : prodPct1(T.mermaPct);
                 const solicitado=esTermo
                   ? (parseNum(req.requestedKg)||parseNum(req.cantidadKg)||parseNum(req.cantidad)||parseNum(req.kgSolicitados))
                   : (parseNum(req.cantidad)||parseNum(req.millares)||parseNum(req.millaresSolicitados)||parseNum(req.requestedMillares));
                 const producido=esTermo?kgProd:millProd;
                 const pctAvance=solicitado>0?Math.min(100,(producido/solicitado)*100):0;
-                // Buscador robusto de ítem de inventario por id o código limpio
-                const findInvItem=(itemId)=>{
-                  let inv=(inventory||[]).find(i=>i.id===itemId);
-                  if(inv) return inv;
-                  const cc=String(itemId||'').split('___')[0].replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-                  return (inventory||[]).find(i=>{
-                    const c=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-                    return c===cc && parseNum(i.cost||0)>0;
-                  }) || (inventory||[]).find(i=>{
-                    const c=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').replace(/-BACKUP$/i,'').replace(/_inv$/i,'').trim();
-                    return c===cc;
-                  });
-                };
-                // Costo MP: preferir lotes; si están en 0, calcular desde requisiciones (+ respaldo costoDespachado)
-                const costoBatchesRep=allBatches.reduce((s,b)=>s+parseNum(b.cost||0),0);
-                const costoReqsRep=approvedReqsOP.reduce((s,r)=>{
-                  let cReq=(r.items||[]).reduce((ss,it)=>ss+parseNum(it.qty||0)*parseNum(findInvItem(it.id)?.cost||0),0);
-                  if(cReq<=0) cReq=parseNum(r.costoDespachado||0);
-                  return s+cReq;
-                },0);
-                const costoMP=costoBatchesRep>0?costoBatchesRep:costoReqsRep;
-                const costoXkg=kgProd>0?costoMP/kgProd:0;
-                const costoXmill=millProd>0?costoMP/millProd:0;
-                // Insumos: primary = approved reqs, fallback = batch insumos
-                const matsConsumidos={};
-                approvedReqsOP.forEach(r=>(r.items||[]).forEach(it=>{
-                  if(it?.id) matsConsumidos[it.id]=(matsConsumidos[it.id]||0)+parseNum(it.qty);
-                }));
-                // Also add from batch insumos if not already in approved reqs (legacy OPs)
-                if(Object.keys(matsConsumidos).length===0) {
-                  allBatches.forEach(b=>(b.insumos||[]).forEach(ing=>{
-                    if(ing?.id) matsConsumidos[ing.id]=(matsConsumidos[ing.id]||0)+parseNum(ing.qty);
-                  }));
-                }
+                const costoXkg = T.costoKg || 0;        // costo por kg y por millar de la OP: solo con los lotes que ya produjeron
+                const costoXmill = T.costoMillar || 0;
+                const nAbiertosConProd = lotesRS.filter(l=>l.conProd && !l.cerrado).length;
+                const lotesRevisar = lotesRS.filter(l=>l.revisar.length>0);
                 return (
                   <div key={req.id} className="border-2 border-orange-200 rounded-2xl overflow-hidden mb-6">
                     {/* Header OP — siempre visible */}
@@ -61224,11 +61964,18 @@ ${resumen}
                     </div>
 
                     {/* KPIs */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-0 border-b border-gray-200 bg-gray-50">
-                      {[['MP Inyectada',formatNum(mpInjectada)+' KG','text-blue-700'],['KG Producidos',formatNum(kgProd)+' KG','text-green-700'],['Merma Total',formatNum(mermaTotal)+' KG ('+pctMerma+'%)','text-red-600'],[esTermo?'KG Final':'Millares Prod.',(esTermo?formatNum(kgProd)+' KG':formatNum(millProd)+' Mill.'),'text-blue-600']].map(([l,v,c],i)=>(
-                        <div key={i} className={`p-4 text-center ${i<3?'border-r border-gray-200':''}`}>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-0 border-b border-gray-200 bg-gray-50" data-testid={`kpis-${req.id}`}>
+                      {[
+                        ['MP Inyectada', formatNum(mpInjectada)+' KG', 'text-blue-700', T.mpEnProceso>0 ? `${formatNum(T.mpEnProceso)} kg en proceso (sin producción aún)` : '', 'text-amber-600'],
+                        ['KG Producidos', formatNum(kgProd)+' KG', 'text-green-700', '', ''],
+                        ['Merma Total', T.mermaPct==null ? '—' : formatNum(mermaTotal)+' KG ('+pctMermaTxt+'%)', 'text-red-600', T.mermaPct==null ? '' : (mermaTotal<0 ? '⚠ negativa: se produjo más de lo inyectado' : 'lotes con producción'), mermaTotal<0 ? 'text-red-600' : 'text-gray-400'],
+                        [esTermo?'KG Final':'Millares Prod.', (esTermo?formatNum(kgProd)+' KG':formatNum(millProd)+' Mill.'), 'text-blue-600', '', ''],
+                        ['Costo Acumulado', T.costoTotal>0 ? '$'+formatNum(T.costoTotal) : '—', 'text-orange-600', T.costoTotal>0 ? (T.costoAsoc>0 ? `MP $${formatNum(T.costoMP)} + asoc. $${formatNum(T.costoAsoc)}` : 'a costo de despacho') : '', 'text-gray-400'],
+                      ].map(([l,v,c,s,sc],i)=>(
+                        <div key={i} className={`p-4 text-center ${i<4?'border-r border-gray-200':''}`}>
                           <div className="text-[9px] font-black text-gray-500 uppercase">{l}</div>
                           <div className={`text-lg font-black ${c}`}>{v}</div>
+                          {s && <div className={`text-[8px] font-bold mt-0.5 ${sc}`}>{s}</div>}
                         </div>
                       ))}
                     </div>
@@ -61236,154 +61983,209 @@ ${resumen}
                     <div className="p-6 space-y-5">
                       {/* Detail sections — visible only when expanded */}
                       {expandedOPs[req.id] && (<>
-                      {/* 1. Desglose de MP consumida */}
-                      {Object.keys(matsConsumidos).length>0 && (
+                      {/* 1. Insumos consumidos: materia prima directa y otros costos asociados (a costo de despacho) */}
+                      {(RS.mats.length>0 || RS.asoc.length>0) && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">1. Insumos Consumidos (MP)</h4>
-                          <table className="w-full text-xs border-collapse">
-                            <thead><tr className="bg-gray-100 text-[9px] font-black uppercase">
-                              <th className="p-2 border text-left">Insumo</th>
-                              <th className="p-2 border text-left">Fase</th>
-                              <th className="p-2 border text-center">KG Usados</th>
-                              <th className="p-2 border text-center">Costo Unit.</th>
-                              <th className="p-2 border text-center">Costo Total</th>
-                            </tr></thead>
-                            <tbody>
-                              {Object.entries(matsConsumidos).map(([id,qty])=>{
-                                const inv=findInvItem(id);
-                                const faseBatches=allBatches.filter(b=>(b.insumos||[]).some(i=>i.id===id)).map(b=>b.fase);
-                                const faseReqs=approvedReqsOP.filter(r=>(r.items||[]).some(i=>i.id===id)).map(r=>String(r.phase||'').toUpperCase());
-                                const fasesUnicas=[...new Set([...faseBatches,...faseReqs].filter(Boolean))].join(', ');
-                                const cu=parseNum(inv?.cost||0);
-                                return (<tr key={id} className="hover:bg-gray-50">
-                                  <td className="p-2 border font-black text-purple-700">{(inv?.displayId||(id||'').split('___')[0])}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
-                                  <td className="p-2 border text-gray-600 text-[9px]">{fasesUnicas}</td>
-                                  <td className="p-2 border text-center font-black text-blue-700">{formatNum(qty)} kg</td>
-                                  <td className="p-2 border text-center font-bold">${formatNum(cu)}</td>
-                                  <td className="p-2 border text-center font-black text-orange-700">${formatNum(qty*cu)}</td>
-                                </tr>);
-                              })}
-                            </tbody>
-                            <tfoot><tr className="bg-gray-100 font-black text-[10px]">
-                              <td colSpan="2" className="p-2 border text-right uppercase">Costo Total MP:</td>
-                              <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} kg</td>
-                              <td className="p-2 border"></td>
-                              <td className="p-2 border text-center text-orange-700">${formatNum(costoMP)}</td>
-                            </tr></tfoot>
-                          </table>
+                          {RS.mats.length>0 && (
+                            <table className="w-full text-xs border-collapse" data-testid={`tabla-mp-${req.id}`}>
+                              <thead><tr className="bg-gray-100 text-[9px] font-black uppercase">
+                                <th className="p-2 border text-left">Insumo</th>
+                                <th className="p-2 border text-left">Fase</th>
+                                <th className="p-2 border text-center">KG Usados</th>
+                                <th className="p-2 border text-center">Costo Unit.</th>
+                                <th className="p-2 border text-center">Costo Total</th>
+                              </tr></thead>
+                              <tbody>
+                                {RS.mats.map(m=>(
+                                  <tr key={m.key} className="hover:bg-gray-50">
+                                    <td className="p-2 border font-black text-purple-700">{m.code}<span className="text-[9px] text-gray-400 font-normal ml-1">{m.desc}</span></td>
+                                    <td className="p-2 border text-gray-600 text-[9px]">{(m.fases||[]).join(', ')}</td>
+                                    <td className="p-2 border text-center font-black text-blue-700">{formatNum(m.qty)} {m.unit}</td>
+                                    <td className="p-2 border text-center font-bold">{m.cu>0?'$'+formatNum(m.cu):'—'}</td>
+                                    <td className="p-2 border text-center font-black text-orange-600">{m.costo>0?'$'+formatNum(m.costo):'—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot><tr className="bg-gray-100 font-black text-[10px]">
+                                <td colSpan="2" className="p-2 border text-right uppercase">Costo Total MP:</td>
+                                <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} kg</td>
+                                <td className="p-2 border"></td>
+                                <td className="p-2 border text-center text-orange-600">${formatNum(T.costoMP)}</td>
+                              </tr></tfoot>
+                            </table>
+                          )}
+                          {RS.asoc.length>0 && (
+                            <div className={RS.mats.length>0?'mt-4':''} data-testid={`otros-costos-${req.id}`}>
+                              <h5 className="text-[9px] font-black uppercase text-gray-600 mb-1">Otros costos asociados <span className="normal-case font-bold text-gray-400">· químicos, pigmentos, tintas… se imputan por costo y cantidad; no cuentan como kg de materia prima</span></h5>
+                              <table className="w-full text-xs border-collapse">
+                                <thead><tr className="bg-gray-100 text-[9px] font-black uppercase">
+                                  <th className="p-2 border text-left">Insumo</th>
+                                  <th className="p-2 border text-left">Categoría</th>
+                                  <th className="p-2 border text-left">Fase</th>
+                                  <th className="p-2 border text-center">Cantidad</th>
+                                  <th className="p-2 border text-center">Costo Unit.</th>
+                                  <th className="p-2 border text-center">Costo Total</th>
+                                </tr></thead>
+                                <tbody>
+                                  {RS.asoc.map(m=>(
+                                    <tr key={m.key} className="hover:bg-gray-50">
+                                      <td className="p-2 border font-black text-purple-700">{m.code}<span className="text-[9px] text-gray-400 font-normal ml-1">{m.desc}</span></td>
+                                      <td className="p-2 border text-gray-600 text-[9px]">{m.cat}</td>
+                                      <td className="p-2 border text-gray-600 text-[9px]">{(m.fases||[]).join(', ')}</td>
+                                      <td className="p-2 border text-center font-black text-blue-700">{formatNum(m.qty)} {m.unit}</td>
+                                      <td className="p-2 border text-center font-bold">{m.cu>0?'$'+formatNum(m.cu):'—'}</td>
+                                      <td className="p-2 border text-center font-black text-orange-600">{m.costo>0?'$'+formatNum(m.costo):'—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot><tr className="bg-gray-100 font-black text-[10px]">
+                                  <td colSpan="5" className="p-2 border text-right uppercase">Total otros costos asociados:</td>
+                                  <td className="p-2 border text-center text-orange-600">${formatNum(T.costoAsoc)}</td>
+                                </tr></tfoot>
+                              </table>
+                            </div>
+                          )}
+                          <p className="text-[9px] text-gray-400 font-bold mt-2">Costo = lo que costó cada material cuando Almacén lo despachó al lote (no el costo actual del inventario).</p>
                         </div>
                       )}
 
-                      {/* 2. Indicadores de costo */}
-                      {costoMP > 0 && (
+                      {/* 2. Indicadores de costo: por millar, por kg y merma SOLO con los lotes que ya produjeron */}
+                      {T.costoTotal > 0 && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">2. Indicadores de Costo</h4>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid={`indicadores-${req.id}`}>
                             {[
-                              ['Costo Total MP','$'+formatNum(costoMP),'text-orange-700'],
-                              ['Costo / KG','$'+formatNum(costoXkg)+' / KG','text-blue-700'],
-                              ...(!esTermo?[['Costo / Millar','$'+formatNum(costoXmill)+' / Mill.','text-purple-700']]:[['KG Prod. Final',formatNum(kgProd)+' KG','text-green-700']]),
-                              ['% Merma',pctMerma+'%',parseFloat(pctMerma)>7?'text-red-600':parseFloat(pctMerma)>5?'text-yellow-600':'text-green-600'],
-                            ].map(([l,v,c],i)=>(
+                              ['Costo Acumulado', '$'+formatNum(T.costoTotal), 'text-orange-600', T.costoAsoc>0 ? `MP $${formatNum(T.costoMP)} + asoc. $${formatNum(T.costoAsoc)}` : 'todo lo despachado a lotes'],
+                              ...(T.costoEnProceso>0 ? [['MP en Proceso', '$'+formatNum(T.costoEnProceso), 'text-amber-600', `${formatNum(T.mpEnProceso)} kg en lotes sin producción`]] : []),
+                              ['Costo / KG', T.costoKg!=null ? '$'+formatNum(T.costoKg)+' / KG' : '—', 'text-blue-700', 'lotes con producción'],
+                              ...(!esTermo?[['Costo / Millar', T.costoMillar!=null ? '$'+formatNum(T.costoMillar)+' / Mill.' : '—', 'text-purple-700', 'lotes con producción']]:[['KG Prod. Final',formatNum(kgProd)+' KG','text-green-700','']]),
+                              ['% Merma', T.mermaPct==null ? '—' : pctMermaTxt+'%', T.mermaPct==null ? 'text-gray-500' : (T.mermaPct<0 || T.mermaPct>7) ? 'text-red-600' : T.mermaPct>5 ? 'text-yellow-600' : 'text-green-600', 'lotes con producción'],
+                            ].map(([l,v,c,s],i)=>(
                               <div key={i} className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
                                 <div className="text-[8px] font-black text-gray-500 uppercase">{l}</div>
                                 <div className={`font-black text-sm mt-0.5 ${c}`}>{v}</div>
+                                {s && <div className="text-[8px] font-bold text-gray-400 mt-0.5">{s}</div>}
                               </div>
                             ))}
                           </div>
+                          {(T.mpEnProceso>0 || T.costoEnProceso>0) && (
+                            <p className="text-[9px] text-amber-700 font-bold mt-2" data-testid={`nota-en-proceso-${req.id}`}>MP en proceso: materia prima ya despachada a lotes que todavía no registran producción ({formatNum(T.mpEnProceso)} kg · ${formatNum(T.costoEnProceso)}). Está en el costo acumulado, pero no entra en el costo por millar, por kg ni en la merma hasta que el lote registre producción.</p>
+                          )}
+                          {nAbiertosConProd>0 && (
+                            <p className="text-[9px] text-gray-500 font-bold mt-1">Incluye {nAbiertosConProd} lote{nAbiertosConProd!==1?'s':''} abierto{nAbiertosConProd!==1?'s':''} con producción: el costo por millar, por kg y la merma pueden cambiar hasta que se cierre{nAbiertosConProd!==1?'n':''}.</p>
+                          )}
                         </div>
                       )}
 
-                      {/* 3. Detalle por lote (una fila por lote) */}
-                      {(extB.length > 0 || impB.length > 0 || selB.length > 0 || approvedReqsOP.length > 0) && (
+                      {/* 3. Detalle por lote: MP inyectada, producción, costo y merma de cada lote (botón «Ver lote» = reporte del lote) */}
+                      {lotesRS.length > 0 && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">3. Detalle por Lote</h4>
-                          <table className="w-full text-xs border-collapse">
+                          <div className="overflow-x-auto">
+                          <table className="w-full text-[11px] border-collapse" data-testid={`tabla-lotes-${req.id}`}>
                             <thead><tr className="bg-gray-800 text-white text-[9px] font-black uppercase">
                               <th className="p-2 border border-gray-700 text-center">Lote</th>
+                              <th className="p-2 border border-gray-700 text-center">Estado</th>
                               <th className="p-2 border border-gray-700 text-center">Fecha</th>
-                              <th className="p-2 border border-gray-700 text-center">MP Recibidos</th>
-                              <th className="p-2 border border-gray-700 text-center">KG Extruidos</th>
+                              <th className="p-2 border border-gray-700 text-center">Programados ({esTermo?'kg':'mill.'})</th>
+                              <th className="p-2 border border-gray-700 text-center">MP Inyectada</th>
+                              {!esTermo && <th className="p-2 border border-gray-700 text-center">KG Extruidos</th>}
                               {!esTermo && <th className="p-2 border border-gray-700 text-center">KG Sellados</th>}
+                              <th className="p-2 border border-gray-700 text-center">{esTermo ? 'KG Prod.' : 'Millares Prod.'}</th>
+                              <th className="p-2 border border-gray-700 text-center">Costo del Lote</th>
+                              <th className="p-2 border border-gray-700 text-center">{esTermo ? 'Costo / KG' : 'Costo / Millar'}</th>
                               <th className="p-2 border border-gray-700 text-center">Merma KG (%)</th>
-                              <th className="p-2 border border-gray-700 text-center">{esTermo ? 'KG Prod.' : 'Millares'}</th>
+                              <th className="p-2 border border-gray-700 text-center no-pdf">Reporte</th>
                             </tr></thead>
                             <tbody>
-                              {(() => {
-                                const loteIdxOfB = (b)=>Number.isInteger(b.loteIndex)?b.loteIndex:0;
-                                const allIdx = [...new Set([...extB,...impB,...selB].map(loteIdxOfB))].sort((a,b)=>a-b);
-                                if(allIdx.length===0) return null;
-                                const rows = [];
-                                allIdx.forEach((idx, pos) => {
-                                  const exL = extB.filter(b=>loteIdxOfB(b)===idx);
-                                  const imL = impB.filter(b=>loteIdxOfB(b)===idx);
-                                  const seL = selB.filter(b=>loteIdxOfB(b)===idx);
-                                  const fecha = (seL[0]||imL[0]||exL[0])?.date || '';
-                                  const kgExtr = exL.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
-                                  const kgSell = seL.reduce((s,b)=>s+parseNum(b.producedKg||0),0);
-                                  const mpRecibidos = getEntKgForBatch(exL[0]||imL[0]||seL[0], idx);
-                                  const kgFinal = esTermo ? kgExtr : (seL.length ? kgSell : (imL.length ? imL.reduce((s,b)=>s+parseNum(b.producedKg||0),0) : kgExtr));
-                                  const mermaLote = mpRecibidos>0 ? Math.max(0, mpRecibidos - kgFinal) : 0;
-                                  const pctM = mpRecibidos>0 ? ((mermaLote/mpRecibidos)*100).toFixed(1) : '0.0';
-                                  const millares = seL.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0) || imL.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
-                                  rows.push(
-                                    <tr key={idx} className={pos%2===0?'bg-white':'bg-gray-50'}>
-                                      <td className="p-2 border text-center font-black text-orange-600">{idx+1}</td>
-                                      <td className="p-2 border text-center text-gray-600 font-bold">{fecha}</td>
-                                      <td className="p-2 border text-center text-blue-700 font-bold">{formatNum(mpRecibidos)} kg</td>
-                                      <td className="p-2 border text-center text-green-700 font-bold">{kgExtr>0?formatNum(kgExtr)+' kg':'—'}</td>
-                                      {!esTermo && <td className="p-2 border text-center text-green-800 font-bold">{kgSell>0?formatNum(kgSell)+' kg':'—'}</td>}
-                                      <td className="p-2 border text-center text-red-600 font-bold">{formatNum(mermaLote)} kg <span className="text-[9px]">({pctM}%)</span></td>
-                                      <td className="p-2 border text-center font-bold text-blue-600">{esTermo ? (kgExtr>0?formatNum(kgExtr)+' KG':'—') : (millares>0?formatNum(millares)+' Mill.':'—')}</td>
-                                    </tr>
-                                  );
-                                });
-                                return rows;
-                              })()}
+                              {lotesRS.map((l, pos) => {
+                                const unitL = esTermo ? l.costoKg : l.costoMillar;
+                                const prodL = esTermo ? l.kgFinal : l.millares;
+                                return (
+                                  <tr key={l.idx} data-testid={`fila-lote-${req.id}-${l.num}`} className={pos%2===0?'bg-white':'bg-gray-50'}>
+                                    <td className="p-2 border text-center font-black text-orange-600">{l.num}{l.revisar.length>0 && <div className="text-[8px] font-black text-red-600 uppercase" title={l.revisar.map(x=>x.texto).join(' · ')}>⚠ revisar</div>}</td>
+                                    <td className="p-2 border text-center font-black">
+                                      {l.cerrado ? <span className="text-green-700">CERRADO{l.fechaCierre?' '+opReqFechaTxt(l.fechaCierre):''}</span> : <span className="text-yellow-600">EN PROCESO</span>}
+                                      {!l.conProd && <div className="text-[8px] font-bold text-gray-400">{l.cerrado ? 'sin producción registrada' : 'sin producción aún'}</div>}
+                                    </td>
+                                    <td className="p-2 border text-center text-gray-600 font-bold">{l.fecha ? opReqFechaTxt(l.fecha) : ''}</td>
+                                    <td className="p-2 border text-center font-bold text-gray-700">{l.prog ? formatNum(l.prog.cant) : '—'}</td>
+                                    <td className="p-2 border text-center text-blue-700 font-bold">{l.mpKg>0 ? formatNum(l.mpKg)+' kg' : '—'}</td>
+                                    {!esTermo && <td className="p-2 border text-center text-green-700 font-bold">{l.kgExt>0 ? formatNum(l.kgExt)+' kg' : '—'}</td>}
+                                    {!esTermo && <td className="p-2 border text-center text-green-800 font-bold">{l.kgSel>0 ? formatNum(l.kgSel)+' kg' : '—'}</td>}
+                                    <td className="p-2 border text-center font-bold text-blue-600">{prodL>0 ? (esTermo ? formatNum(prodL)+' KG' : formatNum(prodL)+' Mill.') : '—'}</td>
+                                    <td className="p-2 border text-center font-black text-orange-600">{l.sinCosto ? '—' : '$'+formatNum(l.costoTotal)}{!l.sinCosto && l.costoAsoc>0 && <div className="text-[8px] font-bold text-gray-400">MP ${formatNum(l.costoMP)} + asoc. ${formatNum(l.costoAsoc)}</div>}</td>
+                                    <td className="p-2 border text-center font-bold text-purple-700">{!l.conProd ? '—' : (l.cerrado ? (unitL!=null ? '$'+formatNum(unitL) : '—') : <span className="text-[9px] text-gray-400 font-bold">al cerrar</span>)}</td>
+                                    <td className="p-2 border text-center font-bold text-red-600">{!l.conProd ? '—' : (l.cerrado ? (l.mermaKg!=null ? <span data-testid={`merma-lote-${req.id}-${l.num}`}>{formatNum(l.mermaKg)} kg <span className="text-[9px]">({prodPct1(l.mermaPct)}%)</span></span> : '—') : <span className="text-[9px] text-gray-400 font-bold">al cerrar</span>)}</td>
+                                    <td className="p-2 border text-center no-pdf"><button type="button" data-testid={`btn-ver-lote-${req.id}-${l.num}`} onClick={()=>setVerLoteRep({opId:req.id, idx:l.idx})} className="bg-gray-800 text-white hover:bg-orange-500 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase">Ver lote</button></td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                             <tfoot>
-                              <tr className="bg-orange-500 text-white font-black text-[10px] uppercase">
-                                <td colSpan="2" className="p-2 text-right">TOTAL:</td>
-                                <td className="p-2 text-center">{formatNum(mpInjectada)} kg</td>
-                                <td className="p-2 text-center">{formatNum(extB.reduce((s,b)=>s+parseNum(b.producedKg||0),0))} kg</td>
-                                {!esTermo && <td className="p-2 text-center">{formatNum(selB.reduce((s,b)=>s+parseNum(b.producedKg||0),0))} kg</td>}
-                                <td className="p-2 text-center">{formatNum(mermaTotal)} kg ({pctMerma}%)</td>
+                              <tr className="bg-orange-500 text-white font-black text-[10px] uppercase" data-testid={`total-lotes-${req.id}`}>
+                                <td colSpan="3" className="p-2 text-right">TOTAL DE LA OP:</td>
+                                <td className="p-2 text-center">{T.progTotal>0 ? (RS.op.cantidad>0 ? formatNum(T.progTotal)+' de '+formatNum(RS.op.cantidad) : formatNum(T.progTotal)) : '—'}</td>
+                                <td className="p-2 text-center">{formatNum(T.mpKg)} kg</td>
+                                {!esTermo && <td className="p-2 text-center">{formatNum(T.kgExt)} kg</td>}
+                                {!esTermo && <td className="p-2 text-center">{formatNum(T.kgSel)} kg</td>}
                                 <td className="p-2 text-center">{esTermo ? formatNum(kgProd)+' KG' : (millProd>0?formatNum(millProd)+' Mill.':'—')}</td>
+                                <td className="p-2 text-center">{T.costoTotal>0 ? '$'+formatNum(T.costoTotal) : '—'}</td>
+                                <td className="p-2 text-center">{(esTermo?T.costoKg:T.costoMillar)!=null ? '$'+formatNum(esTermo?T.costoKg:T.costoMillar) : '—'}</td>
+                                <td className="p-2 text-center">{T.mermaPct==null ? '—' : formatNum(mermaTotal)+' kg ('+pctMermaTxt+'%)'}</td>
+                                <td className="p-2 no-pdf"></td>
                               </tr>
+                              {RS.op.cantidad>0 && (
+                                <tr className="bg-gray-100 font-black text-[10px]" data-testid={`falta-lotes-${req.id}`}>
+                                  <td colSpan={esTermo?9:11} className="p-2 text-right text-gray-700">
+                                    Falta: {T.progTotal>0 && <span>{formatNum(T.pendProg)} {esTermo?'kg':'millares'} por programar · </span>}{formatNum(T.pendProd)} {esTermo?'kg':'millares'} por producir
+                                  </td>
+                                  <td className="p-2 no-pdf"></td>
+                                </tr>
+                              )}
                             </tfoot>
                           </table>
+                          </div>
+                          <p className="text-[9px] text-gray-400 font-bold mt-2">Costo del lote = materia prima + otros costos asociados, a costo de despacho. El costo por {esTermo?'kg':'millar'} y la merma de cada lote se calculan al cerrarlo; el total de la OP usa solo los lotes que ya produjeron.</p>
+                          {lotesRevisar.length>0 && (
+                            <div className="mt-2 rounded-xl p-3 text-[10px] font-bold" style={{border:'1px solid #fca5a5',background:'#fef2f2',color:'#991b1b'}} data-testid={`revisar-${req.id}`}>
+                              <b className="uppercase">Revisar estos lotes:</b>
+                              {lotesRevisar.map(l=>(<div key={l.idx}>· Lote {l.num}: {l.revisar.map(x=>x.texto).join(' · ')}</div>))}
+                            </div>
+                          )}
                         </div>
                       )}
 
-                      {/* 4. Insumos despachados por almacén (from requisitions) */}
-                      {Object.keys(matsConsumidos).length > 0 && (
+                      {/* 4. Insumos despachados por almacén (materia prima y otros costos asociados) */}
+                      {(RS.mats.length>0 || RS.asoc.length>0) && (
                         <div>
                           <h4 className="text-[10px] font-black uppercase text-gray-700 mb-2 border-b pb-1">4. Insumos Despachados a Planta</h4>
                           <table className="w-full text-xs border-collapse">
                             <thead><tr className="bg-gray-100 text-[9px] font-black uppercase">
                               <th className="p-2 border text-left">Material</th>
-                              <th className="p-2 border text-center">KG Despachados</th>
+                              <th className="p-2 border text-center">Clase</th>
+                              <th className="p-2 border text-center">Cantidad Despachada</th>
                               <th className="p-2 border text-center">Costo Unit.</th>
                               <th className="p-2 border text-center">Costo Total</th>
                             </tr></thead>
                             <tbody>
-                              {Object.entries(matsConsumidos).map(([id,qty])=>{
-                                let inv=(inventory||[]).find(i=>i.id===id);
-                                if(!inv){const cc=(id||'').split('___')[0].replace(/-RESTORE$/i,'').trim();inv=(inventory||[]).find(i=>{const xcc=(i.displayId||(i.id||'').split('___')[0]).replace(/-RESTORE$/i,'').trim();return xcc===cc;});}
-                                const cu=parseNum(inv?.cost||0);
-                                return (<tr key={id} className="hover:bg-gray-50">
-                                  <td className="p-2 border font-black text-blue-700">{(id||'').split('___')[0]}<span className="text-[9px] text-gray-400 font-normal ml-1">{inv?.desc||''}</span></td>
-                                  <td className="p-2 border text-center font-black text-blue-700">{formatNum(qty)} kg</td>
-                                  <td className="p-2 border text-center font-bold">${formatNum(cu)}</td>
-                                  <td className="p-2 border text-center font-black text-orange-700">${formatNum(qty*cu)}</td>
-                                </tr>);
-                              })}
+                              {[...RS.mats.map(m=>({...m, clase:'MP'})), ...RS.asoc.map(m=>({...m, clase:'ASOC'}))].map(m=>(
+                                <tr key={m.clase+'|'+m.key} className="hover:bg-gray-50">
+                                  <td className="p-2 border font-black text-blue-700">{m.code}<span className="text-[9px] text-gray-400 font-normal ml-1">{m.desc}</span></td>
+                                  <td className="p-2 border text-center text-[9px] font-black text-gray-600">{m.clase==='MP' ? 'MP directa' : 'Costo asociado'}</td>
+                                  <td className="p-2 border text-center font-black text-blue-700">{formatNum(m.qty)} {m.unit}</td>
+                                  <td className="p-2 border text-center font-bold">{m.cu>0?'$'+formatNum(m.cu):'—'}</td>
+                                  <td className="p-2 border text-center font-black text-orange-600">{m.costo>0?'$'+formatNum(m.costo):'—'}</td>
+                                </tr>
+                              ))}
                             </tbody>
                             <tfoot><tr className="bg-gray-100 font-black text-[10px]">
                               <td className="p-2 border text-right uppercase">Total:</td>
-                              <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} kg</td>
                               <td className="p-2 border"></td>
-                              <td className="p-2 border text-center text-orange-700">${formatNum(Object.entries(matsConsumidos).reduce((s,[id,qty])=>{let inv=(inventory||[]).find(i=>i.id===id);if(!inv){const cc=(id||'').split('___')[0];inv=(inventory||[]).find(i=>(i.displayId||(i.id||'').split('___')[0])===cc);}return s+qty*parseNum(inv?.cost||0);},0))}</td>
+                              <td className="p-2 border text-center text-blue-700">{formatNum(mpInjectada)} kg MP</td>
+                              <td className="p-2 border"></td>
+                              <td className="p-2 border text-center text-orange-600">${formatNum(T.costoTotal)}</td>
                             </tr></tfoot>
                           </table>
                         </div>
@@ -61791,7 +62593,7 @@ ${resumen}
                   if (!extDate.startsWith(selMonth) && !loteDate.startsWith(selMonth)) continue;
 
                   // KG usados = extrusión (insumos reales)
-                  const insumosExt = bExt ? (bExt.insumos||[]).reduce((s,i)=>s+parseNum(i.qty),0) : 0;
+                  const insumosExt = bExt ? kgMpIns(bExt.insumos) : 0;
                   const kgUsados = insumosExt > 0 ? insumosExt : parseNum(bExt?.kgRecibidos || bExt?.totalInsumosKg || 0);
 
                   // KG producidos = última fase
@@ -62255,7 +63057,7 @@ ${resumen}
                 const selB=(prod.sellado?.batches||[]).filter(fr);
                 const allB=[...extB,...impB,...selB];
                 const lastB=selB.length>0?selB:impB.length>0?impB:extB;
-                const mpKg=extB.reduce((s,b)=>{const ins=(b.insumos||[]).reduce((ss,i)=>ss+parseNum(i.qty),0);return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
+                const mpKg=extB.reduce((s,b)=>{const ins=kgMpIns(b.insumos);return s+(ins>0?ins:parseNum(b.kgRecibidos||0));},0)||selB.reduce((s,b)=>s+parseNum(b.kgRecibidos||0),0);
                 const kgProd=lastB.reduce((s,b)=>s+parseNum(b.producedKg),0);
                 const merma=allB.reduce((s,b)=>s+parseNum(b.mermaKg||0),0);
                 const mill=selB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||impB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0)||extB.reduce((s,b)=>s+parseNum(b.techParams?.millares||0),0);
