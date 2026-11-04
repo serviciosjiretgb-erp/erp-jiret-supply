@@ -61,6 +61,113 @@ const bancoFmt   = (n) => _bancoNF.format(Number(n) || 0);
 const bancoDd    = (s) => { if (!s) return '—'; const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
 // Un «Traslado» (de fondo, a caja o transferencia) es plata que SALE de la cuenta: en los totales y en el filtro «Solo Egresos» se cuenta como Egreso.
 const bancoEsTraslado = (m) => !!m && (m.tipo === 'Traslado de Fondo' || m.tipo === 'Traslado Banco→Caja' || m.tipo === 'Transferencia');
+
+// ── Traslado Banco → Caja con rebancarización: UN solo comprobante ──
+// bsOut/usdOut = lo que SALIÓ del banco (a la tasa del banco). montoDestNat = lo que ENTRÓ a la caja en la moneda PROPIA de la caja
+// ('' = entró lo mismo que salió, sin diferencia). tasaCaja = tipo de cambio con el que la caja valora lo recibido ('' = el del banco).
+// Devuelve lo recibido en Bs y en $ y la diferencia (salió − entró) en las dos monedas; difBs/difUSD > 0 es pérdida, < 0 es ganancia.
+const bancoTrasladoCajaCalc = ({ bsOut, usdOut, monedaDest, montoDestNat, tasaBanco, tasaCaja }) => {
+  const n = (x) => { const v = Number(x); return isFinite(v) ? v : 0; };
+  const bsO = n(bsOut), usdO = n(usdOut), tB = n(tasaBanco);
+  const tC = n(tasaCaja) > 0 ? n(tasaCaja) : tB;
+  const destBs = monedaDest === 'BS';
+  const natIn = n(montoDestNat) > 0 ? n(montoDestNat) : (destBs ? bsO : usdO);
+  let bsIn = destBs ? natIn : natIn * tC;
+  let usdIn = destBs ? (tC > 0 ? natIn / tC : 0) : natIn;
+  let difBs = bsO - bsIn, difUSD = usdO - usdIn;
+  if (Math.abs(difBs) < 0.005) { difBs = 0; bsIn = bsO; }
+  if (Math.abs(difUSD) < 0.005) { difUSD = 0; usdIn = usdO; }
+  const pct = Math.max(Math.abs(bsO) > 0 ? Math.abs(difBs) / Math.abs(bsO) : 0, Math.abs(usdO) > 0 ? Math.abs(difUSD) / Math.abs(usdO) : 0) * 100;
+  return { bsOut: bsO, usdOut: usdO, bsIn, usdIn, difBs, difUSD, natIn, tasaCaja: tC, hayDif: difBs !== 0 || difUSD !== 0, pct };
+};
+// Líneas del comprobante único: D Caja · D (pérdida) o H (ganancia) en la cuenta de la diferencia · H Banco. Cuadra en Bs y en $.
+const bancoTrasladoCajaLineas = ({ calc, orig, dest, dif, referencia, concepto, tasa }) => {
+  const base = { nroDoc: referencia || '', concepto, tasa };
+  const L = [{ codigo: dest.cod, cuenta: dest.nom, tipoLinea: 'D', ...base, debeBs: calc.bsIn, haberBs: 0, debeUSD: calc.usdIn, haberUSD: 0 }];
+  const dBs = calc.difBs > 0 ? calc.difBs : 0, dU = calc.difUSD > 0 ? calc.difUSD : 0;
+  const hBs = calc.difBs < 0 ? -calc.difBs : 0, hU = calc.difUSD < 0 ? -calc.difUSD : 0;
+  if (dBs > 0 || dU > 0) L.push({ codigo: dif.cod, cuenta: dif.nom, tipoLinea: 'D', ...base, debeBs: dBs, haberBs: 0, debeUSD: dU, haberUSD: 0 });
+  if (hBs > 0 || hU > 0) L.push({ codigo: dif.cod, cuenta: dif.nom, tipoLinea: 'H', ...base, debeBs: 0, haberBs: hBs, debeUSD: 0, haberUSD: hU });
+  L.push({ codigo: orig.cod, cuenta: orig.nom, tipoLinea: 'H', ...base, debeBs: 0, haberBs: calc.bsOut, debeUSD: 0, haberUSD: calc.usdOut });
+  return L;
+};
+// Cuenta contable por defecto de la diferencia: «Diferencias en compensación (Rebancarización)» del plan de cuentas.
+const bancoCtaDiferenciaDef = (plan) => { const L = plan || []; return L.find((c) => /rebancar/i.test(c.nombre || '')) || L.find((c) => /diferenc.*compensa/i.test(c.nombre || '')) || L.find((c) => String(c.codigo) === '6.2.02.09.005') || null; };
+
+// ── Revisión de montos: ¿el asiento contable ligado a cada movimiento dice lo mismo que el movimiento? (SOLO CONSULTA: no modifica nada) ──
+// Se compara el monto del movimiento con el de la(s) línea(s) del asiento que mueven la cuenta contable del BANCO (no con la primera línea del
+// asiento: en asientos con retenciones u otras líneas, la primera puede ser otra cuenta). Devuelve solo las filas con alguna diferencia.
+const bancoRevisarMontos = ({ movs, todos, asientos, cuentas }) => {
+  const TOL_BS = 0.05, TOL_USD = 0.01;
+  const n = (x) => Number(x) || 0;
+  const lista = asientos || [];
+  const porId = new Map(), porBancoMov = new Map(), porCajaMov = new Map();
+  lista.forEach((a, i) => {
+    if (!a) return;
+    if (a.id != null && !porId.has(a.id)) porId.set(a.id, i);
+    if (a.movimientoBancoId != null && !porBancoMov.has(a.movimientoBancoId)) porBancoMov.set(a.movimientoBancoId, i);
+    if (a.movimientoCajaId != null && !porCajaMov.has(a.movimientoCajaId)) porCajaMov.set(a.movimientoCajaId, i);
+  });
+  // Mismo criterio que usaban las tarjetas: el PRIMER asiento de la lista que cumpla cualquiera de las condiciones.
+  const buscar = (m) => {
+    let mejor;
+    [m.asientoContableId != null ? porId.get(m.asientoContableId) : undefined,
+     m.id != null ? porBancoMov.get(m.id) : undefined, m._docId != null ? porBancoMov.get(m._docId) : undefined,
+     m.id != null ? porCajaMov.get(m.id) : undefined, m._docId != null ? porCajaMov.get(m._docId) : undefined,
+    ].forEach((ix) => { if (ix !== undefined && (mejor === undefined || ix < mejor)) mejor = ix; });
+    return mejor;
+  };
+  const usos = new Map(); // cuántos movimientos (de TODOS) apuntan al mismo asiento
+  (todos || movs || []).forEach((m) => { const ix = buscar(m); if (ix !== undefined) usos.set(ix, (usos.get(ix) || 0) + 1); });
+  const filas = [];
+  let conAsiento = 0, sinAsiento = 0;
+  (movs || []).forEach((m) => {
+    const ix = buscar(m);
+    if (ix === undefined) { sinAsiento++; return; }
+    conAsiento++;
+    const a = lista[ix];
+    const lineas = Array.isArray(a.lineas) ? a.lineas : [];
+    const cuenta = (cuentas || []).find((c) => c.id === m.cuentaId);
+    const esBs = (cuenta ? cuenta.moneda : m.moneda) === 'BS' || !!(cuenta && cuenta.tipoBanco === 'Nacional-Bs');
+    const cod = String((cuenta && (cuenta.cuentaContableCod || String(cuenta.cuentaContable || '').split('·')[0])) || '').trim();
+    const entra = m.tipo === 'Ingreso' || m.tipo === 'Nota de Crédito'; // el banco va al Debe; en todo lo demás (egreso, nota de débito, traslados) al Haber
+    const signo = entra ? 1 : -1;
+    const lb = cod ? lineas.filter((l) => String(l.codigo == null ? '' : l.codigo).trim() === cod) : [];
+    const conLineaBanco = lb.length > 0;
+    let asBs, asUSD;
+    if (conLineaBanco) {
+      asBs = signo * lb.reduce((t, l) => t + n(l.debeBs) - n(l.haberBs), 0);
+      asUSD = signo * lb.reduce((t, l) => t + n(l.debeUSD) - n(l.haberUSD), 0);
+    } else {
+      // Sin línea con la cuenta del banco: se compara con la primera línea del lado que corresponde (lo que usaban las tarjetas antes).
+      const cBs = entra ? 'debeBs' : 'haberBs', cUsd = entra ? 'debeUSD' : 'haberUSD';
+      const lBs = lineas.find((l) => n(l[cBs]) > 0), lUsd = lineas.find((l) => n(l[cUsd]) > 0);
+      asBs = lBs ? n(lBs[cBs]) : 0;
+      asUSD = lUsd ? n(lUsd[cUsd]) : 0;
+    }
+    const movBs = n(m.montoBs), movUSD = n(m.montoUSD);
+    const difBs = asBs - movBs, difUSD = asUSD - movUSD;
+    const sentido = conLineaBanco && (asBs < -TOL_BS || asUSD < -TOL_USD);
+    const difNativa = esBs ? Math.abs(difBs) > TOL_BS : Math.abs(difUSD) > TOL_USD;
+    const difOtra = esBs ? Math.abs(difUSD) > TOL_USD : Math.abs(difBs) > TOL_BS;
+    if (!difNativa && !sentido && !difOtra) return;
+    const soloOtra = !difNativa && !sentido;
+    const obs = [];
+    if (difNativa) obs.push('Monto distinto al del movimiento');
+    else if (soloOtra) obs.push('Solo difiere en ' + (esBs ? '$' : 'Bs.') + ' (tasa del asiento distinta a la del movimiento)');
+    if (sentido) obs.push('El asiento mueve el banco en sentido contrario al tipo del movimiento');
+    if (!lineas.length) obs.push('El asiento no tiene líneas');
+    else if (!conLineaBanco) obs.push('El asiento no tiene una línea con la cuenta contable del banco (' + (cod || 'la cuenta no tiene código contable') + '): se comparó con su primera línea del lado ' + (entra ? 'Debe' : 'Haber'));
+    if ((usos.get(ix) || 0) > 1) obs.push('Este asiento está ligado a ' + usos.get(ix) + ' movimientos');
+    filas.push({
+      m, esBs, soloOtra, movBs, movUSD, asBs, asUSD, difBs, difUSD, obs,
+      cuentaNombre: (cuenta && (cuenta.banco || cuenta.nombre)) || m.cuentaNombre || '—',
+      comprobante: a.comprobante || a.numero || a.id || '—',
+      lineasTxt: lineas.map((l) => (l.codigo || '') + ' ' + (l.cuenta || '') + ': ' + (n(l.debeBs) > 0 || n(l.debeUSD) > 0 ? 'D ' + bancoFmt(l.debeBs) + ' Bs / ' + bancoFmt(l.debeUSD) + ' $' : 'H ' + bancoFmt(l.haberBs) + ' Bs / ' + bancoFmt(l.haberUSD) + ' $')).join(' | '),
+    });
+  });
+  return { revisados: (movs || []).length, conAsiento, sinAsiento, filas };
+};
 const bancoGid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const bancoNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const bancoMesActual = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
@@ -3148,6 +3255,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   const [asientosBanco, setAsientosBanco] = useState(_bf.v.asientosBanco || []);
   // Panel "Corregir Traslados": null = no revisado, [] = revisado sin problemas, [...] = lista
   const [problemasTraslado, setProblemasTraslado] = useState(null);
+  const [revisionMontos, setRevisionMontos] = useState(null); // null (cerrada) | { alcance: 'lista' | 'todos', otra: boolean } — «Revisar asientos» (solo consulta)
   // systemUsers viene de Aplicación.jsx (que sí tiene acceso a la BD correcta)
   // Se mantiene el estado interno para el onSnapshot de respaldo
   const [systemUsersLocal, setSystemUsersLocal] = useState(_bf.v.systemUsersLocal || []);
@@ -3956,7 +4064,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       cerrarCxC:false,facturaId:'',
       ctaContraId:'',ctaContraNombre:'',cuentaAjusteId:'',
       lineasContra:[{ctaId:'',ctaNom:'',debeBs:'',haberBs:'',debeUSD:'',haberUSD:''}],
-      tasaBanco:'',tasaBcv:String(tasaActiva)
+      tasaBanco:'',tasaBcv:String(tasaActiva),montoCaja:'',tasaCaja:''
     });
     const [form, setForm] = useState(initF());
 
@@ -3974,6 +4082,60 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const mNat       = Number(form.montoNativo)||0;
     const montoBs    = bs ? mNat : mNat*tasa;
     const montoUSD   = bs ? mNat/tasa : mNat;
+
+    // ── Traslado Banco → Caja: tasa de banco / tasa de caja y diferencia automática (rebancarización) ──
+    const esTrasladoCaja = form.tipo==='Traslado de Fondo' && destinoEsCaja && !!cuentaSel && !!cuentaDest;
+    const trasladoCaja = esTrasladoCaja ? bancoTrasladoCajaCalc({bsOut:montoBs,usdOut:montoUSD,monedaDest:cuentaDest.moneda,montoDestNat:form.montoCaja,tasaBanco:tasa,tasaCaja:form.tasaCaja}) : null;
+    const ctaDifDef = esTrasladoCaja ? bancoCtaDiferenciaDef(contCuentas) : null;
+    const ctaDifSel = esTrasladoCaja ? ((form.comisionCtaId&&contCuentas.find(c=>c.id===form.comisionCtaId))||ctaDifDef) : null;
+    const renderTrasladoCaja = () => {
+      const tc = trasladoCaja;
+      if(!tc||!cuentaDest) return null;
+      const monBs = cuentaDest.moneda==='BS';
+      const defNat = monBs ? tc.bsOut : tc.usdOut;
+      const gana = tc.difUSD<0||tc.difBs<0;
+      const opcionesDif = contCuentasOrd.filter(c=>c.id===ctaDifSel?.id||/rebancar|diferen|compensa|comis|bancari|financ|cambi/i.test(c.nombre||''));
+      return (
+        <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 mt-3" data-tcaja="bloque">
+          <p className="text-[10px] font-black uppercase text-amber-800 mb-2">Traslado a {cuentaDest.banco} · tasa de banco, tasa de caja y diferencia (rebancarización)</p>
+          <div className="grid grid-cols-3 gap-3 items-end">
+            <div>
+              <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Entró a la caja ({monBs?'Bs':'USD'})</label>
+              <input type="number" step="0.01" min="0" className={`${inp} bg-white`} data-tcaja="monto" placeholder={String(Math.round(defNat*100)/100)} value={form.montoCaja} onChange={e=>setForm({...form,montoCaja:e.target.value})}/>
+            </div>
+            <div>
+              <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Tasa caja (Bs/$)</label>
+              <input type="number" step="0.01" min="0" className={`${inp} bg-white`} data-tcaja="tasa" placeholder={String(tasa)} value={form.tasaCaja} onChange={e=>setForm({...form,tasaCaja:e.target.value})}/>
+            </div>
+            <div>
+              <label className="text-[9px] font-black text-amber-700 uppercase block mb-1">Cuenta de la diferencia</label>
+              <select className={`${sel} bg-white`} data-tcaja="cuenta" value={form.comisionCtaId||ctaDifDef?.id||''} onChange={e=>setForm({...form,comisionCtaId:e.target.value})}>
+                <option value="">— Seleccione cuenta —</option>
+                {opcionesDif.map(c=>(<option key={c.id} value={c.id}>{c.codigo} · {c.nombre}</option>))}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-[10px] mt-3">
+            <div className="bg-white rounded-lg p-2 text-center border border-slate-200" data-tcaja="salio">
+              <p className="text-slate-400 font-medium">Salió del banco</p>
+              <p className="font-mono font-black text-slate-900">Bs. {bancoFmt(tc.bsOut)}</p>
+              <p className="text-slate-400">= $ {bancoFmt(tc.usdOut)} · tasa banco {bancoFmt(tasa)}</p>
+            </div>
+            <div className="bg-emerald-50 rounded-lg p-2 text-center border border-emerald-200" data-tcaja="entro">
+              <p className="text-emerald-600 font-black">Entró a la caja</p>
+              <p className="font-mono font-black text-emerald-700">{monBs?`Bs. ${bancoFmt(tc.bsIn)}`:`$ ${bancoFmt(tc.usdIn)}`}</p>
+              <p className="text-emerald-500">= {monBs?`$ ${bancoFmt(tc.usdIn)}`:`Bs. ${bancoFmt(tc.bsIn)}`} · tasa caja {bancoFmt(tc.tasaCaja)}</p>
+            </div>
+            <div className={`rounded-lg p-2 text-center border ${tc.hayDif?(gana?'bg-blue-50 border-blue-200':'bg-red-50 border-red-200'):'bg-slate-50 border-slate-200'}`} data-tcaja="dif">
+              <p className={`font-black ${tc.hayDif?(gana?'text-blue-600':'text-red-600'):'text-slate-400'}`}>{tc.hayDif?(gana?'Diferencia a favor':'Diferencia (rebancarización)'):'Sin diferencia'}</p>
+              <p className={`font-mono font-black ${tc.hayDif?(gana?'text-blue-600':'text-red-600'):'text-slate-500'}`}>Bs. {bancoFmt(Math.abs(tc.difBs))} · $ {bancoFmt(Math.abs(tc.difUSD))}</p>
+              <p className="text-slate-400">{tc.hayDif?`${tc.pct.toFixed(1).replace('.',',')}% del monto`:'Entró lo mismo que salió'}</p>
+            </div>
+          </div>
+          <p className="text-[9px] text-slate-500 mt-2">Un solo comprobante: D Caja · D/H Diferencia · H Banco. Si dejas «Entró a la caja» vacío se asume que entró lo mismo que salió; si dejas «Tasa caja» vacía se usa la tasa del banco.</p>
+        </div>
+      );
+    };
 
     const factPend = form.tipoTercero==='Cliente'
       ? facturas.filter(f=>f.clienteId===form.terceroId&&f.estado==='Pendiente')
@@ -4001,6 +4163,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if((form.tipo==='Nota de Débito'||form.tipo==='Nota de Crédito')&&!form.cuentaAjusteId) return alert('Seleccione la cuenta contable del ajuste (comisión, interés, etc.)');
       if(form.aplicaTercero&&!form.terceroId) return alert('Seleccione el tercero');
       { const _eRcx=rcxValidar(form,{cliente:clientes.find(c=>c.id===form.terceroId),cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:cuentaSel?.moneda,montoBs,montoUSD},reintegrosCxcMovs,''); if(_eRcx) return alert(_eRcx); }
+      if(esTrasladoCaja&&trasladoCaja){
+        if(trasladoCaja.hayDif&&!ctaDifSel) return alert('Seleccione la cuenta contable de la diferencia (rebancarización): lo que entró a la caja es distinto de lo que salió del banco.');
+        if(trasladoCaja.pct>20&&!window.confirm(`La diferencia es ${trasladoCaja.pct.toFixed(1).replace('.',',')}% del monto (Bs. ${bancoFmt(Math.abs(trasladoCaja.difBs))} · $ ${bancoFmt(Math.abs(trasladoCaja.difUSD))}).\n\n¿Es correcta? Revisa el monto que entró a la caja y las tasas antes de continuar.`)) return;
+      }
       setBusy(true);
       try {
         const cuenta=cuentas.find(c=>c.id===form.cuentaId);
@@ -4031,6 +4197,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
         let todasLineas=[];
         let comisionUSD=0, comisionBs=0;
+        let trasladoCajaInfo=null;
 
         if(esNotaAjuste) {
           // Nota de Débito: gasto/comisión → banco disminuye
@@ -4051,6 +4218,19 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
               {codigo:ctaAjusteCod,cuenta:ctaAjusteNom,tipoLinea:'H',nroDoc:form.referencia||'',concepto:form.concepto,tasa,debeBs:0,haberBs:bancoBs,debeUSD:0,haberUSD:bancoUSD},
             ];
           }
+        } else if(esTrasladoCaja && trasladoCaja) {
+          // Traslado Banco → Caja: UN SOLO comprobante que cuadra en las dos monedas (D Caja · D/H Diferencia · H Banco).
+          // Sin la cuenta puente «Traslados de Fondos» ni dos asientos independientes: lo que salió del banco (a la tasa del banco)
+          // menos lo que entró a la caja (a la tasa de la caja) es la diferencia de rebancarización.
+          const splitCtaTC=(c)=>({cod:(c?.cuentaContableCod||c?.cuentaContable?.split('·')[0]||'').trim(),nom:(c?.cuentaContableNom||c?.cuentaContable?.split('·')[1]||c?.banco||'').trim()});
+          const ctaDestTC=splitCtaTC(cuentaDest); const ctaOrigTC=splitCtaTC(cuentaSel);
+          if(!ctaDestTC.cod||!ctaOrigTC.cod){
+            alert('Error: El banco origen o la caja destino no tiene cuenta contable asignada. Configúrela en Cuentas Bancarias / Cajas.');
+            setBusy(false); return;
+          }
+          const ctaDifTC=ctaDifSel||{};
+          todasLineas=bancoTrasladoCajaLineas({calc:trasladoCaja,orig:{cod:ctaOrigTC.cod,nom:ctaOrigTC.nom||`Banco ${cuenta.banco}`},dest:{cod:ctaDestTC.cod,nom:ctaDestTC.nom||cuentaDest.banco},dif:{cod:String(ctaDifTC.codigo||''),nom:ctaDifTC.nombre||'Diferencias en compensación (Rebancarización)'},referencia:form.referencia,concepto:form.concepto,tasa});
+          trasladoCajaInfo={calc:trasladoCaja,idCaja:bancoGid(),difCta:ctaDifTC};
         } else if(esTransferencia && cuentaDest) {
           // Transferencia/Traslado de Fondo: se usa una cuenta puente "Traslados de Fondos" en
           // AMBOS lados (origen y destino) en vez de nombrar directamente al otro banco/caja —
@@ -4136,6 +4316,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           modulo: 'Bancos',
           movimientoBancoId: id,
           terceroNombre: tercero?.nombre||'',
+          ...(trasladoCajaInfo?{trasladoDirecto:true,movimientoCajaId:trasladoCajaInfo.idCaja,cajaId:cuentaDest.id,tasaBanco:tasa,tasaCaja:trasladoCajaInfo.calc.tasaCaja,rebancarizacionBs:trasladoCajaInfo.calc.difBs,rebancarizacionUSD:trasladoCajaInfo.calc.difUSD}:{}),
           lineas: todasLineas,
           totalDebeBs: todasLineas.reduce((a,l)=>a+l.debeBs,0),
           totalHaberBs: todasLineas.reduce((a,l)=>a+l.haberBs,0),
@@ -4159,6 +4340,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito,asientoCredito,
           asientoContableId:asientoId,
+          ...(trasladoCajaInfo?{trasladoDirecto:true,cajaDestinoId:cuentaDest.id,cajaDestinoMovId:trasladoCajaInfo.idCaja,montoCaja:trasladoCajaInfo.calc.natIn,tasaCaja:trasladoCajaInfo.calc.tasaCaja,montoCajaForm:form.montoCaja||'',tasaCajaForm:form.tasaCaja||'',rebancarizacionBs:trasladoCajaInfo.calc.difBs,rebancarizacionUSD:trasladoCajaInfo.calc.difUSD,difCtaId:trasladoCajaInfo.difCta.id||''}:{}),
           estatus:'No Conciliado',ts:serverTimestamp()
         });
         batch.update(getDocRef('banco_cuentas',cuenta.id),{saldo:nuevoSaldo});
@@ -4173,7 +4355,13 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         // así el comprobante de un Traslado muestra el asiento COMPLETO (los 2 bancos), no solo
         // el lado origen. Se llena dentro del bloque de traslado, si aplica.
         let lineasDestinoParaComprobante = [];
-        if((form.tipo==='Transferencia'||form.tipo==='Traslado de Fondo')&&cuentaDest) {
+        if(trasladoCajaInfo){
+          // Ingreso en la caja con SU monto y SU tasa; comparte el comprobante único con el movimiento del banco (no crea otro asiento).
+          const tcI=trasladoCajaInfo.calc;
+          const conceptoDestTC=`Traslado recibido desde ${cuenta.banco} | Ref: ${form.referencia}`;
+          batch.set(getDocRef('caja_movimientos',trasladoCajaInfo.idCaja),{id:trasladoCajaInfo.idCaja,fecha:form.fecha,tipo:'Ingreso',cajaId:cuentaDest.id,cajaNombre:cuentaDest.banco,moneda:cuentaDest.moneda,concepto:conceptoDestTC,referencia:form.referencia,tasa:tcI.tasaCaja,monto:tcI.natIn,montoBs:tcI.bsIn,montoUSD:tcI.usdIn,asientoContableId:asientoId,trasladoDirecto:true,origenBancoMovId:id,estatus:'No Conciliado',ts:serverTimestamp()});
+        }
+        if(!trasladoCajaInfo&&(form.tipo==='Transferencia'||form.tipo==='Traslado de Fondo')&&cuentaDest) {
           const comisionNativo=esMonedaLocal?comisionBs:comisionUSD;
           const netoNativo=mNat-comisionNativo;
           const netoBs=esMonedaLocal?montoBs-comisionBs:(montoBs-comisionBs);
@@ -4259,6 +4447,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
     // Movimiento en detalle
     const movDetalle = movBanco.find(m=>(m._docId||m.id)===detalleId);
+    const esTrasladoCajaEdit = !!editId && !!movDetalle?.trasladoDirecto; // traslado Banco→Caja con comprobante único, en edición
 
     // Guardar EDICIÓN COMPLETA (todos los campos)
     const saveEdit = async()=>{
@@ -4269,6 +4458,14 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       const movOrigChk = movBanco.find(m=>(m._docId||m.id)===editId);
       if(movOrigChk?.estatus==='Conciliado') return alert('🔒 Este movimiento está conciliado — reversa la conciliación primero (Conciliación → Historial) para poder editarlo.');
       { const _eRcx=rcxValidar(form,{cliente:clientes.find(c=>c.id===form.terceroId),cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:cuentaSel?.moneda,montoBs,montoUSD},reintegrosCxcMovs,editId); if(_eRcx) return alert(_eRcx); }
+      if(movOrigChk?.trasladoDirecto){
+        if(form.tipo!=='Traslado de Fondo') return alert('Este movimiento es un traslado Banco → Caja con comprobante único: no se puede cambiar su tipo.');
+        if(!trasladoCaja) return alert('No se encontró la caja destino de este traslado. Cierra la edición y vuelve a abrirla.');
+        if(trasladoCaja.hayDif&&!ctaDifSel) return alert('Seleccione la cuenta contable de la diferencia (rebancarización).');
+        const _movCajaDest=(movCaja||[]).find(x=>(x._docId||x.id)===movOrigChk.cajaDestinoMovId);
+        if(_movCajaDest?.estatus==='Conciliado') return alert('🔒 El ingreso en caja de este traslado ya está conciliado — reversa esa conciliación primero para poder editarlo.');
+        if(trasladoCaja.pct>20&&!window.confirm(`La diferencia es ${trasladoCaja.pct.toFixed(1).replace('.',',')}% del monto (Bs. ${bancoFmt(Math.abs(trasladoCaja.difBs))} · $ ${bancoFmt(Math.abs(trasladoCaja.difUSD))}).\n\n¿Es correcta? Revisa el monto que entró a la caja y las tasas antes de continuar.`)) return;
+      }
       setBusy(true);
       try {
         const movOriginal = movBanco.find(m=>(m._docId||m.id)===editId);
@@ -4299,6 +4496,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           ctaContraId:form.ctaContraId,ctaContraNombre:form.ctaContraNombre,
           asientoDebito:form.tipo==='Ingreso'?ctaBanco:ctaContra,
           asientoCredito:form.tipo==='Ingreso'?ctaContra:ctaBanco,
+          ...(movOriginal?.trasladoDirecto&&trasladoCaja?{montoCaja:trasladoCaja.natIn,tasaCaja:trasladoCaja.tasaCaja,montoCajaForm:form.montoCaja||'',tasaCajaForm:form.tasaCaja||'',rebancarizacionBs:trasladoCaja.difBs,rebancarizacionUSD:trasladoCaja.difUSD,difCtaId:ctaDifSel?.id||''}:{}),
         });
         // Si el vínculo a un anticipo cambió (se agregó, se quitó, o el monto se editó), reconciliar
         // el saldo de ese/esos anticipo(s) — revertir el efecto viejo y aplicar el nuevo, sin
@@ -4325,7 +4523,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         }
 
         // ── Regenerar el asiento contable real vinculado (cont_asientos), no solo las etiquetas ──
-        if (movOriginal?.asientoContableId && form.ctaContraId) {
+        if (movOriginal?.asientoContableId && form.ctaContraId && !movOriginal?.trasladoDirecto) {
           const ctaContraObj = contCuentas.find(c=>c.id===form.ctaContraId) || {};
           const bancoEnDebeEdit = form.tipo==='Ingreso';
           const lineaBancoEdit = {
@@ -4412,6 +4610,27 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           }
         }
 
+        // ── Traslado Banco → Caja con comprobante único: regenerar el comprobante y el ingreso en la caja ──
+        if (movOriginal?.trasladoDirecto && trasladoCaja && cuentaDest) {
+          const splitCtaTE=(c)=>({cod:(c?.cuentaContableCod||c?.cuentaContable?.split('·')[0]||'').trim(),nom:(c?.cuentaContableNom||c?.cuentaContable?.split('·')[1]||c?.banco||'').trim()});
+          const ctaOrigTE=splitCtaTE(cuentaNueva); const ctaDestTE=splitCtaTE(cuentaDest); const ctaDifTE=ctaDifSel||{};
+          const lineasTE=bancoTrasladoCajaLineas({calc:trasladoCaja,orig:{cod:ctaOrigTE.cod,nom:ctaOrigTE.nom||`Banco ${cuentaNueva?.banco||''}`},dest:{cod:ctaDestTE.cod,nom:ctaDestTE.nom||cuentaDest.banco},dif:{cod:String(ctaDifTE.codigo||''),nom:ctaDifTE.nombre||'Diferencias en compensación (Rebancarización)'},referencia:form.referencia,concepto:form.concepto,tasa});
+          if(movOriginal.asientoContableId){
+            batch.update(getDocRef('cont_asientos', movOriginal.asientoContableId), {
+              fecha:form.fecha, tipo:'Traslado', subTipo:'Traslado de Fondo', nroDocumento:form.referencia||'',
+              descripcion:form.concepto.toUpperCase(), tasa, tasaBanco:tasa, tasaCaja:trasladoCaja.tasaCaja,
+              rebancarizacionBs:trasladoCaja.difBs, rebancarizacionUSD:trasladoCaja.difUSD, lineas:lineasTE,
+              totalDebeBs:lineasTE.reduce((a,l)=>a+l.debeBs,0), totalHaberBs:lineasTE.reduce((a,l)=>a+l.haberBs,0),
+              totalDebeUSD:lineasTE.reduce((a,l)=>a+l.debeUSD,0), totalHaberUSD:lineasTE.reduce((a,l)=>a+l.haberUSD,0),
+            });
+          }
+          if(movOriginal.cajaDestinoMovId){
+            batch.update(getDocRef('caja_movimientos', movOriginal.cajaDestinoMovId), {
+              fecha:form.fecha, concepto:`Traslado recibido desde ${cuentaNueva?.banco||''} | Ref: ${form.referencia}`, referencia:form.referencia,
+              tasa:trasladoCaja.tasaCaja, monto:trasladoCaja.natIn, montoBs:trasladoCaja.bsIn, montoUSD:trasladoCaja.usdIn,
+            });
+          }
+        }
         await batch.commit();
         setEditId(null); setDetalle(null); setForm(initF());
       } catch(e) {
@@ -4439,6 +4658,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(yaVistos.has(key+'|'+esOrigen)) return; // no procesar el mismo lado 2 veces
         yaVistos.add(key+'|'+esOrigen);
         const asiento = asientosBanco.find(a=>a.id===m.asientoContableId);
+        if(asiento?.trasladoDirecto) return; // comprobante único Banco→Caja (con su diferencia): no se toca
         if(!asiento?.lineas || asiento.lineas.length<2) return;
         const b = Number(m.montoBs||0), u = Number(m.montoUSD||0);
         if(b<=0 && u<=0) return;
@@ -4621,13 +4841,15 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const destino = movBanco.find(x => x.tipo==='Ingreso' && x.origenIngreso==='Transferencia' && x.referencia===m.referencia && x.fecha===m.fecha && (x._docId||x.id)!==(m._docId||m.id));
         if (destino) { cuentaDestinoId = destino.cuentaId; destinoMovId = destino._docId||destino.id; }
       }
+      if (m.trasladoDirecto && m.cajaDestinoId) cuentaDestinoId = m.cajaDestinoId;
       setForm({...initF(),fecha:m.fecha,tipo:m.tipo,cuentaId:m.cuentaId,
         origenIngreso:m.origenIngreso||'Venta',motivoEgreso:m.motivoEgreso||'Pago Proveedor',
         concepto:m.concepto,referencia:m.referencia||'',
         tasa:String(m.tasa||tasaActiva),montoNativo:String(m.montoNativo||''),
         aplicaTercero:m.aplicaTercero||false,tipoTercero:m.tipoTercero||'Cliente',terceroId:m.terceroId||'',esAjusteCxP:m.esAjusteCxP||m.esAjusteCxC||false,anticipoVinculadoId:m.anticipoVinculadoId||'',reintegroTipo:m.reintegroTipo||(m.anticipoVinculadoId?'ANTICIPO':((m.esAjusteCxP||m.esAjusteCxC)?'LIBRE':'')),reintegroDocId:m.reintegroDocId||m.anticipoVinculadoId||'',
         ctaContraId:m.ctaContraId||'',ctaContraNombre:m.ctaContraNombre||'',
-        cuentaDestinoId, _destinoMovId:destinoMovId, _destinoNoEncontrado: m.tipo==='Transferencia' && !destinoMovId});
+        cuentaDestinoId, _destinoMovId:destinoMovId, _destinoNoEncontrado: m.tipo==='Transferencia' && !destinoMovId,
+        ...(m.trasladoDirecto?{montoCaja:String(m.montoCajaForm||''),tasaCaja:String(m.tasaCajaForm||''),comisionCtaId:m.difCtaId||''}:{})});
     };
 
     // ── Panel info del banco seleccionado ─────────────────────────────
@@ -4703,6 +4925,28 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     }),[movBanco,filtC,filtTipo,filtDesde,filtHasta,busqCli,busqRef,busqMonto]);
     // Split by moneda de la cuenta
     const movFilt     = movFiltAll; // kept for compat (tfoot balance)
+    // ── Revisar asientos: movimiento vs asiento contable (SOLO CONSULTA: no escribe nada) ──
+    const revMontosRes = useMemo(() => revisionMontos === null ? null : bancoRevisarMontos({
+      movs: revisionMontos.alcance === 'todos' ? movBanco : movFiltAll, todos: movBanco, asientos: asientosBanco, cuentas,
+    }), [revisionMontos === null ? null : revisionMontos.alcance, movBanco, movFiltAll, asientosBanco, cuentas]);
+    const abrirRevisionMontos = () => {
+      if(!cargaProg.asientos){ window.alert('Todavía se están cargando los asientos contables (unos segundos). Vuelve a intentarlo en un momento.'); return; }
+      setRevisionMontos({ alcance:'lista', otra:false });
+    };
+    const exportarRevisionMontos = (filas, alcanceTxt) => {
+      const esc = (t) => String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const rows = filas.map((f,i)=>`<tr>
+        <td>${i+1}</td><td>${bancoDd(f.m.fecha)}</td><td>${esc(f.cuentaNombre)}</td><td>${esc(f.m.tipo)}</td><td>${esc(f.m.concepto)}</td><td style="font-family:monospace">${esc(f.m.referencia||'—')}</td>
+        <td style="text-align:right">${bancoFmt(f.movBs)}</td><td style="text-align:right">${bancoFmt(f.asBs)}</td><td style="text-align:right;font-weight:bold">${bancoFmt(f.difBs)}</td>
+        <td style="text-align:right">${bancoFmt(f.movUSD)}</td><td style="text-align:right">${bancoFmt(f.asUSD)}</td><td style="text-align:right;font-weight:bold">${bancoFmt(f.difUSD)}</td>
+        <td>${esc(f.comprobante)}</td><td>${esc(f.obs.join(' · '))}</td><td style="font-size:9px">${esc(f.lineasTxt)}</td></tr>`).join('');
+      const html = bancoLetterheadOpen('Revisión de montos: movimiento vs asiento contable', `${alcanceTxt} · ${filas.length} con diferencia · ${bancoDd(getTodayDate())}`)
+        + `<table><thead><tr><th>#</th><th>Fecha</th><th>Cuenta</th><th>Tipo</th><th>Concepto</th><th>Referencia</th><th>Mov. Bs.</th><th>Asiento Bs.</th><th>Dif. Bs.</th><th>Mov. $</th><th>Asiento $</th><th>Dif. $</th><th>Comprobante</th><th>Observación</th><th>Líneas del asiento</th></tr></thead><tbody>${rows}</tbody></table>`
+        + bancoLetterheadClose(`Módulo: Tesorería & Bancos · ${bancoDd(getTodayDate())}`);
+      const blob = new Blob([html], { type:'application/vnd.ms-excel;charset=utf-8' });
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = `revision_montos_asientos_${getTodayDate()}.xls`; a.click(); URL.revokeObjectURL(url);
+    };
     const movFiltBS   = useMemo(()=>movFiltAll.filter(m=>{
       const c=cuentas.find(x=>x.id===m.cuentaId);
       return c?.moneda==='BS'||c?.tipoBanco==='Nacional-Bs';
@@ -5010,9 +5254,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                     </div>
                   </div>
                 </div>}
+                {esTrasladoCajaEdit&&renderTrasladoCaja()}
                 <BFG label="Concepto / Descripción" full><input className={inp} value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})}/></BFG>
                 {/* Asiento contable con moneda correcta */}
-                {form.tipo!=='Transferencia'&&cuentaSel&&(
+                {form.tipo!=='Transferencia'&&!esTrasladoCajaEdit&&cuentaSel&&(
                   <div className="rounded-2xl overflow-hidden border border-blue-100">
                     <div className="px-5 py-3 bg-blue-600 flex items-center gap-2">
                       <BookOpen size={14} className="text-blue-200"/><p className="text-[10px] font-black uppercase text-white tracking-widest">Asiento Contable — {bs?'Bs. (c/equiv. USD)':'USD (c/equiv. Bs.)'}</p>
@@ -5155,7 +5400,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                   // del traslado, si se encontró) → reconstruidas
                   let lineasMostrar = [];
                   if(asientoLinked?.lineas?.length > 0) {
-                    lineasMostrar = [...asientoLinked.lineas, ...(asientoOtroLado?.lineas||[])];
+                    lineasMostrar = [...asientoLinked.lineas, ...(asientoOtroLado&&asientoOtroLado.id!==asientoLinked.id?(asientoOtroLado.lineas||[]):[])];
                   } else if(movDetalle.tipo==='Traslado de Fondo' && ctaOrig && ctaDest) {
                     const orig=splitCta(ctaOrig); const dest=splitCta(ctaDest);
                     lineasMostrar=[
@@ -5289,6 +5534,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
           {favoritosMov.length>0 && <button onClick={()=>window.confirm(`¿Desmarcar los ${favoritosMov.length} favorito(s)? Esto aplica a Banco y Caja por igual.`)&&desmarcarTodosFavoritosMov()} title="Quita la estrella de todos los movimientos marcados (Banco y Caja)" className="flex items-center gap-1 text-[9px] font-black uppercase text-amber-600 hover:text-amber-800 px-2">⭐ Desmarcar Todos ({favoritosMov.length})</button>}
           <button onClick={()=>exportarMovimientos('excel')} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-green-700"><FileSpreadsheet size={12}/> Excel</button>
           <button onClick={revisarTraslados} title="Revisa los asientos de traslados/transferencias y detecta si la comisión de rebancarización se comió el monto" className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase hover:bg-amber-600"><Settings size={12}/> Corregir Traslados</button>
+          <button onClick={abrirRevisionMontos} title="Compara el monto de cada movimiento con el de su asiento contable y lista las diferencias. Solo consulta: no modifica nada." className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-indigo-700"><Search size={12}/> Revisar asientos</button>
           {ultimaCorreccionTraslados && (
             <button onClick={reversarCorreccionTraslados} disabled={busy} title={`Deshace la corrección aplicada el ${ultimaCorreccionTraslados.fecha}`} className="flex items-center gap-1.5 px-3 py-2 bg-red-100 text-red-600 border-2 border-red-200 rounded-xl text-[10px] font-black uppercase hover:bg-red-200"><RefreshCw size={12}/> ↩ Reversar</button>
           )}
@@ -5331,6 +5577,80 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             )}
           </BModal>
         )}
+
+        {revisionMontos!==null && revMontosRes && (() => {
+          const filasNat = revMontosRes.filas.filter(f=>!f.soloOtra);
+          const filasOtra = revMontosRes.filas.filter(f=>f.soloOtra);
+          const verFilas = revisionMontos.otra ? revMontosRes.filas : filasNat;
+          const alcanceTxt = revisionMontos.alcance==='todos' ? 'Todos los movimientos' : 'Listado actual';
+          const totBs = verFilas.filter(f=>f.esBs).reduce((a,f)=>a+f.difBs,0), totUsd = verFilas.filter(f=>!f.esBs).reduce((a,f)=>a+f.difUSD,0);
+          const hayBs = verFilas.some(f=>f.esBs), hayUsd = verFilas.some(f=>!f.esBs);
+          return (
+          <BModal open={true} onClose={()=>setRevisionMontos(null)} title="🔎 Revisar montos: movimiento vs asiento contable" xlwide
+            footer={<>
+              {verFilas.length>0 && <BBo onClick={()=>exportarRevisionMontos(verFilas, alcanceTxt)}>Exportar a Excel</BBo>}
+              <BBo onClick={()=>setRevisionMontos(null)}>Cerrar</BBo>
+            </>}>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {[['lista',`Listado actual (${movFiltAll.length})`],['todos',`Todos los movimientos (${movBanco.length})`]].map(([k,t])=>(
+                  <button key={k} onClick={()=>setRevisionMontos({...revisionMontos, alcance:k})} className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase border-2 ${revisionMontos.alcance===k?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}`}>{t}</button>
+                ))}
+                {filasOtra.length>0 && (
+                  <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 ml-auto cursor-pointer">
+                    <input type="checkbox" checked={revisionMontos.otra} onChange={e=>setRevisionMontos({...revisionMontos, otra:e.target.checked})}/>
+                    Incluir los que solo difieren en la otra moneda ({filasOtra.length})
+                  </label>
+                )}
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] text-slate-600 font-bold" data-rev="resumen">
+                Revisados {revMontosRes.revisados} movimiento(s): {revMontosRes.conAsiento} con asiento ligado · {revMontosRes.sinAsiento} sin asiento ligado · {revMontosRes.conAsiento - filasNat.length - filasOtra.length} cuadran · {filasNat.length} con diferencia{filasOtra.length>0 ? ` · ${filasOtra.length} solo en la otra moneda` : ''}. Solo consulta: aquí no se modifica nada.
+              </div>
+              {revMontosRes.sinAsiento>0 && <p className="text-[10px] text-slate-400 font-bold -mt-1" data-rev="nota">«Sin asiento ligado»: el movimiento no apunta a ningún asiento contable, así que no hay nada que comparar.</p>}
+              {verFilas.length===0 ? (
+                <div className="text-center py-8 text-emerald-600 font-bold text-sm" data-rev="vacio">✓ Todos los movimientos revisados coinciden con su asiento contable.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-slate-50 text-[9px] font-black uppercase text-slate-500">
+                      <th className="px-2 py-2 text-left">Fecha</th><th className="px-2 py-2 text-left">Cuenta</th><th className="px-2 py-2 text-left">Tipo</th><th className="px-2 py-2 text-left">Concepto</th><th className="px-2 py-2 text-left">Ref.</th>
+                      <th className="px-2 py-2 text-right">Mov. Bs.</th><th className="px-2 py-2 text-right">Asiento Bs.</th><th className="px-2 py-2 text-right">Dif. Bs.</th>
+                      <th className="px-2 py-2 text-right">Mov. $</th><th className="px-2 py-2 text-right">Asiento $</th><th className="px-2 py-2 text-right">Dif. $</th>
+                      <th className="px-2 py-2 text-left">Comprobante</th><th className="px-2 py-2 text-left">Observación</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {verFilas.map((f,i)=>(
+                        <tr key={i} data-rev="fila" data-rev-ref={f.m.referencia||''} className={f.soloOtra?'bg-slate-50':''}>
+                          <td className="px-2 py-1.5 whitespace-nowrap">{bancoDd(f.m.fecha)}</td>
+                          <td className="px-2 py-1.5 font-bold">{f.cuentaNombre}</td>
+                          <td className="px-2 py-1.5">{f.m.tipo}</td>
+                          <td className="px-2 py-1.5 max-w-[260px] truncate" title={f.m.concepto||''}>{f.m.concepto||'—'}</td>
+                          <td className="px-2 py-1.5 font-mono text-slate-400">{f.m.referencia||'—'}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{bancoFmt(f.movBs)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{bancoFmt(f.asBs)}</td>
+                          <td className={`px-2 py-1.5 text-right font-mono font-black ${Math.abs(f.difBs)>0.05?'text-red-600':'text-slate-300'}`}>{bancoFmt(f.difBs)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{bancoFmt(f.movUSD)}</td>
+                          <td className="px-2 py-1.5 text-right font-mono">{bancoFmt(f.asUSD)}</td>
+                          <td className={`px-2 py-1.5 text-right font-mono font-black ${Math.abs(f.difUSD)>0.01?'text-red-600':'text-slate-300'}`}>{bancoFmt(f.difUSD)}</td>
+                          <td className="px-2 py-1.5 font-mono text-slate-500 whitespace-nowrap" title={f.lineasTxt}>{f.comprobante}</td>
+                          <td className="px-2 py-1.5 text-[10px] text-amber-700 font-bold">{f.obs.join(' · ')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot><tr className="bg-slate-50 text-[10px] font-black text-slate-600">
+                      <td className="px-2 py-2 uppercase" colSpan={7}>Diferencia total (asiento − movimiento) · {verFilas.length} movimiento(s)</td>
+                      <td className="px-2 py-2 text-right font-mono">{hayBs?bancoFmt(totBs):''}</td>
+                      <td colSpan={2}></td>
+                      <td className="px-2 py-2 text-right font-mono">{hayUsd?bancoFmt(totUsd):''}</td>
+                      <td colSpan={2} className="px-2 py-2 text-[9px] font-bold text-slate-400">Bs. suma las cuentas en Bs.; $ suma las cuentas en $</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          </BModal>
+          );
+        })()}
 
         {tablasMov}
 
@@ -5490,7 +5810,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
             <input value={searchDestino} onChange={e=>setSearchDestino(e.target.value)} placeholder="Buscar banco o caja..." className={`${inp} pl-8`}/>
           </div>
-          <select className={`${sel} border-orange-400`} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value,tasaDestino:''})}>
+          <select className={`${sel} border-orange-400`} value={form.cuentaDestinoId} onChange={e=>setForm({...form,cuentaDestinoId:e.target.value,tasaDestino:'',montoCaja:'',tasaCaja:''})}>
             <option value="">— Seleccione destino —</option>
             {[['Nacional-Bs','🇻🇪 Nacionales — Bolívares'],['Nacional-Ext','💵 Moneda Extranjera'],['Internacional','🌐 Internacionales'],['Electronica','💳 Electrónicas'],['Tarjeta-Debito-Intl','🪪 Tarjetas Débito Intl.'],['Pago-Movil','📱 Pago Móvil']].map(([tipo,label])=>{
               const grupo=cuentas.filter(c=>c.id!==form.cuentaId&&esBancario(c)&&(tipo==='Pago-Movil'?(c.tipoBanco==='Pago-Movil'||c.tipoBanco==='Pago Móvil'):c.tipoBanco===tipo)&&(!searchDestino||(c.banco+' '+c.numeroCuenta).toUpperCase().includes(searchDestino.toUpperCase())));
@@ -5568,7 +5888,8 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     </div>
   </div>
 </div>
-{form.tipo==='Traslado de Fondo'&&form.cuentaDestinoId&&(()=>{
+{esTrasladoCaja&&renderTrasladoCaja()}
+{form.tipo==='Traslado de Fondo'&&form.cuentaDestinoId&&!destinoEsCaja&&(()=>{
   const tasaOrigenF=Number(form.tasa)||tasaActiva;
   const usdOrigenPrev=Number(form.montoUSD)||0;
   const bsOrigenPrev=usdOrigenPrev*tasaOrigenF;
@@ -5809,7 +6130,16 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                           const bsV=bs?mNat:mNat*tasa; const usdV=bs?mNat/tasa:mNat;
                           const bancoCod=(cuentaSel?.cuentaContableCod||cuentaSel?.cuentaContable?.split('·')[0]||'').trim();
                           const bancoNom=cuentaSel.banco;
-                          if(form.tipo==='Traslado de Fondo'&&cuentaDest){
+                          if(esTrasladoCaja&&trasladoCaja){
+                            const dCodP=(cuentaDest?.cuentaContableCod||cuentaDest?.cuentaContable?.split('·')[0]||'').trim();
+                            const tcP=trasladoCaja;
+                            const dBsP=tcP.difBs>0?tcP.difBs:0, dUP=tcP.difUSD>0?tcP.difUSD:0, hBsP=tcP.difBs<0?-tcP.difBs:0, hUP=tcP.difUSD<0?-tcP.difUSD:0;
+                            const cDifCod=ctaDifSel?String(ctaDifSel.codigo||''):'', cDifNom=ctaDifSel?ctaDifSel.nombre:'Diferencia (rebancarización)';
+                            lines.push({grupo:`Traslado a ${cuentaDest.banco} — un solo comprobante`,cod:dCodP,nom:cuentaDest.cuentaContableNom||cuentaDest.banco,dBs:tcP.bsIn,hBs:0,dU:tcP.usdIn,hU:0,color:'text-emerald-400'});
+                            if(dBsP>0||dUP>0) lines.push({cod:cDifCod,nom:cDifNom,dBs:dBsP,hBs:0,dU:dUP,hU:0,color:'text-orange-300'});
+                            if(hBsP>0||hUP>0) lines.push({cod:cDifCod,nom:cDifNom,dBs:0,hBs:hBsP,dU:0,hU:hUP,color:'text-blue-300'});
+                            lines.push({cod:bancoCod,nom:bancoNom,dBs:0,hBs:bsV,dU:0,hU:usdV,color:'text-red-400'});
+                          } else if(form.tipo==='Traslado de Fondo'&&cuentaDest){
                             const dCod=(cuentaDest?.cuentaContableCod||cuentaDest?.cuentaContable?.split('·')[0]||'').trim();
                             const tasaDestinoPrev=Number(form.tasaDestino)||tasa;
                             const comBs=Math.abs(bsV-(usdV*tasaDestinoPrev));
@@ -5867,10 +6197,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       <tfoot className="border-t border-slate-700">
                         <tr className="text-slate-400 font-bold">
                           <td className="py-2 text-right text-[8px] uppercase tracking-wider pr-2">Totales</td>
-                          <td className="text-right px-1 text-white">{(bs?mNat:mNat*tasa).toFixed(2)}</td>
-                          <td className="text-right px-1 text-white">{(bs?mNat:mNat*tasa).toFixed(2)}</td>
-                          <td className="text-right px-1 text-emerald-400">{(bs?mNat/tasa:mNat).toFixed(2)}</td>
-                          <td className="text-right px-1 text-emerald-400">{(bs?mNat/tasa:mNat).toFixed(2)}</td>
+                          <td className="text-right px-1 text-white">{(esTrasladoCaja&&trasladoCaja?Math.max(trasladoCaja.bsIn,trasladoCaja.bsOut):(bs?mNat:mNat*tasa)).toFixed(2)}</td>
+                          <td className="text-right px-1 text-white">{(esTrasladoCaja&&trasladoCaja?Math.max(trasladoCaja.bsIn,trasladoCaja.bsOut):(bs?mNat:mNat*tasa)).toFixed(2)}</td>
+                          <td className="text-right px-1 text-emerald-400">{(esTrasladoCaja&&trasladoCaja?Math.max(trasladoCaja.usdIn,trasladoCaja.usdOut):(bs?mNat/tasa:mNat)).toFixed(2)}</td>
+                          <td className="text-right px-1 text-emerald-400">{(esTrasladoCaja&&trasladoCaja?Math.max(trasladoCaja.usdIn,trasladoCaja.usdOut):(bs?mNat/tasa:mNat)).toFixed(2)}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -7174,6 +7504,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const guardarEditCaja = async() => {
       if(!cajaDet) return;
       if(cajaDet.estatus==='Conciliado'||concilCajaIds.has(cajaDet.id)) return alert('Este movimiento ya est\u00e1 conciliado. Elimine primero la conciliaci\u00f3n para poder editarlo.');
+      if(cajaDet.trasladoDirecto){
+        const _cambioTC = Number(form.montoNativo)!==Number(cajaDet.monto) || Number(form.tasa)!==Number(cajaDet.tasa) || form.moneda!==cajaDet.moneda || (form.cajaId||cajaDet.cajaId)!==cajaDet.cajaId || form.tipo!==cajaDet.tipo || form.fecha!==cajaDet.fecha;
+        if(_cambioTC) return alert('Este ingreso viene de un traslado Banco → Caja con comprobante único (incluye la rebancarización). Para cambiar el monto, la tasa, la fecha o la caja, edita el traslado desde Bancos → Movimientos.');
+      }
       if(!form.montoNativo||Number(form.montoNativo)<=0) return alert('Ingrese un monto válido');
       if(!form.concepto) return alert('Ingrese el concepto');
       { const _mN=Number(form.montoNativo)||0, _t=Number(form.tasa)||tasaActiva, _bsC=form.moneda==='BS'; const _eRcx=rcxValidar(form,{cliente:clientes.find(c=>c.id===form.terceroId),cobros:cobrosCxcTodos,retenciones:retencionesCli,monedaCta:form.moneda,montoBs:_bsC?_mN:_mN*_t,montoUSD:_bsC?(_t>0?_mN/_t:0):_mN},reintegrosCxcMovs,cajaDet.id); if(_eRcx) return alert(_eRcx); }
@@ -7226,7 +7560,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         }
 
         // ── Regenerar el asiento contable real vinculado (cont_asientos), no solo las etiquetas ──
-        if (cajaDet.asientoContableId && form.ctaContraId) {
+        if (cajaDet.asientoContableId && form.ctaContraId && !cajaDet.trasladoDirecto) {
           const ctaContraObj = contCuentas.find(c=>c.id===form.ctaContraId) || {};
           const bancoEnDebeEdit = form.tipo==='Ingreso';
           const lineaCajaEdit = {
@@ -7355,6 +7689,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         if(yaVistos.has(key+'|'+esOrigen)) return;
         yaVistos.add(key+'|'+esOrigen);
         const asiento = asientosBanco.find(a=>a.id===m.asientoContableId);
+        if(asiento?.trasladoDirecto) return; // comprobante único Banco→Caja (con su diferencia): no se toca
         if(!asiento?.lineas || asiento.lineas.length<2) return;
         const b = Number(m.montoBs||0), u = Number(m.montoUSD||0);
         if(b<=0 && u<=0) return;
@@ -7851,7 +8186,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
                       ? todosLosMovs.find(m=>m.id!==cajaDet.id && m.referencia && m.referencia===cajaDet.referencia && m.fecha===cajaDet.fecha && /traslado de fondo/i.test(m.concepto||'') && m.tipo!=='Ingreso')
                       : null;
                   const asientoOtroLado = movOtroLado ? asientosBanco.find(a=>a.id===movOtroLado.asientoContableId) : null;
-                  const lineasMostrar = [...asientoLinked.lineas, ...(asientoOtroLado?.lineas||[])];
+                  const lineasMostrar = [...asientoLinked.lineas, ...(asientoOtroLado&&asientoOtroLado.id!==asientoLinked.id?(asientoOtroLado.lineas||[]):[])];
                   return (
                     <div className="rounded-2xl overflow-hidden border border-blue-100">
                       <div className="px-5 py-3 bg-blue-600 flex items-center gap-2">
@@ -10147,7 +10482,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       return()=>u();
     },[]);
     const applyFiltros = (a, isMov=false) => {
-      if(!isMov && a.modulo!==(isBanco?'Bancos':'Caja')) return false;
+      if(!isMov && a.modulo!==(isBanco?'Bancos':'Caja') && !(!isBanco&&a.trasladoDirecto&&a.cajaId)) return false;
       if(!isBanco){ // Caja: nada anterior al mes del saldo inicial de la caja
         const _cid = a.cajaId || (isMov?'':movsFuente.find(m=>m.id===a.movimientoCajaId||m.id===a.movimientoBancoId)?.cajaId);
         if(_cid && (a.fecha||'')<cajaIniciaEn(_cid)) return false;
@@ -10158,10 +10493,10 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
       if(filtBanco && bancoId!==filtBanco) return false;
       return true;
     };
-    const asientosMes = asientosLocal.filter(a=>applyFiltros(a, false));
+    const asientosMes = asientosLocal.filter(a=>applyFiltros(a, false)).map(a=>(!isBanco&&a.trasladoDirecto&&a.cajaId)?{...a,cuentaId:a.cajaId}:a);
     // IDs de movimientos que YA están representados por un asiento formal en cont_asientos —
     // para no duplicarlos al agregar los que todavía no tienen asiento generado.
-    const movsYaConAsiento = new Set(asientosLocal.map(a=>a.movimientoBancoId).filter(Boolean));
+    const movsYaConAsiento = new Set([...asientosLocal.map(a=>a.movimientoBancoId),...asientosLocal.filter(a=>a.trasladoDirecto).map(a=>a.movimientoCajaId)].filter(Boolean));
     const movsSinAsiento = movsFuente.filter(m=>{
       if(movsYaConAsiento.has(m.id)) return false; // ya viene por cont_asientos, evitar duplicado
       return applyFiltros(m, true);
