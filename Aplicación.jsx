@@ -32763,6 +32763,279 @@ function App() {
     return m;
   },[movBancoApp,movCajaApp]);
   const reintegroAnticipoHasta = (antId, fechaCorte) => (_reintegrosPorAnticipo.get(antId)||[]).filter(x=>!fechaCorte||(x.fecha||'')<=fechaCorte).reduce((t,x)=>t+(parseFloat(x.montoUSD)||0),0);
+  // ── Saldo por NE para «Comisiones de Vendedores» ───────────────────────────────────────────────────────────────────────
+  // Es la MISMA cuenta de Cuentas por Cobrar (cobros, NC/ND, retenciones IVA/otras, reintegros, con el reparto por factura fiscal),
+  // copiada tal cual, para saber cuándo una NE quedó en CERO aunque la retención llegue DESPUÉS del último cobro: la retención no
+  // actualiza la ficha de la NE (estatus / saldo pendiente), Cuentas por Cobrar la descuenta en vivo. Solo lee; no escribe nada.
+  const construirMotorSaldoNE = () => {
+    const tasaBCV = parseNum(settings?.tasaBCV||0)||1;
+          const _invMap = new Map();
+          for(const inv of (invoices||[])){
+            if(inv.esAnulacionFiscal) continue;
+            if(inv.id) _invMap.set(inv.id, inv);
+            if(inv.nroFiscal) _invMap.set(inv.nroFiscal, inv);
+            if(inv.documento) _invMap.set(inv.documento, inv);
+          }
+          const findInv=(key)=>key?_invMap.get(key):null;
+
+          // Mapa: neId/neDoc → lista de invoices vinculados a esa NE (excluye Anulación Fiscal)
+          const _invsByNe = new Map();
+          for(const inv of (invoices||[])){
+            if(inv.esAnulacionFiscal) continue;
+            for(const nid of [inv.neOrigen,...(inv.nesAdicionales||[])].filter(Boolean)){
+              if(!_invsByNe.has(nid)) _invsByNe.set(nid,[]);
+              _invsByNe.get(nid).push(inv);
+            }
+          }
+
+          // ── Mapa NE-first: nroFiscal/nroControl → NE ──────────────────────────────
+          // Construido DESDE las NEs (fuente de verdad), usando la misma lógica del modal
+          // de cobro que muestra correctamente qué número fiscal va con qué NE.
+          // Esto evita el problema de _findNEforInv que retornaba la NE equivocada
+          // cuando el facturaId de una NE apuntaba a la factura de otra NE.
+          const _nesByFiscal = new Map();
+          // Fuente principal: la propia factura sabe qué NE la componen (neOrigen + nesAdicionales) —
+          // más confiable que depender de que cada NE tenga su facturaId bien poblado.
+          for(const inv of (invoices||[])){
+            if(inv.esAnulacionFiscal) continue;
+            const nesIds=[inv.neOrigen,...(inv.nesAdicionales||[])].filter(Boolean);
+            if(nesIds.length===0) continue;
+            const nesGroup=nesIds.map(nid=>(notasEntrega||[]).find(n=>n.id===nid||n.documento===nid)).filter(Boolean);
+            if(nesGroup.length===0) continue;
+            for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
+              if(!_nesByFiscal.has(k)) _nesByFiscal.set(k, {nes:[], inv});
+              nesGroup.forEach(ne=>{ if(!_nesByFiscal.get(k).nes.some(x=>x.id===ne.id)) _nesByFiscal.get(k).nes.push(ne); });
+            }
+          }
+          // Respaldo: NE con facturaId propio que por alguna razón no quedaron en neOrigen/nesAdicionales.
+          for(const ne of (notasEntrega||[])){
+            if(!ne.facturaId) continue;
+            const neRif=(ne.clientRif||'').trim().toUpperCase();
+            const rifOk=inv=>!neRif||!(inv.clientRif||'').trim().toUpperCase()||(inv.clientRif||'').trim().toUpperCase()===neRif;
+            const inv=(invoices||[]).find(i=>(i.id===ne.facturaId||i.documento===ne.facturaId)&&!i.esAnulacionFiscal&&rifOk(i));
+            if(!inv) continue;
+            for(const k of [inv.nroFiscal,inv.documento,inv.nroControl,inv.id].filter(Boolean)){
+              if(!_nesByFiscal.has(k)) _nesByFiscal.set(k, {nes:[], inv});
+              if(!_nesByFiscal.get(k).nes.some(x=>x.id===ne.id)) _nesByFiscal.get(k).nes.push(ne);
+            }
+          }
+          const _neByFiscal = new Map([..._nesByFiscal].map(([k,v])=>[k,{ne:v.nes[0],inv:v.inv}])); // compat: código que solo necesita presencia/una NE
+
+          const _retsPorNE = new Map();
+          for(const r of (retenciones||[])){
+            if((r.facturaId||'').startsWith('MANUAL-')) continue;
+            // Buscar TODAS las NE de esa factura por nroFactura (número fiscal visible en la retención)
+            // Fallback: nroControl, luego facturaId (Firestore ID)
+            let hit = _nesByFiscal.get(r.nroFactura)
+                     || _nesByFiscal.get(r.nroControl)
+                     || _nesByFiscal.get(r.facturaId);
+            if(!hit) continue;
+            // Si el match inicial fue por un documento de factura específico (facturaId) pero ese
+            // mismo número fiscal está repartido en VARIOS documentos de factura (mismo caso de
+            // CORPORACION CIBUS: una sola factura fiscal cargada como varios documentos, una NE
+            // cada uno), expandir al grupo completo por nroFiscal — la retención de un contribuyente
+            // especial se calcula sobre la factura fiscal completa, no por documento interno.
+            if(hit.inv?.nroFiscal && _nesByFiscal.has(hit.inv.nroFiscal)) hit = _nesByFiscal.get(hit.inv.nroFiscal);
+            const {nes: nesTarget, inv} = hit;
+            const tasa=parseNum(r.tasa||r.tasaFactura||inv.tasa||inv.tasaFactura||0);
+            const montoBs=parseNum(r.montoRetenido||0);
+            const sinTasa=!(tasa>1);
+            const montoUSD=sinTasa?0:montoBs/tasa;
+            // Repartir proporcional al peso (total) de cada NE dentro de esa factura — si es 1 sola NE,
+            // el peso es 1 y se comporta exactamente igual que antes.
+            const totalFacturaPeso=nesTarget.reduce((s,n)=>s+parseNum(n.total||n.totalUSD||0),0)||1;
+            nesTarget.forEach(neTarget=>{
+              const peso=parseNum(neTarget.total||neTarget.totalUSD||0)/totalFacturaPeso;
+              const key=neTarget.id;
+              if(!_retsPorNE.has(key)) _retsPorNE.set(key,[]);
+              _retsPorNE.get(key).push({...r,_tasa:tasa,_montoUSD:montoUSD*peso,_sinTasa:sinTasa,_invNroFiscal:(inv.nroFiscal||inv.documento||'')+(r.notaNro?' · '+(r.notaTipo||'Nota')+' '+r.notaNro:''),_peso:peso,_grupo:nesTarget});
+            });
+          }
+          const getRetsDetalleNE=(ne)=>{
+            const items=_retsPorNE.get(ne.id)||[];
+            const iva=items.filter(r=>!r.tipoExtra);
+            const otras=items.filter(r=>r.tipoExtra);
+            const igtf=items.filter(r=>r.tipo==='IGTF');
+            return{
+              iva,otras,igtf,
+              ivaUSD:iva.reduce((s,r)=>s+r._montoUSD,0),
+              otrasUSD:otras.reduce((s,r)=>s+r._montoUSD,0),
+              igtfUSD:igtf.reduce((s,r)=>s+r._montoUSD,0),
+              sinTasa:items.some(r=>r._sinTasa)
+            };
+          };
+
+          // Reintegros a clientes ligados a su retención o a su pago (Banco / Caja): suman a lo que el cliente nos debe y cancelan su «a favor»
+          const _reint=resolverReintegrosCxc(_retsPorNE);
+          const getReintegrosNE=(ne,fRef)=>(_reint.porNE.get(ne.id)||[]).filter(x=>!fRef||x.fecha<=fRef);
+          const getReintegroUSDNE=(ne,fRef)=>getReintegrosNE(ne,fRef).reduce((t,x)=>t+x.usd,0);
+
+          // Mapa: NE id/doc → NC/ND aplicadas
+          const _ncsByNe = new Map();
+          for(const n of (notasVentaCD||[])){
+            for(const k of [n.neId,n.neOrigen,n.facturaId].filter(Boolean)){
+              if(!_ncsByNe.has(k)) _ncsByNe.set(k,[]);
+              _ncsByNe.get(k).push(n);
+            }
+          }
+          // Cache de getRetUSDNE y getNCUSDNEAtFecha por ne.id
+          const _retCache = new Map();
+          const _ncCache  = new Map();
+
+          // Encontrar invoice vinculado a NE usando mapas pre-computados
+          const findInvForNE=(ne)=>{
+            // ND directa (sin NE ni factura): nunca se enlaza a una factura, aunque su numero de documento
+            // coincida con el de una factura -- si no, heredaba las NC/retenciones de esa factura.
+            if(ne._esNDDirecta) return null;
+            const neId=ne.id||''; const neDoc=ne.documento||'';
+            return (_invsByNe.get(neId)||_invsByNe.get(neDoc)||[])[0]
+              ||(ne.facturaId?findInv(ne.facturaId):null)
+              ||(ne.nroFiscal?findInv(ne.nroFiscal):null)||null;
+          };
+          // Grupo de NE que comparten una misma factura fiscal (consolidada) — reutiliza el mismo
+          // mapa _nesByFiscal que ya arma esa lista para el reparto de retenciones. Si la NE no
+          // tiene factura vinculada, o su factura no consolida más de una NE, el grupo es ella sola.
+          const getGrupoInvoiceNEs=(ne)=>{
+            const inv=findInvForNE(ne);
+            if(!inv) return [ne];
+            const hit=_nesByFiscal.get(inv.nroFiscal)||_nesByFiscal.get(inv.documento)||_nesByFiscal.get(inv.id);
+            if(!hit||hit.nes.length<=1) return [ne];
+            return hit.nes;
+          };
+          // ── Helpers de saldo con fecha de corte ────────────────────────
+          // tipo!=='IGTF': el IGTF es un cargo aparte (3% adicional al total de la factura, no
+          // un pago del propio total) — se excluye de Cobrado igual que ya se excluye de
+          // Retención, si no la NE queda con saldo "a favor" que no existe de verdad.
+          const _cobradoDirectoNEAtFecha=(ne,fRef)=>(cobrosCxc||[]).filter(c=>c.neId===ne.id&&c.tipo!=='IGTF'&&(!fRef||(c.fecha||'')<=fRef)).reduce((s,c)=>s+parseNum(c.monto||0),0);
+          const _saldoDirectoNE=(ne,fRef)=>parseNum(ne.total||ne.totalUSD||0)-_cobradoDirectoNEAtFecha(ne,fRef)-getNCUSDNEAtFecha(ne,fRef)-getRetUSDNE(ne)+getReintegroUSDNE(ne,fRef);
+          const getSaldoNEAtFecha = (ne, fRef) => {
+            // ND directa: su saldo es solo su monto menos lo cobrado contra ella (cobros con neId 'ND-<id>',
+            // incluidos los que aplican un anticipo), igual que en Estado de Cuenta. No lleva NC, retencion
+            // ni reparto por grupo de factura.
+            if(ne._esNDDirecta) return parseNum(ne.total||0)-_cobradoDirectoNEAtFecha(ne,fRef);
+            const grupo=getGrupoInvoiceNEs(ne);
+            if(grupo.length<=1) return _saldoDirectoNE(ne,fRef);
+            // Solo se redistribuye si el GRUPO tiene alguna hermana en negativo (crédito "a favor"
+            // real) — si todas están en positivo (ej. una factura que consolida 3 NE y ninguna ha
+            // recibido su retención todavía), cada una conserva su propio cálculo tal cual, sin
+            // tocar nada. Redistribuir siempre por peso, aunque no haya anomalía, movía saldos que
+            // ya estaban bien (ej. $625,53 → $680,24) sin motivo.
+            const hayNegativa=grupo.some(n=>_saldoDirectoNE(n,fRef)<-0.01);
+            if(!hayNegativa) return _saldoDirectoNE(ne,fRef);
+            // Un cobro o anticipo aplicado NE por NE (en vez de proporcional al peso de cada una,
+            // como sí se hace con la retención) puede dejar a una hermana "a favor" y a otra
+            // "pendiente" por el mismo monto, aunque el grupo completo ya esté saldado — se
+            // calcula el saldo del grupo entero y se reparte proporcional, igual que la
+            // retención, en vez de depender de cómo haya quedado repartido cada cobro histórico.
+            // Sin Math.max(0,...): si queda negativo (crédito a favor), se muestra el valor real.
+            const totalGrupo=grupo.reduce((s,n)=>s+parseNum(n.total||n.totalUSD||0),0)||1;
+            const pesoNE=parseNum(ne.total||ne.totalUSD||0)/totalGrupo;
+            const saldoGrupo=grupo.reduce((s,n)=>s+_saldoDirectoNE(n,fRef),0);
+            return saldoGrupo*pesoNE;
+          };
+          // NC/ND por NE, sin repetirlas — una nota FISCAL es de la FACTURA: si la factura junta varias NE, cada NE descuenta
+          // SOLO su parte (en proporción al total de cada NE, igual que las retenciones); antes cada NE descontaba la nota
+          // completa y el saldo del cliente quedaba de menos (o «a favor»). Una nota NO fiscal es de UNA NE (su neId): la
+          // descuenta solo esa NE. Las notas que alcanza cada NE son las mismas de siempre (por NE, documento y factura).
+          const _ncsVistasCache=new Map();
+          const _ncsVistas=(ne)=>{
+            if(_ncsVistasCache.has(ne.id)) return _ncsVistasCache.get(ne.id);
+            const inv=findInvForNE(ne);
+            const keys=[ne.id,ne.documento,inv?.id,inv?.nroFiscal,inv?.documento,ne.facturaId].filter(Boolean);
+            const seen=new Set(); const out=[];
+            for(const k of keys){ for(const n of (_ncsByNe.get(k)||[])){
+              if(seen.has(n.id)) continue; seen.add(n.id);
+              out.push(n);
+            } }
+            _ncsVistasCache.set(ne.id,out); return out;
+          };
+          let _nesDeNotaMap=null;
+          const _nesDeNota=(n)=>{
+            if(!_nesDeNotaMap){
+              _nesDeNotaMap=new Map();
+              for(const x of (notasEntrega||[])){
+                if(x.status==='ANULADA') continue;
+                for(const m of _ncsVistas(x)){ if(!_nesDeNotaMap.has(m.id)) _nesDeNotaMap.set(m.id,[]); _nesDeNotaMap.get(m.id).push(x); }
+              }
+            }
+            const vistas=_nesDeNotaMap.get(n.id)||[];
+            if((n.naturaleza||'FISCAL')!=='FISCAL'&&n.neId){
+              const propia=vistas.filter(x=>x.id===n.neId||x.documento===n.neId);
+              if(propia.length) return propia; // nota NO fiscal: pertenece a esa NE
+            }
+            return vistas;
+          };
+          // Parte (de 0 a 1) de la nota que le toca a esta NE
+          const _pesoNota=(ne,n)=>{
+            const g=_nesDeNota(n);
+            if(!g.length) return 1; // ninguna NE viva la ve (p. ej. NE anulada): como antes
+            if(!g.some(x=>x.id===ne.id)) return 0; // es de otra NE
+            if(g.length===1) return 1;
+            const tot=g.reduce((s,x)=>s+parseNum(x.total||x.totalUSD||0),0);
+            return tot>0?parseNum(ne.total||ne.totalUSD||0)/tot:1/g.length;
+          };
+          // USD de la nota completa (misma fórmula de siempre); null si no se puede convertir por falta de tasa
+          const _usdNota=(n)=>{
+            const dir=parseNum(n.montoUSD||0);
+            if(dir>0) return dir;
+            const t=parseNum(n.tasaFactura||0)||tasaBCV;
+            if(!t||t<2) return null;
+            const baseBs=parseNum(n.monto||0);
+            return (n.tieneIva===false?baseBs:baseBs*1.16)/t;
+          };
+          // NC/ND en USD de esta NE (su parte) — O(1) usando mapa pre-computado
+          const getNCUSDNEAtFecha=(ne,fRef)=>{
+            const cacheKey=ne.id+(fRef||'');
+            if(_ncCache.has(cacheKey)) return _ncCache.get(cacheKey);
+            const result=_ncsVistas(ne).filter(n=>!fRef||(n.fecha||'')<=fRef).reduce((s,n)=>{
+              const u=_usdNota(n); if(u==null) return s;
+              // NC resta del saldo (reduce lo que debe el cliente) → contribuye positivo aquí,
+              // ya que getSaldoNEAtFecha hace total - getNCUSDNEAtFecha(...).
+              // ND SUMA al saldo (aumenta lo que debe el cliente) → contribuye NEGATIVO aquí,
+              // para que esa resta termine sumando la ND a la deuda en vez de restarla.
+              return s+(n.tipo==='ND'?-u:u)*_pesoNota(ne,n);
+            },0);
+            _ncCache.set(cacheKey,result); return result;
+          };
+          // Ret. (IVA + Otras) en USD — usando el mapa seguro _retsPorNE. El IGTF se excluye:
+          // es un cargo aparte (3% adicional al total de la factura, dinero real que entró a
+          // Banco/Caja pero no como pago DEL propio total, sino como un cobro extra ligado al
+          // método de pago) — se excluye igual de Cobrado arriba en getSaldoNEAtFecha. Si se
+          // cuenta en cualquiera de los dos lados, la NE queda con saldo "a favor" que no existe.
+          const getRetUSDNE=(ne)=>{const d=getRetsDetalleNE(ne);return d.ivaUSD+d.otrasUSD-d.igtfUSD;};
+    // Fecha en que la NE quedó en cero = la del ÚLTIMO movimiento que la cerró: cobros (su fecha, como siempre), retenciones y NC
+    // (la fecha en que se REGISTRARON en el sistema, NO la del comprobante: puede ser de un mes anterior y la comisión se paga en
+    // otro mes). Nunca anterior al 01/11/2026: lo que ya estaba registrado de meses cerrados entra en noviembre, sin reabrirlos.
+    const FECHA_CORTE_CIERRE = '2026-11-01';
+    const _p2 = (n) => String(n).padStart(2, '0');
+    const _fechaRegistro = (d, respaldo) => {
+      if (d) {
+        if (typeof d.createdAt === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d.createdAt)) return d.createdAt.substring(0, 10);
+        const ms = Number(typeof d.createdAt === 'number' ? d.createdAt : d.timestamp);
+        if (ms > 0) { const x = new Date(ms); if (!isNaN(x.getTime())) return `${x.getFullYear()}-${_p2(x.getMonth()+1)}-${_p2(x.getDate())}`; }
+      }
+      return String(respaldo||'').substring(0, 10);
+    };
+    const fechaCierre = (ne, fechasCobros) => {
+      const cands = (fechasCobros||[]).filter(Boolean).map(f => String(f).substring(0, 10));
+      (_retsPorNE.get(ne.id)||[]).forEach(r => {
+        if (r.tipo === 'IGTF' || !(r._montoUSD > 0.005)) return;
+        const f = _fechaRegistro(r, r.fechaComprobante||r.fecha); if (f) cands.push(f);
+      });
+      _ncsVistas(ne).forEach(n => {
+        if (n.tipo !== 'NC') return;
+        const u = _usdNota(n); if (u == null || !(u > 0) || !(_pesoNota(ne, n) > 0)) return;
+        const f = _fechaRegistro(n, n.fecha); if (f) cands.push(f);
+      });
+      let f = cands.sort().slice(-1)[0] || '';
+      if (f && f < FECHA_CORTE_CIERRE) f = FECHA_CORTE_CIERRE;
+      return f;
+    };
+    // El motor se reconstruye cuando cambian los datos, así que dentro de una misma versión de los datos el saldo de cada NE no cambia: se calcula una vez.
+    const _saldoMemo = new Map();
+    const getSaldoNE = (ne) => { if (_saldoMemo.has(ne.id)) return _saldoMemo.get(ne.id); const v = getSaldoNEAtFecha(ne, null); _saldoMemo.set(ne.id, v); return v; };
+    return { getSaldoNE, fechaCierre };
+  };
   // ── Reintegros a clientes (Banco / Caja · «ajuste a CxC» · Egreso) ─────────────────────────────────────────────────────
   // Un reintegro devuelve dinero al cliente y DESHACE algo que él tenía «a favor»: suma a lo que nos debe (cancela ese «a favor»).
   // Se cruza con el documento del que sale (lo elige quien lo registra en Banco / Caja):
@@ -33663,6 +33936,7 @@ function App() {
     return ()=>u();
   },[]);
   const [cobFiltro, setCobFiltro] = useState('pendiente'); // tabla manual de cobranza (estado de edición)
+  const motorSaldoComRef = useRef({ k: null, m: null }); // motor de saldo por NE de Comisiones, reutilizado mientras no cambien los datos de los que depende
   const [comBonos, setComBonos] = useState(null); // bonos editables del vendedor/mes
   const [comReportes, setComReportes] = useState([]); // historial de reportes guardados
   const [comVistaHistorial, setComVistaHistorial] = useState(false); // ver historial vs calcular
@@ -45798,6 +46072,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             }
             return false;
           }).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+          // Saldo por NE igual al de Cuentas por Cobrar (para saber cuándo una NE quedó en cero por una retención / NC). Si algo falla, rige solo la regla anterior.
+          // El motor depende SOLO de estos datos: mientras ninguno cambie (cambiar de pestaña, de mes, escribir una fecha) se reutiliza el ya armado.
+          let motorSaldoCom = null;
+          try{
+            const kMotor = [notasEntrega, invoices, retenciones, notasVentaCD, cobrosCxc, clients, movBancoApp, movCajaApp, settings?.tasaBCV];
+            const cMotor = motorSaldoComRef.current;
+            if(cMotor.m && cMotor.k && cMotor.k.every((x,i)=>Object.is(x,kMotor[i]))) motorSaldoCom = cMotor.m;
+            else { motorSaldoCom = construirMotorSaldoNE(); motorSaldoComRef.current = { k: kMotor, m: motorSaldoCom }; }
+          }catch(e){ console.error('Comisiones: no se pudo calcular el saldo de las NE; se usa solo la regla anterior.', e); }
           const cobranzaCalcAll = nesCobranza.map(ne => {
             const pago = (comCobranza||[]).find(c=>c.neId===ne.id)||{};
             const condicion = parseInt(ne.diasCredito||0);
@@ -45805,7 +46088,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             // AUTO: si la NE quedó saldada por cobros registrados en CxC, la fecha del cobro que la saldó marca la comisión (lo manual tiene prioridad)
             const cobrosNEcom=(cobrosCxc||[]).filter(c=>c.neId===ne.id&&!c.esAnticipo);
             const neSaldadaCom=(ne.statusCxC==='COBRADA')||(ne.saldoPendiente!==undefined&&parseNum(ne.saldoPendiente)<=0.01);
-            const fechaPagoAuto=(cobrosNEcom.length&&neSaldadaCom)?cobrosNEcom.map(c=>c.fecha||'').sort().slice(-1)[0]:'';
+            let fechaPagoAuto=(cobrosNEcom.length&&neSaldadaCom)?cobrosNEcom.map(c=>c.fecha||'').sort().slice(-1)[0]:'';
+            // NUEVO: NE que quedó en CERO por una retención (o NC) registrada después del último cobro. Exige al menos un cobro real (una NE anulada
+            // por una NC completa no genera comisión) y solo actúa si la regla de siempre no la dio por cobrada: lo que ya salía Cobrado no cambia.
+            let fechaViaCierre=false;
+            if(!fechaPagoAuto && cobrosNEcom.length && motorSaldoCom){
+              try{
+                if(motorSaldoCom.getSaldoNE(ne)<=0.01){
+                  fechaPagoAuto=motorSaldoCom.fechaCierre(ne,cobrosNEcom.map(c=>c.fecha||''));
+                  fechaViaCierre=!!fechaPagoAuto;
+                }
+              }catch(e){ console.error('Comisiones: saldo de la NE '+ne.id, e); }
+            }
             const fechaPago = pago.fechaPago || fechaPagoAuto || '';
             const cobrado = !!(pago.cobrado || fechaPago);
             const diasRetraso = fechaPago && vencimiento ? Math.max(0, diffDias(vencimiento, fechaPago)) : 0;
@@ -45818,7 +46112,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             return {
               neId: ne.id, fecha: ne.fecha, cliente: ne.clientName||'', factura,
               monto, condicion, vencimiento, fechaPago, diasRetraso,
-              rango, pct, montoPagar: monto*(pct/100), cobrado
+              rango, pct, montoPagar: monto*(pct/100), cobrado, fechaPorCierre: fechaViaCierre && !pago.fechaPago
             };
           });
           const cobranzaVisible = cobranzaCalcAll.filter(r => !(comCobranza||[]).find(c=>c.neId===r.neId)?.excluido);
@@ -46193,6 +46487,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <td className="px-2 py-1.5 text-center text-[10px]">{r.vencimiento||'—'}</td>
                             <td className="px-2 py-1.5 text-center">
                               <input type="date" value={r.fechaPago||''}
+                                title={r.fechaPorCierre?'Fecha automática: la NE quedó en cero al registrarse la retención / nota (igual que en Cuentas por Cobrar). Puedes cambiarla a mano.':undefined}
                                 onChange={e=>updCobranza(i,'fechaPago',e.target.value)}
                                 className="border-2 border-orange-200 rounded-lg px-1 py-0.5 text-[10px] w-28 focus:border-orange-400 outline-none"/>
                             </td>
