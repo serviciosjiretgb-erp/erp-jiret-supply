@@ -1915,7 +1915,7 @@ const rhPfNotaLey = (id, pctInces) => {
 // El INCES del mes (Parafiscales → INCES → % patronal, normalmente 2%) es la provisión mensual del aporte trimestral: se calcula sobre el salario normal del mes (asignaciones sin Utilidades ni Bono vacacional), la misma base de «INCES Trimestral»; los 3 meses del trimestre suman ese aporte.
 // El INCES que se descuenta al trabajador en un pago de Utilidades (0,5 % sobre las utilidades) va en el comprobante de ese tipo de nómina, contra el mismo «INCES por pagar»; no se mezcla con la provisión de la empresa.
 // El FAOV (BANAVIH) de un pago de Utilidades va como el de cualquier nómina: lo del trabajador en el comprobante de su tipo y el aporte de la empresa en «Aportes patronales», contra el mismo «FAOV por pagar».
-// Los comprobantes no pasan solos a la contabilidad: se guardan en «Cierre de Mes» (colección rrhh_cierres_mes, un documento por mes) y se pueden imprimir o bajar a Excel.
+// Los comprobantes no pasan solos a la contabilidad: se guardan en «Cierre de Mes» (colección rrhh_cierres_mes, un documento por mes), se pueden imprimir o bajar a Excel y, con el botón «Pasar a Contabilidad», se llevan a Comprobantes Contables → Nómina (ver rhContab*).
 const RH_CIERRE_CATEGORIAS = [
   { id:'nomina', label:'Nóminas', pref:'NOM', icono:'💰' },
   { id:'beneficio', label:'Beneficios', pref:'BEN', icono:'🎁' },
@@ -2312,6 +2312,110 @@ const rhCierreDocExcel = (info, comprobantes) => {
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"/><style>${RH_CIERRE_CSS_XLS}</style></head><body><h2 style="font-family:Arial;margin-bottom:2px">${esc(i.empresa)}</h2><p style="font-family:Arial;font-size:11px;margin:0 0 4px">RIF: ${esc(i.rif)}</p><h3 style="font-family:Arial;font-size:12px;margin:4px 0">${esc(String(i.titulo || '').toUpperCase())}</h3><p style="font-family:Arial;font-size:10px;margin:0 0 8px">Mes: ${esc(i.etiquetaMes)} · Fecha de los asientos: ${rhCierreFechaTxt(i.fecha)} · ${(comprobantes || []).length} comprobante(s) · Débitos $${rhCierreFmt(t.dUSD)} / Bs.${rhCierreFmt(t.dBs)} · Créditos $${rhCierreFmt(t.hUSD)} / Bs.${rhCierreFmt(t.hBs)}${i.generado ? ' · Generado ' + esc(i.generado) : ''}</p>${rhCierreIndiceHtml(comprobantes)}<p style="font-family:Arial;font-size:11px;font-weight:bold;margin:12px 0 4px">DETALLE DE LOS ASIENTOS</p>${rhCierreHtmlTabla(comprobantes)}</body></html>`;
 };
 
+// ── Pasar el cierre de mes a Contabilidad (Comprobantes Contables → pestaña «Nómina») ──────────────────────────────────────────────────────────────
+// Cada comprobante del cierre se guarda en comprobantes_nomina (la colección que ya leen el Libro Diario, el Mayor, los Balances y el Estado de Resultados) con un id FIJO
+// «RRHH-<número>» y origen 'rrhh_cierre': volver a pasar el mismo mes REEMPLAZA esos mismos documentos (no duplica), agrega los nuevos y retira los que ya no existan (lo anterior
+// queda en la Papelera). Los comprobantes de Nómina cargados por Excel no se tocan nunca. En Contabilidad quedan de solo lectura: se cambian en RRHH y se vuelven a pasar.
+const RH_CONTAB_ORIGEN = 'rrhh_cierre';
+const rhContabId = (numero) => 'RRHH-' + String(numero == null ? '' : numero).replace(/[^A-Za-z0-9_-]+/g, '_');
+// Comprobantes de Contabilidad (Nómina) que vienen del cierre de RRHH de ese mes
+const rhContabPublicados = (docs, mes) => (docs || []).filter(d => d && d.origen === RH_CONTAB_ORIGEN && d.rrhhMes === mes);
+// Firma de un comprobante tal como se ve en Contabilidad: número, fecha, concepto, tasa y todas sus líneas
+const rhContabFirma = (c) => rhCierreHash([c.comprobante, c.fecha, c.conc, Number(c.tasa) || 0, rhCierreFirma([c])].join('@@'));
+// El documento de Contabilidad de un comprobante del cierre (líneas en la forma de la pestaña Nómina: tipo + montoBs + montoUSD)
+const rhContabDoc = (c, mes, extra) => ({
+  id: rhContabId(c.comprobante), fecha: c.fecha, nroComprobante: c.comprobante, concepto: c.conc, tasa: Number(c.tasa) || 0,
+  lineas: (c.lineas || []).map(l => ({ codigo: l.codigo || '', cuenta: l.cuenta || '', tipo: l.tipo, montoBs: l.tipo === 'D' ? benR2(l.dBs) : benR2(l.hBs), montoUSD: l.tipo === 'D' ? benR2(l.dUSD) : benR2(l.hUSD), detalle: '' })),
+  origen: RH_CONTAB_ORIGEN, rrhhMes: mes, rrhhCategoria: c.categoria || '', rrhhSubtipo: c.subtipo || '', rrhhTitulo: c.titulo || '', rrhhFirma: rhContabFirma(c),
+  ...(extra || {}),
+});
+// De un documento de Contabilidad otra vez a la forma del comprobante del cierre (para compararlo con el cierre guardado, con lo que HAY escrito, no con lo que se escribió)
+const rhContabAComp = (d) => ({
+  categoria: d.rrhhCategoria || '', subtipo: d.rrhhSubtipo || '', titulo: d.rrhhTitulo || '', comprobante: d.nroComprobante || '', fecha: d.fecha || '', conc: d.concepto || '', tasa: Number(d.tasa) || 0,
+  lineas: (d.lineas || []).map(l => ({ codigo: l.codigo || '', cuenta: l.cuenta || '', tipo: l.tipo, dBs: l.tipo === 'D' ? Number(l.montoBs) || 0 : 0, hBs: l.tipo === 'H' ? Number(l.montoBs) || 0 : 0, dUSD: l.tipo === 'D' ? Number(l.montoUSD) || 0 : 0, hUSD: l.tipo === 'H' ? Number(l.montoUSD) || 0 : 0 })),
+});
+// Qué hay que hacer para que Contabilidad quede igual que el cierre guardado:
+//   nuevos = todavía no están · cambiados = están pero distintos (se reemplazan) · iguales = sin cambios · retirar = están en Contabilidad pero ya no existen en el cierre
+const rhContabPlan = (comprobantes, publicados) => {
+  const porId = new Map((publicados || []).map(d => [d.id, d]));
+  const vistos = new Set();
+  const nuevos = [], cambiados = [], iguales = [];
+  (comprobantes || []).forEach(c => {
+    const id = rhContabId(c.comprobante);
+    vistos.add(id);
+    const d = porId.get(id);
+    if (!d) nuevos.push({ c, id });
+    else if (rhContabFirma(rhContabAComp(d)) === rhContabFirma(c)) iguales.push({ c, id, doc: d });
+    else cambiados.push({ c, id, doc: d });
+  });
+  const retirar = (publicados || []).filter(d => !vistos.has(d.id));
+  return { nuevos, cambiados, iguales, retirar, alDia: nuevos.length === 0 && cambiados.length === 0 && retirar.length === 0 };
+};
+// Una fila por comprobante para el resumen (en el orden del cierre) y, al final, los que se retiran
+const rhContabFilas = (comprobantes, plan) => {
+  const est = new Map();
+  ((plan && plan.nuevos) || []).forEach(x => est.set(x.id, 'nuevo'));
+  ((plan && plan.cambiados) || []).forEach(x => est.set(x.id, 'cambiado'));
+  ((plan && plan.iguales) || []).forEach(x => est.set(x.id, 'igual'));
+  const filas = (comprobantes || []).map(c => { const t = c.totales || rhCierreTotales(c.lineas); return { numero: c.comprobante, titulo: c.titulo, estado: est.get(rhContabId(c.comprobante)) || 'nuevo', dBs: t.dBs, dUSD: t.dUSD }; });
+  ((plan && plan.retirar) || []).forEach(d => { const t = rhCierreTotales(rhContabAComp(d).lineas); filas.push({ numero: d.nroComprobante || d.id, titulo: d.rrhhTitulo || d.concepto || '', estado: 'retirar', dBs: t.dBs, dUSD: t.dUSD }); });
+  return filas;
+};
+// Lo que impide pasar el cierre (no se puede seguir hasta arreglarlo)
+const rhContabBloqueos = (guardado, obsoleto) => {
+  if (!guardado) return ['Todavía no hay un cierre guardado de este mes: genéralo primero.'];
+  const comps = guardado.comprobantes || [];
+  const out = [];
+  if (comps.length === 0) out.push('El cierre no tiene comprobantes.');
+  if (obsoleto) out.push('Los pagos, las cuentas contables o la forma de armar los asientos cambiaron después de generar este cierre: pulsa «Volver a generar asientos de cierre» y luego pásalo a Contabilidad.');
+  const desc = comps.filter(c => c.cuadra === false);
+  if (desc.length) out.push(`${desc.length} comprobante(s) no cuadran (Debe distinto de Haber): ${desc.map(c => c.comprobante).join(', ')}.`);
+  const sinCta = comps.filter(c => (c.lineas || []).some(l => !String(l.codigo || '').trim()));
+  if (sinCta.length) out.push(`Hay líneas sin cuenta contable en: ${sinCta.map(c => c.comprobante).join(', ')}. Configura la cuenta (mira el aviso de cuentas del cierre) y vuelve a generar el cierre.`);
+  const sinNum = comps.filter(c => !String(c.comprobante || '').trim());
+  if (sinNum.length) out.push('Hay comprobantes sin número: vuelve a generar el cierre.');
+  return out;
+};
+// Revisa lo que ya hay en Contabilidad ese mes y avisa si el gasto del cierre podría contarse dos veces (no bloquea: lo decide quien pasa el cierre).
+//   datos = { nomina: comprobantes_nomina, asientos: cont_asientos (Banco/Caja), ajustes: comprobantes_ajustes, plan: planDeCuentas, corte: «Inicio de Contabilidad Real» (AAAA-MM-DD) }
+const rhContabAvisos = (comprobantes, mes, datos) => {
+  const d = datos || {};
+  const enMes = (f) => String(f || '').slice(0, 7) === mes;
+  const cod = (x) => String(x == null ? '' : x).trim();
+  // cuentas de gasto / costo (5.x y 6.x) que el cierre carga al Debe: son las que cambian el Estado de Resultados
+  const gasto = new Set();
+  (comprobantes || []).forEach(c => (c.lineas || []).forEach(l => { if (l.tipo === 'D' && /^[56]/.test(cod(l.codigo))) gasto.add(cod(l.codigo)); }));
+  const duplicados = [];
+  (d.asientos || []).filter(a => a && enMes(a.fecha)).forEach(a => (a.lineas || []).forEach(l => {
+    const bs = Number(l.debeBs) || 0, usd = Number(l.debeUSD) || 0;
+    if (gasto.has(cod(l.codigo)) && (bs > 0 || usd > 0)) duplicados.push({ origen: 'Banco/Caja', fecha: a.fecha, comprobante: a.comprobante || a.numero || a.id || '', concepto: a.descripcion || l.concepto || '', codigo: cod(l.codigo), cuenta: l.cuenta || '', bs, usd });
+  }));
+  (d.ajustes || []).filter(a => a && enMes(a.fecha)).forEach(a => (a.lineas || []).forEach(l => {
+    if (l.tipo === 'D' && gasto.has(cod(l.codigo))) duplicados.push({ origen: 'Ajustes', fecha: a.fecha, comprobante: a.nroComprobante || a.id || '', concepto: a.concepto || l.detalle || '', codigo: cod(l.codigo), cuenta: l.cuenta || '', bs: Number(l.montoBs) || 0, usd: Number(l.montoUSD) || 0 });
+  }));
+  // nómina ya cargada por Excel con fecha de ese mes (no viene de RRHH)
+  const excel = (d.nomina || []).filter(a => a && a.origen !== RH_CONTAB_ORIGEN && enMes(a.fecha)).map(a => ({
+    id: a.id, comprobante: a.nroComprobante || a.id || '', fecha: a.fecha,
+    bs: benR2((a.lineas || []).reduce((t, l) => t + (l.tipo === 'D' ? Number(l.montoBs) || 0 : 0), 0)), usd: benR2((a.lineas || []).reduce((t, l) => t + (l.tipo === 'D' ? Number(l.montoUSD) || 0 : 0), 0)),
+  }));
+  // códigos del cierre que no están en el plan de cuentas
+  const sinPlan = [];
+  if ((d.plan || []).length > 0) {
+    const codigos = new Set(d.plan.map(p => cod(p.codigo)));
+    const vistos = new Set();
+    (comprobantes || []).forEach(c => (c.lineas || []).forEach(l => { const k = cod(l.codigo); if (k && !codigos.has(k) && !vistos.has(k)) { vistos.add(k); sinPlan.push({ codigo: k, cuenta: l.cuenta || '', comprobante: c.comprobante }); } }));
+  }
+  // fecha de los comprobantes anterior a «Inicio de Contabilidad Real» (settings.fechaInicioContabilidad): los reportes ignoran lo operativo fechado antes de ese día
+  const corte = String(d.corte || '').trim();
+  const antesCorte = corte && (comprobantes || []).some(c => String(c.fecha || '') < corte) ? corte : '';
+  return { duplicados, excel, sinPlan, antesCorte };
+};
+// Copia COMPLETA del documento en la Papelera (la misma forma que archivarEnPapelera) dentro del mismo lote que lo reemplaza o lo retira
+const rhContabPapelera = (batch, d, motivo, quien, ahora) => {
+  const papId = `PAP-${ahora}-${Math.random().toString(36).slice(2, 8)}`;
+  batch.set(getDocRef('papelera', papId), { id: papId, coleccionOrigen: 'comprobantes_nomina', docId: String(d.id), datos: d, resumen: `Nómina RRHH ${d.nroComprobante || d.id} — ${motivo}`, eliminadoPor: quien, fechaEliminado: getTodayDate(), eliminadoEn: ahora });
+};
+
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'cierre' | 'parafiscales' | 'conceptos'
   const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa' | 'asiento'
@@ -2450,6 +2554,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [cierreCat,setCierreCat]=useState('TODAS'); // tema que se ve: 'TODAS' o el id de RH_CIERRE_CATEGORIAS
   const [cierreBusq,setCierreBusq]=useState('');
   const [busyCierre,setBusyCierre]=useState(false);
+  const [nominaContab,setNominaContab]=useState([]); // comprobantes de Contabilidad → Nómina que vienen del cierre de RRHH (origen rrhh_cierre)
+  const [pasarModal,setPasarModal]=useState(null); // ventana «Pasar a Contabilidad»: {mes, cargando, bloqueos, plan, avisos, error, guardando, resultado}
   useEffect(()=>{
     const s1=onSnapshot(getColRef('rrhh_centros_costo'),s=>setCentros(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s2=onSnapshot(getColRef('rrhh_departamentos'),s=>setDepartamentos(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -2476,7 +2582,8 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
     const s8=onSnapshot(getColRef('rrhh_nomina_detalles'),s=>setNominaDetalles(s.docs.map(d=>({id:d.id,...d.data()}))));
     const s14=onSnapshot(getColRef('rrhh_tipos_nomina'),s=>setTiposNomina(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')))));
     const s15=onSnapshot(getColRef('rrhh_cierres_mes'),s=>setCierres(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();s13();s14();s15();};
+    const s16=onSnapshot(query(getColRef('comprobantes_nomina'),where('origen','==',RH_CONTAB_ORIGEN)),s=>setNominaContab(s.docs.map(d=>({id:d.id,...d.data()})).filter(d=>d.origen===RH_CONTAB_ORIGEN)));
+    return ()=>{s1();s2();s3();s4();s5();s6();s7();s8();s9();s10();s11();s12();s13();s14();s15();s16();};
   },[]);
 
   const [centroSel,setCentroSel]=useState(null);
@@ -4037,9 +4144,74 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
   };
   const eliminarCierreMes = async (mes) => {
     if(!cierres.some(c=>c.id===mes)) return;
-    if(!window.confirm(`¿Eliminar el cierre de ${rhEtiquetaMes(mes)}?\n\nSolo se borran estos comprobantes: los pagos de nómina no cambian y puedes volver a generarlo.`)) return;
-    try{ await deleteDoc(getDocRef('rrhh_cierres_mes',mes)); }
-    catch(e){ alert('Error: '+e.message); }
+    const pub = rhContabPublicados(nominaContab, mes);
+    const extra = pub.length ? `\n\nTambién se RETIRAN de Contabilidad (Comprobantes Contables → Nómina) los ${pub.length} comprobante(s) de este cierre que ya se pasaron: dejan de contar en el Estado de Resultados y quedan en la Papelera.` : '';
+    if(!window.confirm(`¿Eliminar el cierre de ${rhEtiquetaMes(mes)}?\n\nSolo se borran estos comprobantes: los pagos de nómina no cambian y puedes volver a generarlo.${extra}`)) return;
+    try{
+      if(pub.length===0){ await deleteDoc(getDocRef('rrhh_cierres_mes',mes)); return; }
+      const ahora = Date.now(), quien = appUser?.name||appUser?.username||'Sistema';
+      const batch = writeBatch(db);
+      pub.forEach(d=>{ rhContabPapelera(batch, d, 'retirado (se eliminó el cierre de RRHH)', quien, ahora); batch.delete(getDocRef('comprobantes_nomina', d.id)); });
+      batch.delete(getDocRef('rrhh_cierres_mes',mes));
+      await batch.commit();
+      logAuditoria(appUser,'Comprobantes Contables','ELIMINACIÓN',`Se eliminó el cierre de nómina de ${rhEtiquetaMes(mes)} en RRHH: se retiraron ${pub.length} comprobante(s) de Contabilidad → Nómina (${pub.map(d=>d.nroComprobante||d.id).join(', ')}) — quedan en la Papelera`);
+    }catch(e){ alert('Error: '+e.message); }
+  };
+  // ── Pasar el cierre guardado a Contabilidad (Comprobantes Contables → Nómina) ──
+  // Quien puede verlo en Contabilidad es quien tiene el permiso de Banco (el de «Comprobantes Contables»)
+  const puedeContabilidad = appUser?.role==='Master' || !!(appUser?.permissions||{}).banco;
+  // Abre la ventana: revisa lo que ya hay en Contabilidad (lo que se pasó antes, nómina cargada por Excel, asientos de Banco/Caja y ajustes del mes) y arma el resumen. No escribe nada.
+  const abrirPasarContab = async (mes) => {
+    if(!puedeContabilidad) return alert('Para pasar el cierre a Contabilidad necesitas el permiso de Contabilidad (Banco).');
+    const guardado = cierres.find(c=>c.id===mes) || null;
+    const calc = benMesOk(mes) ? calcularCierreMes(mes) : null;
+    const obsoleto = !!(guardado && calc && guardado.firma!==calc.firma);
+    const bloqueos = rhContabBloqueos(guardado, obsoleto);
+    setPasarModal({mes, cargando:bloqueos.length===0, bloqueos, plan:null, avisos:null, error:'', guardando:false, resultado:null});
+    if(bloqueos.length>0) return;
+    try{
+      const ini = mes+'-01', fin = mes+'-31';
+      const sNom = await getDocs(getColRef('comprobantes_nomina'));
+      const nomina = sNom.docs.map(d=>({id:d.id,...d.data()}));
+      // Banco/Caja y Ajustes solo sirven para avisar de un posible duplicado: si no se pueden leer, se avisa pero no se bloquea
+      let asientos = [], ajustes = [], noRevisado = [];
+      try{ const sA = await getDocs(query(getColRef('cont_asientos'),where('fecha','>=',ini),where('fecha','<=',fin))); asientos = sA.docs.map(d=>({id:d.id,...d.data()})).filter(a=>String(a.fecha||'').slice(0,7)===mes); }catch(e){ noRevisado.push('Banco/Caja'); }
+      try{ const sJ = await getDocs(query(getColRef('comprobantes_ajustes'),where('fecha','>=',ini),where('fecha','<=',fin))); ajustes = sJ.docs.map(d=>({id:d.id,...d.data()})).filter(a=>String(a.fecha||'').slice(0,7)===mes); }catch(e){ noRevisado.push('Ajustes'); }
+      const comps = guardado.comprobantes||[];
+      const plan = rhContabPlan(comps, rhContabPublicados(nomina, mes));
+      const avisos = {...rhContabAvisos(comps, mes, {nomina, asientos, ajustes, plan:planCuentasRH, corte:settings?.fechaInicioContabilidad||''}), noRevisado, abiertos:guardado.abiertos||[]};
+      setPasarModal(m=>m && m.mes===mes ? {...m, cargando:false, plan, avisos} : m);
+    }catch(e){ setPasarModal(m=>m && m.mes===mes ? {...m, cargando:false, error:'No se pudo revisar Contabilidad: '+e.message} : m); }
+  };
+  // Deja Contabilidad IGUAL al cierre guardado, en un solo lote (o se escribe todo o no se escribe nada): agrega los nuevos, reemplaza los que cambiaron (la versión anterior va a la Papelera) y retira los que ya no existen
+  const confirmarPasarContab = async () => {
+    const m = pasarModal;
+    if(!m || m.cargando || m.guardando || !m.plan || (m.bloqueos||[]).length>0) return;
+    const guardado = cierres.find(c=>c.id===m.mes);
+    if(!guardado) return;
+    // Si mientras estaba abierta la ventana cambió algo en los pagos, el cierre guardado ya no vale: no se escribe nada hasta volver a generarlo
+    const calcAhora = benMesOk(m.mes) ? calcularCierreMes(m.mes) : null;
+    const bloqueosAhora = rhContabBloqueos(guardado, !!(calcAhora && guardado.firma!==calcAhora.firma));
+    if(bloqueosAhora.length>0){ setPasarModal(x=>x?{...x, bloqueos:bloqueosAhora, plan:null, avisos:null, error:'', guardando:false}:x); return; }
+    setPasarModal(x=>x?{...x, guardando:true, error:''}:x);
+    try{
+      // Se vuelve a leer lo que hay justo antes de escribir: así queda bien aunque alguien haya cambiado algo mientras se miraba la ventana
+      const sNom = await getDocs(getColRef('comprobantes_nomina'));
+      const plan = rhContabPlan(guardado.comprobantes||[], rhContabPublicados(sNom.docs.map(d=>({id:d.id,...d.data()})), m.mes));
+      if(plan.alDia){ setPasarModal(x=>x?{...x, guardando:false, plan, resultado:{nuevos:0, cambiados:0, retirados:0}}:x); return; }
+      const ahora = Date.now(), quien = appUser?.name||appUser?.username||'Sistema';
+      const batch = writeBatch(db);
+      plan.nuevos.forEach(({c,id})=>batch.set(getDocRef('comprobantes_nomina', id), rhContabDoc(c, m.mes, {createdAt:ahora, actualizadoEn:ahora, user:quien})));
+      plan.cambiados.forEach(({c,id,doc})=>{
+        rhContabPapelera(batch, doc, 'versión anterior (reemplazada desde el cierre de RRHH)', quien, ahora);
+        batch.set(getDocRef('comprobantes_nomina', id), rhContabDoc(c, m.mes, {createdAt:doc.createdAt||ahora, actualizadoEn:ahora, user:quien}));
+      });
+      plan.retirar.forEach(d=>{ rhContabPapelera(batch, d, 'retirado (ya no está en el cierre de RRHH)', quien, ahora); batch.delete(getDocRef('comprobantes_nomina', d.id)); });
+      await batch.commit();
+      const resultado = {nuevos:plan.nuevos.length, cambiados:plan.cambiados.length, retirados:plan.retirar.length};
+      logAuditoria(appUser,'Comprobantes Contables',(resultado.cambiados||resultado.retirados)?'EDICIÓN':'CREACIÓN',`Cierre de nómina de ${rhEtiquetaMes(m.mes)} pasado a Contabilidad → Nómina desde RRHH: ${resultado.nuevos} nuevo(s), ${resultado.cambiados} reemplazado(s), ${resultado.retirados} retirado(s) — total del cierre $${rhCierreFmt(guardado.totales?guardado.totales.dUSD:0)} / Bs.${rhCierreFmt(guardado.totales?guardado.totales.dBs:0)}`);
+      setPasarModal(x=>x?{...x, guardando:false, plan, resultado}:x);
+    }catch(e){ setPasarModal(x=>x?{...x, guardando:false, error:'Error al pasar a Contabilidad: '+e.message}:x); }
   };
   // PDF (ventana de impresión con el membrete) y Excel del cierre guardado, con los comprobantes que se ven en pantalla (tema y buscador)
   const infoReporteCierre = (guardado, nombreTema) => ({
@@ -5932,6 +6104,12 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
         const tot = rhCierreTotales(visibles.reduce((s,c)=>s.concat(c.lineas||[]),[]));
         const lblCls = "text-[9px] font-black text-gray-500 uppercase block mb-1";
         const puedeGenerar = !busyCierre && !!calc && calc.comprobantes.length>0;
+        // Estado en Contabilidad: lo que hay pasado de este mes (comprobantes_nomina con origen RRHH) frente al cierre guardado
+        const pubMes = rhContabPublicados(nominaContab, mesV);
+        const planContab = guardado ? rhContabPlan(comps, pubMes) : null;
+        const contabEstado = !guardado ? '' : (pubMes.length===0 ? 'sin' : (planContab.alDia ? 'aldia' : 'pendiente'));
+        const ultimoPase = pubMes.reduce((m,d)=>(d.actualizadoEn||d.createdAt||0)>(m.t||0)?{t:d.actualizadoEn||d.createdAt||0, quien:d.user||''}:m, {t:0, quien:''});
+        const resumenPendiente = planContab ? [planContab.nuevos.length?`${planContab.nuevos.length} por agregar`:'', planContab.cambiados.length?`${planContab.cambiados.length} por reemplazar`:'', planContab.retirar.length?`${planContab.retirar.length} por retirar`:''].filter(Boolean).join(' · ') : '';
         const temas = [{id:'TODAS', label:'Todos', icono:'📒', n:comps.length}, ...RH_CIERRE_CATEGORIAS.map(c=>({...c, n:comps.filter(x=>x.categoria===c.id).length}))];
         const nombreTema = (id) => { const t = RH_CIERRE_CATEGORIAS.find(c=>c.id===id); return t ? t.label : id; };
         return (
@@ -5946,6 +6124,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               className={`px-4 py-2 rounded-lg font-black text-[10px] uppercase flex items-center gap-1.5 text-white whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${obsoleto?'bg-amber-500 hover:bg-amber-600':'bg-cyan-600 hover:bg-cyan-700'}`}>
               <RefreshCw size={12} className={busyCierre?'animate-spin':''}/>{busyCierre?'Generando...':(guardado?'Volver a generar asientos de cierre':'Generar asientos de cierre de mes')}
             </button>
+            {guardado && <button data-testid="cierre-pasar-contab" onClick={()=>abrirPasarContab(mesV)} disabled={!puedeContabilidad || busyCierre}
+              title={puedeContabilidad?'Pasa estos comprobantes a Contabilidad (Comprobantes Contables → Nómina) para que entren al Libro Diario, al Mayor y al Estado de Resultados. Si ya estaban, los actualiza sin duplicar.':'Necesitas el permiso de Contabilidad (Banco) para pasar el cierre a Contabilidad'}
+              className={`px-4 py-2 rounded-lg font-black text-[10px] uppercase flex items-center gap-1.5 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${contabEstado==='aldia'?'bg-white text-emerald-700 border-2 border-emerald-300 hover:bg-emerald-50':'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
+              <BookOpen size={12}/>Pasar a Contabilidad
+            </button>}
             <button data-testid="cierre-pdf" onClick={()=>exportarCierreMesPDF(guardado, visibles, temaSel?temaSel.label:'')} disabled={!guardado||visibles.length===0} className="bg-gray-800 hover:bg-black text-white px-3 py-1.5 rounded-lg font-black text-[10px] flex items-center gap-1 whitespace-nowrap disabled:opacity-40"><Printer size={12}/>PDF</button>
             <button data-testid="cierre-excel" onClick={()=>exportarCierreMesExcel(guardado, visibles, temaSel?temaSel.label:'')} disabled={!guardado||visibles.length===0} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-black text-[10px] flex items-center gap-1 whitespace-nowrap disabled:opacity-40"><Download size={12}/>Excel</button>
             {guardado && <button data-testid="cierre-eliminar" onClick={()=>eliminarCierreMes(mesV)} title="Eliminar el cierre generado de este mes" className="bg-red-50 text-red-500 hover:bg-red-100 px-2.5 py-1.5 rounded-lg"><Trash2 size={13}/></button>}
@@ -5993,6 +6176,11 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 text-[11px] font-bold text-emerald-800 flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="cierre-estado">
                 <span>✅ Cierre de {etiqueta} generado el {fechaHoraCierre(guardado.generadoEn)}{guardado.generadoPor?` por ${guardado.generadoPor}`:''}</span>
                 <span className="font-normal text-emerald-700">{comps.length} comprobante(s) · {(guardado.pagos||[]).length} pago(s) · fecha de los asientos {rhCierreFechaTxt(guardado.fecha)}</span>
+              </div>
+              <div className={`rounded-xl px-4 py-2.5 text-[11px] font-bold border ${contabEstado==='aldia'?'bg-emerald-50 border-emerald-200 text-emerald-800':contabEstado==='pendiente'?'bg-amber-50 border-amber-300 text-amber-800':'bg-slate-50 border-slate-200 text-slate-600'}`} data-testid="cierre-contab-estado" data-estado={contabEstado}>
+                {contabEstado==='sin' && <span>📒 Aún no está en Contabilidad. Cuando el cierre esté listo, pulsa «Pasar a Contabilidad».</span>}
+                {contabEstado==='aldia' && <span>📒 En Contabilidad: al día con este cierre · {pubMes.length} comprobante(s) en Comprobantes Contables → Nómina{ultimoPase.t?` · pasado el ${fechaHoraCierre(ultimoPase.t)}${ultimoPase.quien?` por ${ultimoPase.quien}`:''}`:''}</span>}
+                {contabEstado==='pendiente' && <span>⚠️ Contabilidad no está al día con este cierre ({resumenPendiente}). Pulsa «Pasar a Contabilidad» para actualizarla.</span>}
               </div>
               {obsoleto && (
                 <div className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" data-testid="cierre-aviso-obsoleto">
@@ -6118,10 +6306,110 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                 </div>
               )}
               <p className="text-[10px] text-gray-400 leading-relaxed" data-testid="cierre-nota">
-                Cada comprobante cuadra por sí solo. Son las cifras de los pagos del mes, repartidas por tema y sumadas por cuenta (el Bs. de cada pago con su propia tasa). Lo que se descuenta al trabajador va en Nóminas y Beneficios; el aporte de la empresa va solo en su propio comprobante. HCM y Bolsas de alimentos llevan dos: lo cobrado a los trabajadores (la cuenta por cobrar que acredita la nómina) contra la cuenta «por pagar», y el aporte de la empresa por centro de costo contra esa misma cuenta «por pagar» (la «Cuenta de pasivo (cierre de mes)» de Configuración). IVSS, SPF y FAOV: el aporte de la empresa por centro de costo contra la misma cuenta «por pagar» donde la nómina acredita lo retenido al trabajador. {pctInces>0 ? `INCES: el aporte patronal del mes (${String(pctInces).replace('.',',')}% del salario normal de los tipos de nómina que llevan INCES, sin utilidades, bono vacacional ni conceptos de bono / no bonificables); se paga por trimestre.` : 'INCES: no hay aporte del mes porque en Parafiscales → INCES el % patronal está en 0.'} Estos comprobantes no pasan solos a Contabilidad.
+                Cada comprobante cuadra por sí solo. Son las cifras de los pagos del mes, repartidas por tema y sumadas por cuenta (el Bs. de cada pago con su propia tasa). Lo que se descuenta al trabajador va en Nóminas y Beneficios; el aporte de la empresa va solo en su propio comprobante. HCM y Bolsas de alimentos llevan dos: lo cobrado a los trabajadores (la cuenta por cobrar que acredita la nómina) contra la cuenta «por pagar», y el aporte de la empresa por centro de costo contra esa misma cuenta «por pagar» (la «Cuenta de pasivo (cierre de mes)» de Configuración). IVSS, SPF y FAOV: el aporte de la empresa por centro de costo contra la misma cuenta «por pagar» donde la nómina acredita lo retenido al trabajador. {pctInces>0 ? `INCES: el aporte patronal del mes (${String(pctInces).replace('.',',')}% del salario normal de los tipos de nómina que llevan INCES, sin utilidades, bono vacacional ni conceptos de bono / no bonificables); se paga por trimestre.` : 'INCES: no hay aporte del mes porque en Parafiscales → INCES el % patronal está en 0.'} Estos comprobantes no pasan solos a Contabilidad: cuando el cierre esté listo, pulsa «Pasar a Contabilidad» (si después cambias algo y lo vuelves a generar, vuelve a pulsarlo y se actualizan los mismos comprobantes, sin duplicar).
               </p>
             </>
           )}
+          {pasarModal && (()=>{
+            const m = pasarModal;
+            const etiquetaM = rhEtiquetaMes(m.mes);
+            const gd = cierres.find(c=>c.id===m.mes) || null;
+            const plan = m.plan;
+            const filas = plan ? rhContabFilas(gd?gd.comprobantes:[], plan) : [];
+            const avisos = m.avisos || {duplicados:[], excel:[], sinPlan:[], noRevisado:[], abiertos:[], antesCorte:''};
+            const hayBloqueo = (m.bloqueos||[]).length>0;
+            const puedeConfirmar = !m.cargando && !m.guardando && !hayBloqueo && !!plan && !plan.alDia && !m.error;
+            const chip = (n, txt, cls, id) => <span data-testid={id} className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${n>0?cls:'bg-gray-100 text-gray-400'}`}>{n} {txt}</span>;
+            const ESTADO = {nuevo:['Nuevo','bg-emerald-100 text-emerald-700'], cambiado:['Se reemplaza','bg-amber-100 text-amber-700'], igual:['Sin cambios','bg-gray-100 text-gray-500'], retirar:['Se retira','bg-red-100 text-red-600']};
+            return (
+              <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4" data-testid="pasar-modal" onClick={()=>{ if(!m.guardando) setPasarModal(null); }}>
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 space-y-4" onClick={e=>e.stopPropagation()}>
+                  <div>
+                    <h3 className="font-black text-lg text-gray-800">📒 Pasar el cierre de {etiquetaM} a Contabilidad</h3>
+                    <p className="text-[11px] text-gray-500 mt-0.5">Los comprobantes quedan en Comprobantes Contables → Nómina (solo lectura) y entran al Libro Diario, al Mayor, a los Balances y al Estado de Resultados. Si ya estaban, se reemplazan los mismos (no se duplican).</p>
+                  </div>
+                  {m.resultado ? (
+                    <>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-[12px] font-bold text-emerald-800" data-testid="pasar-resultado">
+                        {(m.resultado.nuevos+m.resultado.cambiados+m.resultado.retirados)===0
+                          ? '✅ Contabilidad ya estaba al día con este cierre: no se cambió nada.'
+                          : `✅ Listo. Contabilidad quedó igual al cierre de ${etiquetaM}: ${m.resultado.nuevos} nuevo(s), ${m.resultado.cambiados} reemplazado(s), ${m.resultado.retirados} retirado(s). Ya cuenta en el Estado de Resultados.`}
+                      </div>
+                      <button data-testid="pasar-cerrar" onClick={()=>setPasarModal(null)} className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black uppercase text-xs py-3 rounded-xl">Cerrar</button>
+                    </>
+                  ) : (
+                    <>
+                      {hayBloqueo && (
+                        <div className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3 space-y-1" data-testid="pasar-bloqueos">
+                          <p className="font-black">No se puede pasar todavía:</p>
+                          {m.bloqueos.map((b,i)=>(<p key={i}>• {b}</p>))}
+                        </div>
+                      )}
+                      {m.cargando && <p className="text-[11px] font-bold text-gray-500" data-testid="pasar-cargando">Revisando lo que ya hay en Contabilidad…</p>}
+                      {m.error && <p className="text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3" data-testid="pasar-error">{m.error}</p>}
+                      {plan && (
+                        <>
+                          <div className="flex flex-wrap gap-2" data-testid="pasar-resumen">
+                            {chip(plan.nuevos.length, 'nuevo(s)', 'bg-emerald-100 text-emerald-700', 'pasar-n-nuevos')}
+                            {chip(plan.cambiados.length, 'se reemplazan', 'bg-amber-100 text-amber-700', 'pasar-n-cambiados')}
+                            {chip(plan.iguales.length, 'sin cambios', 'bg-gray-100 text-gray-500', 'pasar-n-iguales')}
+                            {chip(plan.retirar.length, 'se retiran', 'bg-red-100 text-red-600', 'pasar-n-retirar')}
+                          </div>
+                          {plan.alDia && <p className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3" data-testid="pasar-al-dia">Contabilidad ya está al día con este cierre: no hay nada que pasar.</p>}
+                          {avisos.duplicados.length>0 && (
+                            <div className="text-[11px] font-bold text-red-700 bg-red-50 border-2 border-red-300 rounded-xl px-4 py-3 space-y-1" data-testid="pasar-aviso-duplicado">
+                              <p className="font-black">⚠️ Posible gasto doble: en {etiquetaM} ya hay {avisos.duplicados.length} movimiento(s) que cargan al Debe las mismas cuentas de gasto de este cierre. Si son pagos de nómina, deberían ir contra «Nómina por pagar» (pasivo) y no contra el gasto; si no, el Estado de Resultados contaría el gasto dos veces.</p>
+                              {avisos.duplicados.slice(0,12).map((x,i)=>(<p key={i} className="font-normal">• {x.origen} · {rhCierreFechaTxt(x.fecha)} · {x.comprobante} · {x.codigo} {x.cuenta} · {x.bs>0?`Bs.${rhCierreFmt(x.bs)}`:''}{x.usd>0?` ($${rhCierreFmt(x.usd)})`:''}{x.concepto?` · ${x.concepto}`:''}</p>))}
+                              {avisos.duplicados.length>12 && <p className="font-normal">…y {avisos.duplicados.length-12} más.</p>}
+                            </div>
+                          )}
+                          {avisos.excel.length>0 && (
+                            <div className="text-[11px] font-bold text-red-700 bg-red-50 border-2 border-red-300 rounded-xl px-4 py-3 space-y-1" data-testid="pasar-aviso-excel">
+                              <p className="font-black">⚠️ En Comprobantes Contables → Nómina ya hay {avisos.excel.length} comprobante(s) de {etiquetaM} cargado(s) por Excel. Si son los mismos pagos de este cierre, el gasto se contaría dos veces (elimina esos o no pases el cierre).</p>
+                              {avisos.excel.slice(0,12).map((x,i)=>(<p key={i} className="font-normal">• {x.comprobante} · {rhCierreFechaTxt(x.fecha)} · Debe Bs.{rhCierreFmt(x.bs)} (${rhCierreFmt(x.usd)})</p>))}
+                            </div>
+                          )}
+                          {avisos.sinPlan.length>0 && (
+                            <div className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 space-y-0.5" data-testid="pasar-aviso-plan">
+                              <p className="font-black">Estas cuentas del cierre no están en el Plan de Cuentas (revísalas para que salgan bien en el Estado de Resultados):</p>
+                              {avisos.sinPlan.slice(0,12).map((x,i)=>(<p key={i} className="font-normal">• {x.codigo} {x.cuenta} ({x.comprobante})</p>))}
+                            </div>
+                          )}
+                          {avisos.antesCorte && (
+                            <p className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" data-testid="pasar-aviso-corte">⚠️ La fecha de estos comprobantes ({rhCierreFechaTxt(gd?gd.fecha:'')}) es anterior al «Inicio de Contabilidad Real» ({rhCierreFechaTxt(avisos.antesCorte)}): quedarán en Comprobantes Contables → Nómina, pero el Libro Diario, el Mayor, los Balances y el Estado de Resultados ignoran los movimientos anteriores a esa fecha.</p>
+                          )}
+                          {avisos.abiertos.length>0 && (
+                            <p className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" data-testid="pasar-aviso-abiertos">⚠️ Este cierre incluye {avisos.abiertos.length} pago(s) todavía ABIERTO(S): {avisos.abiertos.join(' · ')}.</p>
+                          )}
+                          {avisos.noRevisado.length>0 && (
+                            <p className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" data-testid="pasar-aviso-norevisado">No se pudo revisar {avisos.noRevisado.join(' y ')} para buscar gastos duplicados: revísalo a mano antes de pasar el cierre.</p>
+                          )}
+                          <div className="overflow-x-auto border border-gray-200 rounded-xl"><table className="w-full text-left" style={{fontSize:'11px'}} data-testid="pasar-tabla">
+                            <thead><tr className="text-gray-400 uppercase bg-slate-50" style={{fontSize:'9px'}}><th className="px-3 py-1.5 font-black">Comprobante</th><th className="px-3 py-1.5 font-black">Asiento</th><th className="px-3 py-1.5 font-black text-right">Debe $</th><th className="px-3 py-1.5 font-black text-right">Debe Bs.</th><th className="px-3 py-1.5 font-black">En Contabilidad</th></tr></thead>
+                            <tbody>
+                              {filas.map(f=>(
+                                <tr key={f.estado+f.numero} data-testid={'pasar-fila-'+f.numero} data-estado={f.estado} className="border-t border-gray-100">
+                                  <td className="px-3 py-1.5 font-mono font-black text-blue-600 whitespace-nowrap">{f.numero}</td>
+                                  <td className="px-3 py-1.5 font-bold text-gray-700">{f.titulo}</td>
+                                  <td className="px-3 py-1.5 text-right font-mono">${rhCierreFmt(f.dUSD)}</td>
+                                  <td className="px-3 py-1.5 text-right font-mono text-gray-500">Bs.{rhCierreFmt(f.dBs)}</td>
+                                  <td className="px-3 py-1.5"><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full whitespace-nowrap ${ESTADO[f.estado][1]}`}>{ESTADO[f.estado][0]}</span></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table></div>
+                        </>
+                      )}
+                      <div className="flex gap-2">
+                        <button data-testid="pasar-cancelar" onClick={()=>setPasarModal(null)} disabled={m.guardando} className="flex-1 bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-gray-300 disabled:opacity-40">Cancelar</button>
+                        <button data-testid="pasar-confirmar" onClick={confirmarPasarContab} disabled={!puedeConfirmar} className="flex-1 bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">{m.guardando?'Pasando…':'Pasar a Contabilidad'}</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
         );
       })()}
@@ -29324,6 +29612,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
     } catch (e) { setCargaAj(p => ({...p, estado:'listo', errorAplicar:'Error al guardar: '+((e && e.message) || e)})); }
   };
   const eliminarNomina = async (id) => {
+    if((nominaC||[]).some(a=>a.id===id && a.origen==='rrhh_cierre')){ alert('Este comprobante viene de Recursos Humanos (Cierre de mes) y no se borra aquí. Para retirarlo, elimina o vuelve a generar el cierre en RRHH → Cierre de mes y pulsa «Pasar a Contabilidad».'); return; }
     if(!window.confirm('¿Eliminar este comprobante de nómina? Se archiva en Papelera antes de borrar; recuperable desde Auditoría del Sistema → Papelera.')) return;
     try{ const doc_=(nominaC||[]).find(a=>a.id===id); if(doc_) await archivarEnPapelera('comprobantes_nomina', id, doc_, `Nómina — ${doc_.concepto||id}`); await deleteDoc(getDocRef('comprobantes_nomina', id)); } catch(e){ alert('Error al eliminar: '+e.message); }
   };
@@ -29523,6 +29812,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
         const snap = await getDocs(getColRef(col.nombre));
         snap.docs.forEach(d=>{
           const data=d.data();
+          if (col.nombre==='comprobantes_nomina' && data.origen==='rrhh_cierre') return; // viene de RRHH (Cierre de mes): la cuenta se arregla allá
           (data.lineas||[]).forEach((l,li)=>{
             if (!l.codigo) return; // sin código: no hay nada que reclasificar
             const cuentaVigente = porCodigo.get(l.codigo);
@@ -29722,6 +30012,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
     finally{ setReclasSaving(false); }
   };
   const abrirReclasificar = (tabId, compId, lineIdx, codigoActual, cuentaActual, ctxComprobante) => {
+    if(tabId==='nomina' && (nominaC||[]).some(a=>a.id===compId && a.origen==='rrhh_cierre')){ alert('Este comprobante viene de Recursos Humanos (Cierre de mes): la cuenta se cambia allá y se vuelve a pasar a Contabilidad.'); return; }
     setReclasificando({tabId, compId, lineIdx, codigoActual, cuentaActual, ...(ctxComprobante||{})});
     setReclasBusq('');
     setReclasFormExtra({
@@ -29778,6 +30069,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
   // con un clic (reemplaza el par de <td> código/cuenta que se repite en las 8 pestañas).
   // Debe/Haber editable: clic en la D/H de una linea la intercambia (se guarda como reclasificacion con tipoOverride)
   const alternarTipoCC = async (tabId, compId, li, l) => {
+    if(tabId==='nomina' && (nominaC||[]).some(a=>a.id===compId && a.origen==='rrhh_cierre')){ alert('Este comprobante viene de Recursos Humanos (Cierre de mes): el Debe/Haber se cambia allá y se vuelve a pasar a Contabilidad.'); return; }
     try{
       const key = claveReclas(tabId, compId, li);
       const ex = reclasificacionesC[key] || {};
@@ -29819,8 +30111,13 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
       });
     }catch(e){ alert('Error al cambiar Debe/Haber: '+e.message); }
   };
-  const CeldaTipoCC = ({tabId, compId, li, l}) => {
+  const CeldaTipoCC = ({tabId, compId, li, l, soloLectura}) => {
     const ov = cuentaReclas(tabId, compId, li);
+    if(soloLectura) return (
+      <td className="px-3 py-2 text-center">
+        <span title="Viene de Recursos Humanos (Cierre de mes): se cambia allá y se vuelve a pasar a Contabilidad" className={`font-black px-1.5 ${l.tipo==='D'?'text-emerald-600':'text-red-500'}`}>{l.tipo}</span>
+      </td>
+    );
     return (
       <td className="px-3 py-2 text-center">
         <button type="button" onClick={()=>alternarTipoCC(tabId, compId, li, l)}
@@ -29829,10 +30126,16 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
       </td>
     );
   };
-  const CeldaCuentaCC = ({tabId, compId, li, l, r}) => {
+  const CeldaCuentaCC = ({tabId, compId, li, l, r, soloLectura}) => {
     const ov = cuentaReclas(tabId, compId, li);
     const codigo = ov?.codigo || l.codigo;
     const cuenta = ov?.cuenta || l.cuenta;
+    if(soloLectura) return (
+      <>
+        <td className="px-3 py-2 font-mono text-blue-500">{codigo||'—'}</td>
+        <td className="px-3 py-2 font-bold text-gray-700 uppercase" style={{paddingLeft:l.tipo==='H'?'20px':'12px'}} title="Viene de Recursos Humanos (Cierre de mes): la cuenta se cambia allá y se vuelve a pasar a Contabilidad">{cuenta||'—'}</td>
+      </>
+    );
     return (
       <>
         <td className="px-3 py-2 font-mono text-blue-500">{codigo||'—'}</td>
@@ -30846,7 +31149,7 @@ ${valoresHtml}
             <p className="text-[10px] text-gray-400 ml-auto">{lineasNom.length} nómina(s) · Total ${contFmt(totalNomUSD)}</p>
             <BotonesExportCC tabId="nomina"/>
           </div>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ Importa un Excel con las columnas: Fecha, Código, Cuenta de movimiento, Nro Documento, Detalle, Tasa, Debe Bs, Haber Bs. Cada Fecha+Nro Documento se agrupa en un solo comprobante con todas sus líneas.</div>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[10px] text-emerald-700 font-bold">ℹ Importa un Excel con las columnas: Fecha, Código, Cuenta de movimiento, Nro Documento, Detalle, Tasa, Debe Bs, Haber Bs. Cada Fecha+Nro Documento se agrupa en un solo comprobante con todas sus líneas. Los comprobantes con la marca RRHH vienen del Cierre de mes de Recursos Humanos (botón «Pasar a Contabilidad»): son de solo lectura y se actualizan desde allá.</div>
           {lineasNom.length===0?(
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               <FileText size={36} className="mx-auto mb-2 opacity-40"/>
@@ -30862,18 +31165,19 @@ ${valoresHtml}
                 <tbody>
                   {lineasNom.flatMap((r,ri)=>r.lineas.map((l,li)=>(
                     <tr key={`${r.id}-${li}`} className={`border-b border-gray-50 hover:bg-gray-50 ${li===0&&ri>0?'border-t-2 border-t-gray-200':''}`}>
-                      <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}</td>
+                      <td className="px-3 py-2 font-mono font-black text-orange-600">{li===0?r.comprobante:''}{li===0&&r._raw?.origen==='rrhh_cierre'&&<span data-testid="nomina-marca-rrhh" title="Viene del Cierre de mes de Recursos Humanos (solo lectura): se cambia en RRHH y se vuelve a pasar a Contabilidad" className="ml-1 align-middle text-[8px] font-black uppercase bg-cyan-100 text-cyan-700 rounded px-1 py-0.5">RRHH</span>}</td>
                       <td className="px-3 py-2 text-gray-400 font-mono whitespace-nowrap">{li===0?contDd(r.fecha):''}</td>
-                      <CeldaCuentaCC tabId='nomina' compId={r.id} li={li} l={l} r={r}/>
-                      <CeldaTipoCC tabId='nomina' compId={r.id} li={li} l={l}/>
+                      <CeldaCuentaCC tabId='nomina' compId={r.id} li={li} l={l} r={r} soloLectura={r._raw?.origen==='rrhh_cierre'}/>
+                      <CeldaTipoCC tabId='nomina' compId={r.id} li={li} l={l} soloLectura={r._raw?.origen==='rrhh_cierre'}/>
                       <td className="px-3 py-2 text-gray-500">{l.detalle||''}</td>
                       <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?(r.tasa?contFmt(r.tasa):'—'):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hUSD>0?'$'+contFmt(l.hUSD):''}</td>
-                      <td className="px-3 py-2 text-center">{li===0&&(
-                        <button onClick={()=>eliminarNomina(r.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
+                      <td className="px-3 py-2 text-center">{li===0&&(r._raw?.origen==='rrhh_cierre'
+                        ? <span data-testid="nomina-candado-rrhh" title="Viene de Recursos Humanos: no se borra aquí. Para retirarlo, elimina o vuelve a generar el cierre en RRHH → Cierre de mes." className="text-gray-400 text-xs">🔒</span>
+                        : <button onClick={()=>eliminarNomina(r.id)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={13}/></button>
                       )}</td>
                     </tr>
                   )))}
