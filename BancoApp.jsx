@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
-  getFirestore, initializeFirestore, collection, doc, setDoc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp, writeBatch, arrayUnion, getDocs
+  getFirestore, initializeFirestore, collection, doc, setDoc as _fsSetDoc, updateDoc as _fsUpdateDoc, deleteDoc as _fsDeleteDoc,
+  onSnapshot, query, orderBy, serverTimestamp, writeBatch as _fsWriteBatch, arrayUnion, getDocs
 } from 'firebase/firestore';
 
 // ── Firebase (mismo proyecto que el ERP principal) ──────────────────
@@ -43,6 +43,267 @@ const getDocRef = (n, id) => doc(_bancoDB, n, String(id));
 const getTodayDate = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUDITORÍA DE BANCOS & TESORERÍA → «Auditoría de Sistema» (colección auditoria_eventos, la misma de todo el ERP)
+// Cada vez que un usuario ENTRA al módulo (o a una de sus secciones) y cada vez que CREA, EDITA o ELIMINA algo (movimientos de banco y de
+// caja, pagos, cuentas, tasas, conciliaciones, arqueos, vales, terceros…) se guarda una línea APARTE con quién fue, cuándo, el monto, la
+// cuenta y, en las ediciones, el antes → después.
+// Se hace en UN solo punto: setDoc / updateDoc / deleteDoc / writeBatch de este archivo son los de Firestore + el registro, así ninguna
+// pantalla se queda sin registrar (ni las que se agreguen después). Registrar NUNCA frena ni rompe una operación: todo se arma dentro de
+// try/catch, la escritura del registro es APARTE y solo se hace cuando la operación ya se guardó (si el registro fallara, la operación
+// igual quedó hecha). Una acción de varios documentos (p. ej. movimiento + asiento + saldo de la cuenta) deja UNA sola línea.
+// ═══════════════════════════════════════════════════════════════════════════
+const _AUD_MODULO = 'Bancos & Tesorería';
+let _audUser = null;                                  // usuario del ERP que tiene el módulo abierto (lo fija BancoApp con la prop appUser)
+const _audSetUser = (u) => { if (u) _audUser = u; };
+let _audVia = null;                                   // guarda el registro con la sesión del ERP (la misma con la que se ve «Auditoría de Sistema»); se usa solo si Banco no pudo escribirlo directamente
+let _audDirectoFalla = false;
+const _audSetVia = (f) => { if (typeof f === 'function') _audVia = f; };
+const _audExtra = {};                                 // listas que una pantalla tiene y el almacén no (vales): para saber «cómo estaba» antes de editar o eliminar
+const _AUD_IGNORAR = new Set(['auditoria_eventos', 'settings']);   // el propio registro y los ajustes de pantalla (⭐ favoritos)
+const _audNF4 = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const _audS = (v) => (v === undefined || v === null) ? '' : String(v).trim();
+const _audMoneda = (m) => { const u = String(m || '').toUpperCase(); return u === 'USD' ? '$' : u === 'EUR' ? '€' : 'Bs.'; };
+const _audMto = (n, m) => { const x = Number(n) || 0; return (x < 0 ? '-' : '') + _audMoneda(m) + bancoFmt(Math.abs(x)); };
+const _audUsd = (d) => (Number(d.montoUSD) && String(d.moneda || '').toUpperCase() !== 'USD') ? ` (≈ $${bancoFmt(d.montoUSD)})` : '';
+const _audUnir = (a) => a.filter(Boolean).join(' · ');
+const _audMov = (d, nombre, monto) => {
+  // «Pago Proveedor» (motivo del egreso) y «Venta» (origen del ingreso) vienen por defecto en el formulario de TODOS los tipos: solo cuentan en su tipo
+  const t = _audS(d.tipo);
+  const motivo = /egreso/i.test(t) ? _audS(d.motivoEgreso) : /ingreso/i.test(t) ? _audS(d.origenIngreso) : t ? '' : (_audS(d.motivoEgreso) || _audS(d.origenIngreso));
+  return _audUnir([
+    t + (motivo ? ` (${motivo})` : ''),
+    `${_audS(nombre) || '—'}${d.moneda ? ` (${d.moneda})` : ''}`,
+    _audS(d.fecha),
+    _audMto(monto, d.moneda) + _audUsd(d),
+    d.referencia ? `Ref: ${_audS(d.referencia)}` : '',
+    _audS(d.concepto),
+    d.terceroNombre ? `Tercero: ${_audS(d.terceroNombre)}` : '',
+    d.facturaNumero ? `Factura: ${_audS(d.facturaNumero)}` : '',
+  ]);
+};
+// Por colección: área (se muestra entre corchetes), nombre del registro, género (para «CREADO/CREADA»), de dónde sacar «cómo estaba» y cómo describirlo
+const _AUD_COL = {
+  banco_movimientos: { area: 'Bancos', et: 'Movimiento de banco', f: 0, store: 'movBanco', d: (d) => _audMov(d, d.cuentaNombre, d.montoNativo) + (d.saldoResultante !== undefined && d.saldoAnterior !== undefined ? ` · Saldo: ${bancoFmt(d.saldoAnterior)} → ${bancoFmt(d.saldoResultante)}` : '') },
+  caja_movimientos: { area: 'Caja', et: 'Movimiento de caja', f: 0, store: 'movCaja', d: (d) => _audMov(d, d.cajaNombre, d.monto) },
+  banco_cuentas: { area: 'Bancos', et: 'Cuenta bancaria', f: 1, store: 'cuentas', d: (d) => _audUnir([_audS(d.banco) || '—', d.numeroCuenta ? `N.º ${_audS(d.numeroCuenta)}` : '', _audS(d.moneda), `Saldo: ${_audMto(d.saldo, d.moneda)}`]) },
+  caja_cuentas: { area: 'Caja', et: 'Cuenta de caja', f: 1, store: 'cajas', d: (d) => _audUnir([_audS(d.nombre) || '—', _audS(d.moneda), `Saldo inicial: ${_audMto(d.saldoInicial, d.moneda)}`]) },
+  banco_tasas: { area: 'Bancos', et: 'Tasa de cambio', f: 1, store: 'tasas', d: (d) => _audUnir([_audS(d.fecha), `Tasa ${_audNF4.format(Number(d.tasaRef) || 0)}`, _audS(d.fuente), d.modulo && d.modulo !== 'Todos' ? `Módulo: ${_audS(d.modulo)}` : '']) },
+  banco_conciliaciones: { area: 'Bancos', et: 'Conciliación bancaria', f: 1, store: 'concils', d: (d) => _audUnir([_audS(d.cuentaNombre) || '—', d.desde || d.hasta ? `${_audS(d.desde)} a ${_audS(d.hasta)}` : '', `${Number(d.count) || 0} movimiento(s)`, `Saldo banco: ${bancoFmt(d.saldoBanco)}`, `Diferencia: ${bancoFmt(d.diff)}`]) },
+  caja_conciliaciones: { area: 'Caja', et: 'Conciliación de caja', f: 1, store: 'concilsC', d: (d) => _audUnir([_audS(d.cajaNombre) || '—', d.desde || d.hasta ? `${_audS(d.desde)} a ${_audS(d.hasta)}` : '', `${Number(d.count) || 0} movimiento(s)`, `Saldo contado: ${bancoFmt(d.saldoContado)}`, `Diferencia: ${bancoFmt(d.diff)}`]) },
+  caja_arques: { area: 'Caja', et: 'Arqueo de caja', f: 0, store: 'arques', d: (d) => _audUnir([_audS(d.fecha), `Total contado: ${_audMto(d.totalArqueo, d.moneda || 'USD')}`]) },
+  caja_vales: { area: 'Caja', et: 'Vale de caja', f: 0, extra: 'caja_vales', d: (d) => _audUnir([_audS(d.fecha), _audS(d.titular), _audS(d.concepto), _audMto(d.monto, d.moneda), _audS(d.estado)]) },
+  cxp_terceros_relacionados: { area: 'Cuentas por Pagar Relacionadas', et: 'Tercero relacionado', f: 0, store: 'tercRel', d: (d) => _audUnir([_audS(d.nombre) || '—', _audS(d.cedulaRif), _audS(d.telefono)]) },
+  cxp_pagos_relacionados: { area: 'Cuentas por Pagar Relacionadas', et: 'Movimiento de CxP relacionada', f: 0, store: 'pagosRel', d: (d) => _audUnir([_audS(d.tipo), _audS(d.terceroNombre) || '—', _audS(d.fecha), _audMto(d.monto, 'USD'), d.referencia ? `Ref: ${_audS(d.referencia)}` : '', _audS(d.concepto), d.origen === 'banco' ? '(desde Banco)' : '']) },
+  procura_pagos_cxp: { area: 'Bancos', et: 'Pago a proveedor (Procura)', f: 0, store: 'pagosCxp', d: (d) => _audUnir([_audS(d.proveedor) || '—', _audS(d.fecha), _audMto(d.monto, d.moneda || 'USD'), _audS(d.metodo), d.referencia ? `Ref: ${_audS(d.referencia)}` : '', _audS(d.concepto)]) },
+  cobros_cxc: { area: 'Bancos', et: 'Cobro de cliente', f: 0, store: 'cobros', d: (d) => _audUnir([_audS(d.clientName) || '—', _audS(d.fecha), _audMto(d.monto, d.moneda || 'USD'), d.referencia ? `Ref: ${_audS(d.referencia)}` : '']) },
+  cont_asientos: { area: 'Contabilidad', et: 'Comprobante contable', f: 0, store: 'asientos', d: (d) => _audUnir([_audS(d.comprobante || d.numero), _audS(d.fecha), _audS(d.subTipo || d.tipo), _audS(d.descripcion), `Total: Bs.${bancoFmt(d.totalDebeBs)} / $${bancoFmt(d.totalDebeUSD)}`]) },
+  resumen_banco_caja_historico: { area: 'Resumen Banco-Caja', et: 'Cierre del Resumen Banco-Caja', f: 0, d: (d) => _audUnir([_audS(d.fecha), `Total consolidado Bs.${bancoFmt(d.granTotalBs)} / $${bancoFmt(d.granTotalUsd)}`]) },
+};
+// Campos que se muestran en «Cambios: antes → después» (el resto son internos y no se detallan)
+const _AUD_ROT = {
+  fecha: 'Fecha', tipo: 'Tipo', concepto: 'Concepto', referencia: 'Referencia', montoNativo: 'Monto', monto: 'Monto', moneda: 'Moneda', tasa: 'Tasa',
+  montoBs: 'Monto Bs.', montoUSD: 'Monto $', cuentaNombre: 'Cuenta', cajaNombre: 'Caja', terceroNombre: 'Tercero', facturaNumero: 'Factura',
+  estatus: 'Estatus', estado: 'Estado', montoAplicado: 'Monto aplicado', origenIngreso: 'Origen del ingreso', motivoEgreso: 'Motivo del egreso',
+  ctaContraNombre: 'Cuenta contable', banco: 'Banco', numeroCuenta: 'N.º de cuenta', nombre: 'Nombre', titular: 'Titular', cedulaRif: 'Cédula/RIF',
+  telefono: 'Teléfono', activo: 'Activo', saldoInicial: 'Saldo inicial', saldo: 'Saldo', mesSaldoInicial: 'Mes del saldo inicial', tipoBanco: 'Tipo de banco',
+  tasaRef: 'Tasa', fuente: 'Fuente', totalArqueo: 'Total arqueo', saldoBanco: 'Saldo banco', saldoContado: 'Saldo contado', cuentaContableCod: 'Cuenta contable',
+  cuentaContableNom: 'Nombre cuenta contable', eliminado: 'Eliminado', fechaCierre: 'Fecha de cierre', metodo: 'Método', proveedor: 'Proveedor',
+};
+const _AUD_SIN = new Set(['id', 'ts', 'updatedAt', 'timestamp', 'saldoAnterior', 'saldoResultante', 'asientoContableId', 'asientoDebito', 'asientoCredito', 'movimientoIds', 'movimientosDetalle', 'historial']);
+// Nombres de las secciones del módulo (para las líneas de ACCESO)
+const _AUD_SEC = {
+  dashboard: 'Panel General', cuentas: 'Cuentas Bancarias', movimientos: 'Movimientos Banco', pagos_identificar: 'Pagos por Identificar', conciliacion: 'Conciliación',
+  reciprocidad: 'Reciprocidad de Banco', rpt_gral_banco: 'General de Banco', rpt_comp_banco: 'Comprobante Bancario', rpt_libro: 'Libro Diario General', tasas: 'Tasas de Cambio',
+  caja_dashboard: 'Panel General (Caja)', cuentas_caja: 'Cuentas de Caja', caja_op: 'Operaciones Caja', vales: 'Relación de Vales', arqueo: 'Arqueo de Caja',
+  conciliacion_caja: 'Conciliación de Caja', rpt_gral_caja: 'General de Caja', rpt_comp_caja: 'Comprobante de Caja', rpt_libro_caja: 'Libro Diario General (Caja)',
+  limpiar_dup: 'Limpiar Duplicados', reparar_trasl: 'Reparar Traslados', terceros_rel: 'Terceros', cxp_rel: 'Cuentas por Pagar', hist_pago_rel: 'Historial de Pago', edo_cta_rel: 'Estado de Cuenta',
+};
+const _AUD_SUB = { banco: 'Bancos', caja: 'Caja', cxp_relacionadas: 'Cuentas por Pagar Relacionadas', resumen_op: 'Resumen Banco-Caja' };
+
+const _audRef = (ref) => { const p = String((ref && ref.path) || '').split('/'); return { col: p[0] || '', id: p[1] || (ref && ref.id) || '' }; };
+// «Cómo estaba» el documento antes de tocarlo: de las listas que el módulo ya tiene en memoria (sin leer nada de Firestore)
+const _audAntes = (col, id) => {
+  try {
+    const def = _AUD_COL[col];
+    if (!def) return null;
+    if (def.store) { const sn = _BS.raw[def.store]; const dd = sn && sn.docs && sn.docs.find((x) => x.id === id); return dd ? dd.data() : null; }
+    if (def.extra && _audExtra[def.extra]) return _audExtra[def.extra].find((v) => v && v.id === id) || null;
+  } catch (e) {}
+  return null;
+};
+const _audIgual = (k, a, b) => {
+  const vacio = (v) => v === undefined || v === null || v === '';
+  if (vacio(a) && vacio(b)) return true;
+  if ((typeof a === 'number' || typeof b === 'number') && typeof a !== 'boolean' && typeof b !== 'boolean' && !vacio(a) && !vacio(b)) {
+    const x = Number(a), y = Number(b);
+    if (Number.isFinite(x) && Number.isFinite(y)) return Math.abs(x - y) < (/^tasa/.test(k) ? 1e-6 : 0.0049);
+  }
+  return String(a) === String(b);
+};
+const _audVal = (k, v) => {
+  if (v === undefined || v === null || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'Sí' : 'No';
+  if (typeof v === 'number') return /^tasa/.test(k) ? _audNF4.format(v) : bancoFmt(v);
+  const s = String(v).trim();
+  return s.length > 60 ? s.slice(0, 57) + '…' : s;
+};
+const _audCambios = (antes, nuevo, claves) => {
+  const ks = claves || Object.keys(nuevo || {});
+  let arr = []; let otros = 0;
+  ks.forEach((k) => {
+    if (_AUD_SIN.has(k)) return;
+    const a = antes ? antes[k] : undefined, b = nuevo ? nuevo[k] : undefined;
+    if (b !== null && typeof b === 'object') return;            // listas y objetos (incluye arrayUnion): no se detallan
+    if (_audIgual(k, a, b)) return;
+    if (antes && (k === 'motivoEgreso' || k === 'origenIngreso') && (a === undefined || a === null || a === '')) return;   // valor por defecto que el formulario agrega al guardar: no lo cambió la persona
+    if (!_AUD_ROT[k]) { otros++; return; }
+    arr.push([k, _AUD_ROT[k], a, b]);
+  });
+  // los montos en Bs. y $ se derivan del monto: solo se muestran si el monto no cambió
+  if (arr.some((x) => x[0] === 'montoNativo' || x[0] === 'monto')) arr = arr.filter((x) => x[0] !== 'montoBs' && x[0] !== 'montoUSD');
+  if (!arr.length) return otros ? '(cambios solo en campos internos)' : '';
+  const t = arr.slice(0, 8).map((x) => antes ? `${x[1]}: ${_audVal(x[0], x[2])} → ${_audVal(x[0], x[3])}` : `${x[1]}: ${_audVal(x[0], x[3])}`).join('; ');
+  return `${antes ? 'Cambios' : 'Valores'}: ${t}${arr.length > 8 ? `; y ${arr.length - 8} más` : ''}${otros ? ` (+${otros} campo(s) interno(s))` : ''}`;
+};
+// Una operación → qué pasó (tipo), a qué (et), cómo se llama la acción (verbo), cuál registro (ident) y qué cambió (camb)
+const _audLinea = (o) => {
+  const def = _AUD_COL[o.col] || { et: `Registro «${o.col}»`, f: 0 };
+  const fin = (p) => p + (def.f ? 'A' : 'O');
+  const ident = (d) => { let t = ''; try { t = (d && def.d) ? def.d(d) : ''; } catch (e) { t = ''; } return t || `id ${o.id}`; };
+  if (o.kind === 'delete') return { tipo: 'ELIMINACIÓN', et: def.et, verbo: fin('ELIMINAD'), ident: ident(o.antes) };
+  if (o.kind === 'update' && o.data && o.data.eliminado === true) return { tipo: 'ELIMINACIÓN', et: def.et, verbo: fin('ANULAD'), ident: ident(o.antes || o.data) };
+  if (o.kind === 'set' && !o.antes) return { tipo: 'CREACIÓN', et: def.et, verbo: fin('CREAD'), ident: ident(o.data) };
+  const nuevo = (o.kind === 'set' && !o.merge) ? (o.data || {}) : { ...(o.antes || {}), ...(o.data || {}) };
+  const camb = _audCambios(o.antes, nuevo, (o.kind === 'update' || o.merge) ? Object.keys(o.data || {}) : null);
+  return { tipo: 'EDICIÓN', et: def.et, verbo: fin(o.data && o.data.eliminado === false ? 'RESTAURAD' : 'EDITAD'), ident: o.antes ? ident(o.antes) : `id ${o.id}`, camb };   // sin «cómo estaba»: no se adivina el registro con un pedazo de datos, se dice su id
+};
+// Lo que es consecuencia de otra cosa (el saldo de la cuenta, el asiento del movimiento, el estatus «Conciliado») no genera línea propia
+const _audLateral = (o) => {
+  if (o.col === 'cont_asientos') return true;
+  if (o.kind !== 'update') return false;
+  const ks = Object.keys(o.data || {});
+  if (!ks.length) return false;
+  const solo = (...c) => ks.every((k) => c.includes(k));
+  if (o.col === 'banco_cuentas' || o.col === 'caja_cuentas') return solo('saldo');
+  if (o.col === 'cobros_cxc') return solo('montoAplicado');
+  if (o.col === 'facturacion_facturas') return solo('saldoUSD', 'estado');
+  if (o.col === 'banco_movimientos' || o.col === 'caja_movimientos') return solo('estatus', 'asientoContableId');
+  return false;
+};
+// Las operaciones de UNA acción → como mucho una línea por tipo (CREACIÓN / EDICIÓN / ELIMINACIÓN)
+const _audConstruir = (ops) => {
+  const todas = (ops || []).filter((o) => o && !_AUD_IGNORAR.has(o.col));
+  if (!todas.length) return [];
+  let prim = todas.filter((o) => !_audLateral(o));
+  if (!prim.length) prim = todas;
+  const porTipo = {};
+  prim.forEach((o) => {
+    const l = _audLinea(o);
+    const T = porTipo[l.tipo] || (porTipo[l.tipo] = { cols: {}, orden: [], areas: [] });
+    if (!T.cols[o.col]) { T.cols[o.col] = []; T.orden.push(o.col); }
+    T.cols[o.col].push(l);
+    const ar = (_AUD_COL[o.col] || {}).area || _AUD_MODULO;
+    if (!T.areas.includes(ar)) T.areas.push(ar);
+  });
+  return ['CREACIÓN', 'EDICIÓN', 'ELIMINACIÓN'].filter((t) => porTipo[t]).map((t) => {
+    const T = porTipo[t];
+    const segs = T.orden.map((col) => {
+      const ls = T.cols[col];
+      if (ls.length <= 3) return ls.map((l) => `${l.et} ${l.verbo}: ${l.ident}${l.camb ? ` — ${l.camb}` : ''}`).join(' | ');
+      return `${ls[0].et} ${ls[0].verbo} ×${ls.length}: ${ls.slice(0, 3).map((l) => l.ident).join('; ')}; … y ${ls.length - 3} más`;
+    });
+    const area = T.areas.join(' + ');
+    return { tipo: t, area, detalle: `[${area}] ${segs.join(' | ')}` };
+  });
+};
+// Avisos en el panel «Debug» (chip verde abajo a la izquierda): una sola vez por tipo, para no llenarlo.
+const _audAvisados = {};
+const _audAvisar = (clave, msg) => { try { if (_audAvisados[clave]) return; _audAvisados[clave] = true; _bancoLog(msg); } catch (e) {} };
+const _audMsgErr = (e) => String((e && (e.code || e.message)) || e || 'error').slice(0, 120);
+const _audEscribir = (tipo, detalle, extra) => {
+  try {
+    const id = `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const u = _audUser;
+    const ev = {
+      id, fecha: getTodayDate(), ts: Date.now(),
+      usuario: (u && (u.name || u.username || u.displayName || u.email)) || 'Usuario',
+      rol: (u && u.role) || '—',
+      modulo: _AUD_MODULO, tipo, detalle: String(detalle || '').slice(0, 1800),
+      ...(extra || {}),
+    };
+    const porERP = () => {
+      try {
+        const r = _audVia && _audVia(ev);
+        if (r && typeof r.then === 'function') r.then(
+          () => _audAvisar('via-ok', '✅ Auditoría: se guarda con la sesión del sistema'),
+          (e) => { console.warn('No se pudo registrar en auditoría (sesión del ERP):', e); _audAvisar('via-falla', '❌ Auditoría: NO se pudo guardar (ni directo ni con la sesión del sistema): ' + _audMsgErr(e)); });
+      }
+      catch (e) { console.warn('No se pudo registrar en auditoría (sesión del ERP):', e); _audAvisar('via-falla', '❌ Auditoría: NO se pudo guardar (ni directo ni con la sesión del sistema): ' + _audMsgErr(e)); }
+    };
+    if (_audDirectoFalla && _audVia) { porERP(); return; }          // ya se vio que Banco no puede escribir aquí: directo por la sesión del ERP
+    const p = _fsSetDoc(getDocRef('auditoria_eventos', id), ev);
+    if (p && typeof p.then === 'function') p.then(
+      () => _audAvisar('ok', '✅ Auditoría: se está guardando bien'),
+      (e) => {
+        console.warn('No se pudo registrar en auditoría:', e);
+        if (_audVia) { _audDirectoFalla = true; _audAvisar('directo', '⚠ Auditoría: Banco no pudo guardar directo (' + _audMsgErr(e) + '); se usa la sesión del sistema'); porERP(); }
+        else _audAvisar('falla', '❌ Auditoría: NO se pudo guardar (' + _audMsgErr(e) + ')');
+      });
+  } catch (e) { console.warn('No se pudo registrar en auditoría:', e); }
+};
+const _audNotar = (ops) => {
+  try { _audConstruir(ops).forEach((ev) => _audEscribir(ev.tipo, ev.detalle, { area: ev.area })); }
+  catch (e) { console.warn('Auditoría: no se pudo armar el registro:', e); }
+};
+const _audUltAcceso = {};
+const _audAcceso = (clave, area, texto) => {
+  try {
+    const t = Date.now();
+    if (_audUltAcceso[clave] && t - _audUltAcceso[clave] < 20000) return;   // un doble disparo del mismo clic no cuenta dos veces
+    _audUltAcceso[clave] = t;
+    _audEscribir('ACCESO', area ? `[${area}] ${texto}` : texto, { area: area || _AUD_MODULO });
+  } catch (e) {}
+};
+const _audPrep = (kind, ref, data, opts) => {
+  const r = _audRef(ref);
+  if (!r.col || _AUD_IGNORAR.has(r.col)) return null;
+  return { kind, col: r.col, id: r.id, data: (data && typeof data === 'object') ? data : null, merge: !!(opts && opts.merge), antes: _audAntes(r.col, r.id) };
+};
+// Mismos nombres y mismos argumentos que los de Firestore: devuelven exactamente lo mismo; solo se agrega el registro cuando la operación ya se guardó
+const setDoc = (ref, ...rest) => {
+  let op = null;
+  try { op = _audPrep('set', ref, rest[0], rest[1]); } catch (e) { op = null; }
+  const p = _fsSetDoc(ref, ...rest);
+  if (op) { try { p.then(() => _audNotar([op]), () => {}); } catch (e) {} }
+  return p;
+};
+const updateDoc = (ref, ...rest) => {
+  let op = null;
+  try { op = _audPrep('update', ref, rest[0]); } catch (e) { op = null; }
+  const p = _fsUpdateDoc(ref, ...rest);
+  if (op) { try { p.then(() => _audNotar([op]), () => {}); } catch (e) {} }
+  return p;
+};
+const deleteDoc = (ref, ...rest) => {
+  let op = null;
+  try { op = _audPrep('delete', ref); } catch (e) { op = null; }
+  const p = _fsDeleteDoc(ref, ...rest);
+  if (op) { try { p.then(() => _audNotar([op]), () => {}); } catch (e) {} }
+  return p;
+};
+const writeBatch = (...args) => {
+  const b = _fsWriteBatch(...args);
+  const ops = [];
+  const w = {
+    set(ref, ...rest) { b.set(ref, ...rest); try { const o = _audPrep('set', ref, rest[0], rest[1]); if (o) ops.push(o); } catch (e) {} return w; },
+    update(ref, ...rest) { b.update(ref, ...rest); try { const o = _audPrep('update', ref, rest[0]); if (o) ops.push(o); } catch (e) {} return w; },
+    delete(ref, ...rest) { b.delete(ref, ...rest); try { const o = _audPrep('delete', ref); if (o) ops.push(o); } catch (e) {} return w; },
+    commit(...rest) { const p = b.commit(...rest); try { p.then(() => _audNotar(ops), () => {}); } catch (e) {} return p; },
+  };
+  return w;
 };
 
 // ── Colores / tokens de diseño (del sistema original) ─────────────────────
@@ -171,6 +432,37 @@ const bancoRevisarMontos = ({ movs, todos, asientos, cuentas }) => {
 const bancoGid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const bancoNormNombre = (s) => (s||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
 const bancoMesActual = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; };
+// ── Tasa «vigente» (Bs./$) para los equivalentes de Banco ─────────────────────────────────────────────
+// 1) La más reciente de «Tasas de Cambio» (módulo Banco/Todos; si no hay de esos, la primera que exista — igual que antes).
+// 2) Si no hay ninguna, o si los movimientos en Bs./$ son MÁS NUEVOS que esa tasa: la tasa de los movimientos del último día
+//    (la mediana; se ignoran fechas futuras, movimientos sin tasa, tasa 1, el 39,50 de relleno y los movimientos en otras monedas).
+// 3) 39,50 solo cuando no hay nada de nada. Devuelve { tasa, origen: 'registro' | 'movimientos' | 'ninguna', fecha }.
+const BANCO_TASA_RELLENO = 39.50;
+const bancoTasaVigente = (tasas, movs) => {
+  const hoy = getTodayDate();
+  const lista = (tasas || []).filter((t) => t && Number(t.tasaRef) > 0);
+  const propias = lista.filter((t) => t.modulo === 'Banco' || t.modulo === 'Todos');
+  const reg = (propias.length ? propias : lista).reduce((mejor, t) => (!mejor || String(t.fecha || '') > String(mejor.fecha || '') ? t : mejor), null);
+  const regFecha = reg ? String(reg.fecha || '') : '';
+  let movFecha = '';
+  let delDia = [];
+  (movs || []).forEach((m) => {
+    const f = m && m.fecha ? String(m.fecha) : '';
+    if (!f || f > hoy || f < movFecha) return;
+    const mon = String(m.moneda || '').toUpperCase();
+    if (mon && mon !== 'BS' && mon !== 'USD') return;
+    const t = Number(m.tasa);
+    if (!(t > 1) || t === BANCO_TASA_RELLENO) return;
+    if (f > movFecha) { movFecha = f; delDia = []; }
+    delDia.push(t);
+  });
+  if (reg && (!movFecha || regFecha >= movFecha)) return { tasa: Number(reg.tasaRef), origen: 'registro', fecha: regFecha };
+  if (movFecha) {
+    const o = delDia.slice().sort((a, b) => a - b), n = o.length;
+    return { tasa: n % 2 ? o[(n - 1) / 2] : (o[n / 2 - 1] + o[n / 2]) / 2, origen: 'movimientos', fecha: movFecha };
+  }
+  return { tasa: BANCO_TASA_RELLENO, origen: 'ninguna', fecha: '' };
+};
 const BANCO_LETTERHEAD_CSS = `
   body{font-family:Arial,sans-serif;margin:0;padding:0;color:#1e293b;font-size:11px}
   .lh-header{background:#000;color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #f97316}
@@ -3120,8 +3412,10 @@ const DebugPanel = () => {
   );
 };
 
-function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsersProp = [] }) {
+function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsersProp = [], appUser: appUserProp = null, onAuditoria: onAuditoriaProp = null }) {
   // Uses ERP Firebase: getColRef/getDocRef/db
+  _audSetUser(appUserProp); // usuario del ERP que tiene el módulo abierto: sale en «Auditoría de Sistema» en cada ingreso, pago, edición o eliminación
+  _audSetVia(onAuditoriaProp); // plan B del registro: guardarlo con la sesión del ERP si Banco no pudiera escribir directo
   const [sec, setSec] = useState('dashboard');
 
   // ⭐ Favoritos de Movimientos (Banco y Caja) — para marcar partidas que se están revisando
@@ -3235,6 +3529,17 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     _prevSecSub.current = {sec, submodulo};
   }, [sec, submodulo]);
 
+  // ── Auditoría: quién entra al módulo y a qué sección (se ve en «Auditoría de Sistema») ──
+  useEffect(() => {
+    _audAcceso('mod', '', ventasMode ? 'Ingresó al módulo Bancos & Tesorería (vista Ventas: registro de cobros / ingresos bancarios)' : 'Ingresó al módulo Bancos & Tesorería');
+  }, []);
+  useEffect(() => {
+    if (!submodulo) return;
+    const area = _AUD_SUB[submodulo] || submodulo;
+    if (submodulo === 'resumen_op') { _audAcceso('resumen_op', area, 'Abrió el resumen consolidado'); return; }
+    _audAcceso(`${submodulo}:${sec}`, area, `Abrió «${_AUD_SEC[sec] || sec}»`);
+  }, [submodulo, sec]);
+
   const [cuentas,    setCuentas]  = useState(_bf.v.cuentas || []);
   const [cajas,      setCajas]    = useState(_bf.v.cajas || []);
   const [tercerosRel, setTercerosRel] = useState(_bf.v.tercerosRel || []);
@@ -3283,7 +3588,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     }, setCargaProg, _bf.ver);
   }, [fbUser]);
 
-  const tasaActiva = tasas.find(t=>t.modulo==='Banco'||t.modulo==='Todos')?.tasaRef || tasas[0]?.tasaRef || 39.50;
+  // Tasa vigente (Bs./$): la más reciente de «Tasas de Cambio» o, si no hay o los movimientos son más nuevos, la de los últimos movimientos (ver bancoTasaVigente)
+  const tasaVigente = useMemo(() => bancoTasaVigente(tasas, movBanco), [tasas, movBanco]);
+  const tasaActiva = tasaVigente.tasa;
   const cuentasContables = contCuentas; // alias para compatibilidad con MovimientosView
 
   // Validar clave de admin — acepta la contraseña de CUALQUIER usuario registrado en el ERP
@@ -3378,6 +3685,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
             </div>
           </div>
         </div>
+
+        {/* ── Tasa con la que se calculan los equivalentes de arriba ── */}
+        <p className={`text-[10px] -mt-3 px-1 ${tasaVigente.origen==='registro'?'text-slate-500':'text-amber-700 font-bold'}`}>Tasa usada: <strong>{_audNF4.format(tasaActiva)} Bs/$</strong> · {tasaVigente.origen==='registro' ? `de «Tasas de Cambio» (${bancoDd(tasaVigente.fecha)})` : tasaVigente.origen==='movimientos' ? `del último movimiento (${bancoDd(tasaVigente.fecha)}) — no hay una tasa más reciente en «Tasas de Cambio»` : 'no hay ninguna tasa registrada ni movimientos con tasa — se usa 39,50; regístrela en «Tasas de Cambio»'}</p>
 
         {/* ── Bank Explorer + Analytics ── */}
         <div className="flex flex-col xl:flex-row gap-6">
@@ -9546,7 +9856,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
     const [provs2,setProvs2]=useState([]);
     const [contCuentas2,setCuentas2]=useState([]);
     useEffect(()=>{
-      const s1=onSnapshot(query(getColRef('caja_vales'),orderBy('fecha','desc')),s=>setVales(s.docs.map(d=>d.data())));
+      const s1=onSnapshot(query(getColRef('caja_vales'),orderBy('fecha','desc')),s=>{const L=s.docs.map(d=>d.data()); _audExtra.caja_vales=L; setVales(L);});
       const s2=onSnapshot(getColRef('clientes'),s=>setClientes2(s.docs.map(d=>({id:d.id, ...d.data()}))));
       const s3=onSnapshot(getColRef('procura_proveedores'),s=>setProvs2(s.docs.map(d=>({id:d.id, ...d.data()}))));
       const s4=onSnapshot(getColRef('planDeCuentas'),s=>setCuentas2(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -9639,7 +9949,7 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
         const esFinal=nuevoAplicado>=Number(accionModal.monto||0)-0.005;
         const histEntry={fecha:getTodayDate(),tipo:accionForm.tipo,concepto:accionForm.concepto,ctaId:accionForm.ctaId,ctaNom:accionForm.ctaNom,monto:montoBaja};
         const nuevoEstado=!esFinal?'Pendiente':(accionForm.tipo==='Cobrado'?'Cobrado':accionForm.tipo==='Pago a Proveedor'?'Aplicado a Proveedor':'Aplicado a CxC');
-        const {updateDoc,arrayUnion}=await import('firebase/firestore');
+        // (updateDoc y arrayUnion son los del módulo — así esta acción también queda en «Auditoría de Sistema»)
         await updateDoc(getDocRef('caja_vales',id),{estado:nuevoEstado,montoAplicado:nuevoAplicado,...(esFinal?{fechaCierre:getTodayDate()}:{}),historial:arrayUnion(histEntry)});
         setAccionModal(null);setAccionForm({tipo:'Cobrado',concepto:'',ctaId:'',ctaNom:'',monto:''});
       }finally{setBusy(false);}
@@ -10313,7 +10623,9 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
 
   const ReportesGeneralView = ({ tipo = 'banco' }) => {
     const isBanco = tipo === 'banco';
-    const [tasaDia, setTasaDia] = useState(tasaActiva);
+    const [tasaEdit, setTasaEdit] = useState(null); // lo que escribió la persona; mientras no escriba nada, sigue la tasa vigente
+    const tasaDia = tasaEdit === null ? tasaActiva : tasaEdit;
+    const setTasaDia = setTasaEdit;
     const totBsBanco = cuentas.filter(c=>c.moneda==='BS').reduce((a,c)=>a+Number(c.saldo),0);
     const totUSDBanco = cuentas.filter(c=>c.moneda==='USD').reduce((a,c)=>a+Number(c.saldo),0);
     const totBsEqBanco = cuentas.reduce((a,c)=>a+(c.moneda==='BS'?Number(c.saldo):Number(c.saldo)*tasaDia),0);
@@ -10902,19 +11214,34 @@ function BancoApp({ fbUser, onBack, ventasMode = false, systemUsers: systemUsers
   ];
   const navGroups = submodulo==='caja' ? navGroupsCaja : submodulo==='cxp_relacionadas' ? navGroupsCxP : navGroupsBanco;
 
+  // Pantallas de consulta (Panel, General, Comprobante, Libro Diario) con identidad ESTABLE. Están definidas dentro de BancoApp: cada vez que
+  // llega un dato nuevo BancoApp se dibuja de nuevo y React las tomaba por pantallas distintas → se reiniciaban y perdían banco/fechas/pestaña elegidos.
+  // La función de cada una se guarda en una referencia y el envoltorio (siempre el mismo) la llama con los datos de ese momento.
+  const _estables = useRef({});
+  const estable = (id, Vista) => {
+    let e = _estables.current[id];
+    if (!e) { e = _estables.current[id] = { f: Vista, C: null }; e.C = (props) => e.f(props); }
+    e.f = Vista;
+    return e.C;
+  };
+  const DashboardEst = estable('dashboard', DashboardView);
+  const RptGralBancoEst = estable('rpt_gral_banco', ReportesGeneralView), RptGralCajaEst = estable('rpt_gral_caja', ReportesGeneralView);
+  const RptCompBancoEst = estable('rpt_comp_banco', ComprobantesBancariosView), RptCompCajaEst = estable('rpt_comp_caja', ComprobantesBancariosView);
+  const RptLibroCajaEst = estable('rpt_libro_caja', RepLibroDiarioView), RptLibroEst = estable('rpt_libro', RepLibroDiarioView);
+
   const views = {
-    dashboard:<DashboardView/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
+    dashboard:<DashboardEst/>, cuentas:<CuentasView/>, movimientos:<MovimientosView/>,
     pagos_identificar:<PagosPorIdentificarView/>,
     conciliacion:<ConciliacionView cuentas={cuentas} movBanco={movBanco} tasaActiva={tasaActiva} concils={concils} validarClaveAdmin={validarClaveAdmin}/>, reciprocidad:<ReciprocidadView/>,
     cuentas_caja:<CuentasCajaView/>, caja_op:<CajaOpView/>, vales:<ValesView/>, arqueo:<ArqueoCajaView/>,
     conciliacion_caja:<ConciliacionCajaView cajas={cajas} movCaja={movCaja} cobrosCajaCxc={cobrosCajaCxc} pagosCajaCxP={pagosCajaCxP} tasaActiva={tasaActiva} concils={concilsCaja} validarClaveAdmin={validarClaveAdmin}/>,
     caja_dashboard:<CajaOpView/>,
-    rpt_gral_banco:<ReportesGeneralView tipo="banco"/>,
-    rpt_gral_caja:<ReportesGeneralView tipo="caja"/>,
-    rpt_comp_banco:<ComprobantesBancariosView tipo="banco"/>,
-    rpt_comp_caja:<ComprobantesBancariosView tipo="caja"/>,
-    rpt_libro_caja:<RepLibroDiarioView tipo="caja"/>,
-    rpt_libro:<RepLibroDiarioView/>,
+    rpt_gral_banco:<RptGralBancoEst tipo="banco"/>,
+    rpt_gral_caja:<RptGralCajaEst tipo="caja"/>,
+    rpt_comp_banco:<RptCompBancoEst tipo="banco"/>,
+    rpt_comp_caja:<RptCompCajaEst tipo="caja"/>,
+    rpt_libro_caja:<RptLibroCajaEst tipo="caja"/>,
+    rpt_libro:<RptLibroEst/>,
     tasas:<TasasView/>,
     terceros_rel:<TercerosRelacionadosView/>, cxp_rel:<CxPRelacionadasView/>,
     hist_pago_rel:<HistorialPagoRelacionadosView/>, edo_cta_rel:<EstadoCuentaRelacionadosView/>,
