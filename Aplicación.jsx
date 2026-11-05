@@ -2405,7 +2405,7 @@ const rhContabAvisos = (comprobantes, mes, datos) => {
     const vistos = new Set();
     (comprobantes || []).forEach(c => (c.lineas || []).forEach(l => { const k = cod(l.codigo); if (k && !codigos.has(k) && !vistos.has(k)) { vistos.add(k); sinPlan.push({ codigo: k, cuenta: l.cuenta || '', comprobante: c.comprobante }); } }));
   }
-  // fecha de los comprobantes anterior a «Inicio de Contabilidad Real» (settings.fechaInicioContabilidad): los reportes ignoran lo operativo fechado antes de ese día
+  // fecha de los comprobantes anterior a «Inicio de Contabilidad Real» (settings.fechaInicioContabilidad): el Balance General, el Mayor y el Balance de Comprobación ignoran lo operativo fechado antes de ese día (el Estado de Resultados no)
   const corte = String(d.corte || '').trim();
   const antesCorte = corte && (comprobantes || []).some(c => String(c.fecha || '') < corte) ? corte : '';
   return { duplicados, excel, sinPlan, antesCorte };
@@ -6377,7 +6377,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
                             </div>
                           )}
                           {avisos.antesCorte && (
-                            <p className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" data-testid="pasar-aviso-corte">⚠️ La fecha de estos comprobantes ({rhCierreFechaTxt(gd?gd.fecha:'')}) es anterior al «Inicio de Contabilidad Real» ({rhCierreFechaTxt(avisos.antesCorte)}): quedarán en Comprobantes Contables → Nómina, pero el Libro Diario, el Mayor, los Balances y el Estado de Resultados ignoran los movimientos anteriores a esa fecha.</p>
+                            <p className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" data-testid="pasar-aviso-corte">⚠️ La fecha de estos comprobantes ({rhCierreFechaTxt(gd?gd.fecha:'')}) es anterior al «Inicio de Contabilidad Real» ({rhCierreFechaTxt(avisos.antesCorte)}): quedarán en Comprobantes Contables → Nómina y el Estado de Resultados sí los toma, pero el Balance General, el Mayor y el Balance de Comprobación ignoran los movimientos anteriores a esa fecha.</p>
                           )}
                           {avisos.abiertos.length>0 && (
                             <p className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" data-testid="pasar-aviso-abiertos">⚠️ Este cierre incluye {avisos.abiertos.length} pago(s) todavía ABIERTO(S): {avisos.abiertos.join(' · ')}.</p>
@@ -33141,7 +33141,10 @@ function App() {
     });
     return res;
   };
-  const getAsientosReales = (simulacionCostos, conAncla) => {
+  // 3.er parámetro «sinCorte» (solo lo usa el Estado de Resultados): devuelve TODOS los movimientos sin aplicar «Inicio de Contabilidad Real» (settings.fechaInicioContabilidad). Esa fecha queda solo para el Balance General
+  // (y para el Mayor Analítico, el Balance de Comprobación y el Ajuste por Inflación, que lo respaldan). Así el Estado de Resultados toma las facturas, pagos, nómina, etc. de todo el período que se elija.
+  // En ese modo NO se cuentan los comprobantes «HIST-REAL-<mes>» (origen historico_real: ingreso y costo de facturas normales que solo se registraban porque la fecha de inicio las escondía): esas facturas ya entran solas.
+  const getAsientosReales = (simulacionCostos, conAncla, sinCorte) => {
     const out = [];
     // Aplica la reclasificación individual guardada por clic en la cuenta (comprobantes_reclasificaciones),
     // usando la misma clave tabId__compId__lineIdx que ya usa Comprobantes Contables — así los dos
@@ -33378,7 +33381,7 @@ function App() {
       const lineas = construirLineasManualCompartida(a, {tabId:'ajustes', aplicarReclas:aplicarReclasLinea});
       const tieneFechaPropia = lineas.some(l=>l.fecha);
       if (!tieneFechaPropia) {
-        out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual', lineas});
+        out.push({fecha:a.fecha||'', comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual', lineas, _origen:a.origen||''});
         return;
       }
       // Agrupa por fecha efectiva (la de la línea si la trae, si no la del comprobante) y emite
@@ -33391,7 +33394,7 @@ function App() {
         porFecha.get(f).push(l);
       });
       porFecha.forEach((lns,f)=>{
-        out.push({fecha:f, comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual', lineas:lns});
+        out.push({fecha:f, comprobante:a.nroComprobante||'AJUSTE', modulo:'Ajustes', concepto:a.concepto||'Ajuste manual', lineas:lns, _origen:a.origen||''});
       });
     });
     // 8) Nómina — comprobantes importados desde Excel (Fecha/Código/Cuenta/Nro Doc/Detalle/
@@ -33523,6 +33526,8 @@ function App() {
     // descarta todo lo que venga de un módulo OPERATIVO (todo menos 'Ajustes') fechado ANTES
     // de esa fecha — se asume que ya quedó representado por el comprobante de Ajuste de saldos
     // iniciales (ej. "Saldos Junio"), que nunca se filtra. Sin fecha configurada, no cambia nada.
+    // Estado de Resultados (sinCorte): todo el período, sin la fecha de inicio y sin los comprobantes «HIST-REAL» (sus facturas normales ya entran solas). El Balance General y los demás reportes NO pasan por aquí.
+    if (sinCorte) return out.filter(a => a._origen!=='historico_real');
     const fechaInicioCont = settings?.fechaInicioContabilidad || '';
     if (!fechaInicioCont) return out;
     // Excepciones: las facturas históricas importadas (venta y costo) no se descartan — son las que reemplazan al ajuste manual de ventas de los meses históricos — ni la depreciación de Activos Fijos (_exentoCorte).
@@ -33579,7 +33584,7 @@ function App() {
   const guardarFechaInicioContabilidad = async () => {
     try{
       await setDoc(getDocRef('settings','general'),{fechaInicioContabilidad:fechaInicioContForm||''},{merge:true});
-      setDialog({title:'✅ Guardado',text:fechaInicioContForm?`Desde ahora, todos los reportes de Contabilidad ignoran movimientos operativos (Procura, Ventas, Banco, Caja, etc.) anteriores al ${contDd(fechaInicioContForm)}. Los Ajustes manuales, las facturas históricas importadas y la depreciación de Activos Fijos nunca se ignoran.`:'Fecha de inicio quitada — los reportes vuelven a incluir todo el historial.',type:'alert'});
+      setDialog({title:'✅ Guardado',text:fechaInicioContForm?`Desde ahora el Balance General (con el Mayor Analítico y el Balance de Comprobación) ignora los movimientos operativos (Procura, Ventas, Banco, Caja, etc.) anteriores al ${contDd(fechaInicioContForm)}. El Estado de Resultados NO cambia: sigue mostrando todos los movimientos del período que elijas. Los Ajustes manuales, las facturas históricas importadas y la depreciación de Activos Fijos nunca se ignoran.`:'Fecha de inicio quitada — el Balance General, el Mayor y el Balance de Comprobación vuelven a incluir todo el historial.',type:'alert'});
     }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
   };
   const [finanzasPDFs, setFinanzasPDFs] = useState({});
@@ -48783,9 +48788,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const porCubrir = gem.filter(g=>!cub.has(g.f.doc));
             const du = duplicadasSistemaHist(ym);
             const dobles = du.claras.filter(x=>hayFact(x.f.doc));                       // existe la factura normal Y ya está creada la factura histórica del documento: salen dos veces
-            // «Inicio de Contabilidad Real»: una factura normal con fecha igual o posterior ENTRA SOLA al Estado de Resultados (sin fecha de inicio entra todo): el comprobante la sumaría otra vez.
+            // El Estado de Resultados ya NO usa «Inicio de Contabilidad Real» (solo el Balance General): toda factura normal ENTRA SOLA, sea de la fecha que sea, y el comprobante «HIST-REAL» ya no se cuenta en él (la sumaría otra vez).
             const corteCont = String(settings?.fechaInicioContabilidad||'');
-            const enER = gem.filter(g=>g.inv && (!corteCont || String(g.inv.fechaFactura||g.inv.fecha||'').substring(0,10)>=corteCont));
+            const enER = gem.filter(g=>g.inv);
             const lAj = Array.isArray(aj?.lineas) ? aj.lineas : [];
             const sumaAj = (re,tipo)=>r2g(lAj.filter(l=>re.test(String(l.codigo||'')) && l.tipo===tipo).reduce((sm,l)=>sm+Number(l.montoUSD||0),0));
             return {e, aj, gem, porCubrir, corteCont, enER,
@@ -48814,22 +48819,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const rlCrear = estadoRealHist(m.ym);
             const nGemCrear = rlCrear.gem.length;
             const nroCompCrear = rlCrear.aj?.nroComprobante||nroAjusteRealHist(m);
-            const fechaCorteTxt = rlCrear.corteCont ? `en ${fechaLargaDupHist(rlCrear.corteCont)}` : 'sin definir';
-            const textoIngCosGem = rlCrear.enER.length>0
-              ? `⚠️ «Inicio de Contabilidad Real» está ${fechaCorteTxt}: ${rlCrear.enER.length} de esas facturas YA entra(n) al Estado de Resultados por sí sola(s), así que el comprobante «${nroCompCrear}» las sumaría dos veces. Revisa esa fecha (Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real») antes de usar el comprobante.`
-              : rlCrear.porCubrir.length===0
-                ? `Su ingreso y costo ya entran por el comprobante «${nroCompCrear}».`
-                : rlCrear.aj
-                  ? `⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} de ellos (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): su ingreso y costo (Ingresos $${formatNum(rlCrear.ingPorCubrir)} · Costo de venta $${formatNum(rlCrear.cosPorCubrir)}) NO saldrán en el Estado de Resultados hasta que pulses «Actualizar comprobante» en el panel (los agrega; el comprobante actual queda en la Papelera).`
-                  : `⚠️ Su ingreso y costo (Ingresos $${formatNum(rlCrear.ingPorCubrir)} · Costo de venta $${formatNum(rlCrear.cosPorCubrir)}) NO saldrán en el Estado de Resultados hasta que registres el comprobante «${nroAjusteRealHist(m)}» (botón «Registrar ingreso y costo» del panel, después de crear).`;
+            const sinFactNormal = rlCrear.gem.filter(g=>!g.inv);   // documentos que el comprobante cubría pero cuya factura normal ya no se detecta
+            const textoIngCosGem = sinFactNormal.length===0
+              ? `Su ingreso y costo ya entran al Estado de Resultados por esas facturas normales (el Estado de Resultados toma todas las facturas del período, sin importar «Inicio de Contabilidad Real»).`
+              : `⚠️ ${sinFactNormal.length} de ellos (${sinFactNormal.map(g=>g.f.doc).join(', ')}) ya no tienen su factura normal detectada: su ingreso y costo NO saldrán en el Estado de Resultados (el comprobante «${nroCompCrear}» ya no se cuenta en él).`;
             const avisoDupCrear = nGemCrear>0 ? `ℹ️ NO se crean ${nGemCrear} documento(s) de ${m.corto} porque ya existen como factura normal del sistema (${rlCrear.gem.map(g=>`${g.inv?nombreFacDupHist(g.inv):'factura normal'} = ${g.f.doc}`).join(', ')}); esas facturas no se tocan.\n${textoIngCosGem}\n\n` : '';
             const avisoAmbCrear = rlCrear.ambiguas.length>0 ? `ℹ️ ${rlCrear.ambiguas.length} factura(s) del sistema (${rlCrear.ambiguas.map(x=>nombreFacDupHist(x.inv)).join(', ')}) podrían ser la misma venta que algún documento del reporte, pero no se pueden emparejar con certeza: esos documentos SÍ se crean y esas ventas podrían salir dos veces (revísalas en Comprobantes → Ventas).\n\n` : '';
-            const avisoFinCrear = nGemCrear===0 ? '' : rlCrear.enER.length>0
-              ? `\n\n⚠️ Revisa «Inicio de Contabilidad Real» (está ${fechaCorteTxt}): ${rlCrear.enER.length} factura(s) normales de ${m.corto} YA entran al Estado de Resultados por sí solas; el comprobante las sumaría dos veces.`
-              : rlCrear.porCubrir.length===0 ? ''
-              : rlCrear.aj
-                ? `\n\n⚠️ El comprobante «${nroCompCrear}» NO cubre ${rlCrear.porCubrir.length} factura(s) normales de tu reporte (${rlCrear.porCubrir.map(g=>g.f.doc).join(', ')}): pulsa «Actualizar comprobante» en el panel (los agrega; el actual queda en la Papelera); si no, ${m.nombre} queda $${formatNum(rlCrear.ingPorCubrir)} por debajo de tu reporte en ventas.`
-                : `\n\nFalta registrar el comprobante «${nroAjusteRealHist(m)}» con el ingreso y costo de las ${rlCrear.porCubrir.length} factura(s) normales que ya estaban en tu reporte (botón «Registrar ingreso y costo» del panel): sin él, ${m.nombre} queda $${formatNum(rlCrear.ingPorCubrir)} por debajo de tu reporte en ventas.`;
+            const avisoFinCrear = (nGemCrear===0 || sinFactNormal.length===0) ? '' : `\n\n⚠️ ${sinFactNormal.length} documento(s) de ${m.corto} (${sinFactNormal.map(g=>g.f.doc).join(', ')}) ya no tienen factura normal detectada: su ingreso y costo NO saldrán en el Estado de Resultados.`;
             if(!window.confirm(`Se van a crear ${e.pendientes.length} factura(s) de ${m.nombre} (${nVta} venta(s)${nDev?` y ${nDev} devolución(es)`:''}), con su número fiscal original (${primero} … ${ultimo}), vinculadas a sus Notas de Entrega históricas.\n\nEfecto en el Estado de Resultados de ${m.nombre}: Ingresos netos $${formatNum(e.ingPend)} · Costo de venta neto $${formatNum(e.cosPend)}.${e.nOpPend>0?` De ellas, ${e.nOpPend} factura(s) de bolsas de producción van como «Con OP» (Ingresos $${formatNum(e.ingOpPend)} · Costo de venta $${formatNum(e.cosOpPend)}); el resto va como «Sin OP». Es la misma separación de tu reporte antiguo.`:''}\n\n${efCxC.n===0 ? 'Cuentas por Cobrar: los saldos en USD no cambian (no hay retenciones ni NC/ND registradas con el número de estas facturas).' : `⚠️ CUENTAS POR COBRAR SÍ CAMBIARÍA: hay ${efCxC.rets.length} retención(es) y ${efCxC.notas.length} NC/ND registradas con el número de estas facturas. Hoy Cuentas por Cobrar las ignora; al crear las facturas se aplicarían a su NE y moverían el saldo del cliente:\n${detalleEfectoCxC(efCxC)}\n\nSi tu Cuentas por Cobrar ya está cuadrada, cancela y revisa esos registros primero.`}\n\n${avisoDupCrear}${avisoAmbCrear}No se tocan otros meses, los ajustes contables ni los cobros. ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
@@ -48878,6 +48874,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
           const registrarRealesHistoricasMes = async (m) => {
             if(importandoHist) return;
+            alert(`El Estado de Resultados ya toma las facturas normales de ${m.nombre} directamente (no depende de «Inicio de Contabilidad Real»): este comprobante ya no se cuenta en él, por eso no se registra.`); return;
             const rl = estadoRealHist(m.ym);
             if(rl.aj && rl.porCubrir.length===0){ alert(`El comprobante de las facturas normales de ${m.nombre} ya está registrado (${rl.aj.nroComprobante||rl.aj.id}) — no se crea de nuevo.`); return; }
             const act = !!rl.aj;                                                        // ya hay comprobante pero le faltan documentos: se ACTUALIZA agregándolos (la versión actual queda en la Papelera)
@@ -49103,6 +49100,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           };
           const registrarRealMes = async (m) => {
             if(importandoHist) return;
+            alert(`El Estado de Resultados ya toma las facturas de ${m.nombre} directamente (no depende de «Inicio de Contabilidad Real»): este comprobante ya no se cuenta en él, por eso no se registra.`); return;
             const s = estadoRealMes(m);
             if(s.facts.length+s.notas.length===0){ alert(`No hay facturas reales de ${m.nombre} con Nro. Fiscal: no hay nada que registrar.`); return; }
             if(s.enER.length>0){ alert(`«Inicio de Contabilidad Real» está ${s.corte?`en ${fechaLargaDupHist(s.corte)}`:'sin definir'} y ${s.enER.length} de las facturas de ${m.nombre} (${s.enER.slice(0,10).map(nombreFacDupHist).join(', ')}${s.enER.length>10?'…':''}) YA entran al Estado de Resultados por sí solas: el comprobante las sumaría dos veces, por eso no se registra.\n\nRevisa esa fecha en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al ${m.fin} de ${m.corto} de 2026).`); return; }
@@ -49161,7 +49159,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const r = resumenIngCostoAjHist(a);
             if(r.n===0){ alert(`El ajuste «${m.ajuste}» ya está solo con Gastos: no hay nada que quitar.`); return; }
             const nuevas = lineasAjusteSoloGastosDin(a);
-            if(!window.confirm(`Se va a dejar el ajuste «${m.ajuste}» solo con los Gastos de ${m.corto} (${nuevas.length} línea(s)).\n\nSe quitan: ${r.texto}.\nLas ventas y el costo de ${m.corto} salen de las facturas reales (comprobante «${nroAjusteRealMes(m)}»), así que se quitan para no contarlos dos veces. Solo cambia este ajuste y el actual queda guardado en la Papelera (recuperable).${ccAjAvisoCorregido(a)} ¿Continuar?`)) return;
+            if(!window.confirm(`Se va a dejar el ajuste «${m.ajuste}» solo con los Gastos de ${m.corto} (${nuevas.length} línea(s)).\n\nSe quitan: ${r.texto}.\nLas ventas y el costo de ${m.corto} salen de las facturas reales del sistema, que ya entran solas al Estado de Resultados, así que se quitan para no contarlos dos veces. Solo cambia este ajuste y el actual queda guardado en la Papelera (recuperable).${ccAjAvisoCorregido(a)} ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const batch = writeBatch(db);
@@ -49230,7 +49228,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     {MESES_FACT_HIST.map(m=>{
                       const e = estadoFactHist(m.ym);
                       const rl = estadoRealHist(m.ym);
-                      const completo = e.pendientes.length===0 && e.facturadas>0 && e.sinNE.length===0 && rl.porCubrir.length===0 && rl.dobles.length===0 && rl.huerfanas.length===0 && rl.enER.length===0;
+                      const completo = e.pendientes.length===0 && e.facturadas>0 && e.sinNE.length===0 && rl.dobles.length===0;
                       const nd = estadoNDHist(m.ym);
                       const ot = otrasNEMesHist(m.ym);
                       return (
@@ -49280,7 +49278,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           );
                         })()}
                         {(() => {
-                          if(rl.gem.length+rl.dobles.length+rl.ambiguas.length+rl.huerfanas.length===0 && !rl.aj) return null;
+                          if(rl.gem.length+rl.dobles.length+rl.ambiguas.length===0 && !rl.aj) return null;
                           const nroAj = rl.aj ? (rl.aj.nroComprobante||rl.aj.id) : nroAjusteRealHist(m);
                           return (
                             <div data-testid={'fact-hist-real-'+m.ym} className="pl-3 border-l-4 border-orange-400 text-[10px] font-semibold text-orange-900 flex items-start gap-3 flex-wrap">
@@ -49290,29 +49288,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                     ℹ️ {rl.gem.length} documento(s) de {m.corto} de tu reporte YA existen como factura normal del sistema (mismo cliente, fecha y monto base, o la factura se hizo desde su NE), por eso NO se crean: {rl.gem.map(g=>detalleGemHist(g)).join(' | ')}. Esas facturas normales no se tocan: siguen con su IVA, NE, cobros y OP.
                                   </div>
                                 )}
-                                {rl.gem.length>0 && !rl.aj && (
-                                  <div data-testid={'fact-hist-real-pend-'+m.ym} className="font-bold text-amber-800">
-                                    ⚠️ Su ingreso y costo todavía NO están en el Estado de Resultados de {m.corto}: Ingresos ${formatNum(rl.ingPorCubrir)} · Costo de venta ${formatNum(rl.cosPorCubrir)}. Se registran como UN comprobante manual «{nroAj}» (cada documento en su fecha, contra utilidad acumulada, igual que la ND de febrero): no toca Cuentas por Cobrar, IVA, Bancos ni las facturas.
+                                {rl.gem.length>0 && rl.gem.every(g=>g.inv) && (
+                                  <div data-testid={'fact-hist-real-pend-'+m.ym} className="font-bold text-emerald-700">
+                                    ✅ Su ingreso y costo ya entran al Estado de Resultados por esas facturas normales: el Estado de Resultados toma todas las facturas del período, sin importar «Inicio de Contabilidad Real», así que no hace falta registrar ningún comprobante.
                                   </div>
                                 )}
-                                {rl.enER.length>0 && (
-                                  <div data-testid={'fact-hist-real-corte-'+m.ym} className="font-bold text-red-700">
-                                    ⚠️ «Inicio de Contabilidad Real» está {rl.corteCont ? `en ${fechaLargaDupHist(rl.corteCont)}` : 'sin definir'}: {rl.enER.length} de esas facturas normales ({rl.enER.map(g=>nombreFacDupHist(g.inv)).join(', ')}) YA entra(n) al Estado de Resultados por sí sola(s), así que {rl.aj ? `el comprobante «${nroAj}» las suma dos veces: pulsa «Quitar comprobante» o corrige esa fecha` : 'NO registres el comprobante (las sumaría dos veces): corrige esa fecha'} en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al {m.fin} de {m.corto} de 2026).
+                                {rl.gem.some(g=>!g.inv) && (
+                                  <div data-testid={'fact-hist-real-sinfact-'+m.ym} className="font-bold text-red-700">
+                                    ⚠️ {rl.gem.filter(g=>!g.inv).length} documento(s) ({rl.gem.filter(g=>!g.inv).map(g=>g.f.doc).join(', ')}) ya no tienen su factura normal detectada: su ingreso y costo NO salen en el Estado de Resultados (el comprobante «HIST-REAL» ya no se cuenta en él).
                                   </div>
                                 )}
                                 {rl.aj && (
-                                  <div data-testid={'fact-hist-real-reg-'+m.ym} className="font-bold text-emerald-700">
-                                    ✅ Registrado como comprobante «{nroAj}»: Ingresos ${formatNum(rl.ingAj)} · Costo de venta ${formatNum(rl.cosAj)} — ya sale en el Estado de Resultados.
-                                  </div>
-                                )}
-                                {rl.aj && rl.porCubrir.length>0 && (
-                                  <div data-testid={'fact-hist-real-sincub-'+m.ym} className="font-bold text-red-700">
-                                    ⚠️ {rl.porCubrir.length} documento(s) más ya existen como factura normal y NO están en el comprobante «{nroAj}»: {rl.porCubrir.map(g=>g.f.doc).join(', ')}. Pulsa «Actualizar comprobante (+{rl.porCubrir.length})» para agregarlos (las líneas que ya tiene no cambian y la versión actual queda en la Papelera).
-                                  </div>
-                                )}
-                                {rl.huerfanas.length>0 && (
-                                  <div data-testid={'fact-hist-real-huerf-'+m.ym} className="font-bold text-red-700">
-                                    ⚠️ El comprobante «{nroAj}» cubre {rl.huerfanas.join(', ')}, pero esos documentos ya tienen factura creada (la histórica o la ligada a su NE): ese ingreso y costo se estarían contando dos veces. Pulsa «Quitar comprobante» y regístralo de nuevo.
+                                  <div data-testid={'fact-hist-real-reg-'+m.ym} className="font-bold text-slate-600">
+                                    ℹ️ El comprobante «{nroAj}» (Ingresos ${formatNum(rl.ingAj)} · Costo de venta ${formatNum(rl.cosAj)}) ya NO se cuenta en el Estado de Resultados, porque esas facturas normales entran solas. Puedes dejarlo o quitarlo con «Quitar comprobante» (queda en la Papelera).
                                   </div>
                                 )}
                                 {rl.dobles.length>0 && (
@@ -49326,16 +49314,6 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                   </div>
                                 )}
                               </div>
-                              {rl.gem.length>0 && !rl.aj && (
-                                <button data-testid={'fact-hist-real-registrar-'+m.ym} onClick={()=>registrarRealesHistoricasMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
-                                  <FileCheck size={14}/> {importandoHist?'Registrando...':`Registrar ingreso y costo (${rl.gem.length})`}
-                                </button>
-                              )}
-                              {rl.aj && rl.porCubrir.length>0 && (
-                                <button data-testid={'fact-hist-real-actualizar-'+m.ym} onClick={()=>registrarRealesHistoricasMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
-                                  <FileCheck size={14}/> {importandoHist?'Actualizando...':`Actualizar comprobante (+${rl.porCubrir.length})`}
-                                </button>
-                              )}
                               {rl.aj && (
                                 <button data-testid={'fact-hist-real-quitar-'+m.ym} onClick={()=>quitarRealesHistoricasMes(m)} disabled={importandoHist} className="bg-white border-2 border-orange-300 text-orange-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase hover:bg-orange-100 disabled:opacity-50">
                                   Quitar comprobante
@@ -49405,99 +49383,55 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 );
               })()}
               {(() => {
-                // Meses anteriores al «Inicio de Contabilidad Real» con facturas reales del sistema (mayo, junio, julio): su ingreso y costo salen de esas facturas, no del ajuste del sistema anterior
+                // Mayo, junio y julio con facturas reales del sistema. El Estado de Resultados ya toma TODAS las facturas del período directamente (no usa «Inicio de Contabilidad Real», que es solo del Balance General), así que ya no
+                // hace falta el comprobante «HIST-REAL-<mes>» (si está registrado, ya no se cuenta en el Estado de Resultados). Aquí queda lo que sí hay que revisar: el ajuste «HIST-<MES>-2026» del sistema anterior si todavía trae
+                // Ingresos y Costo de venta (se contarían dos veces con las facturas) y la opción de quitar el comprobante viejo.
                 const filasRM = MESES_REAL_PREV.map(m=>({m, s:estadoRealMes(m)})).filter(x=>x.s.facts.length>0 || x.s.notas.length>0 || x.s.aj);
                 if(filasRM.length===0) return null;
                 const lista = (arr, fn, n=8) => arr.slice(0,n).map(fn).join(' | ') + (arr.length>n ? ` | …y ${arr.length-n} más` : '');
                 return (
                   <div data-testid="real-mes-panel" className="bg-orange-50 border-2 border-orange-200 rounded-2xl px-4 py-3 text-xs space-y-3">
-                    <div className="font-black text-orange-800 uppercase text-[10px] tracking-wide">🧾 Facturas reales → Estado de Resultados (meses anteriores al «Inicio de Contabilidad Real»)</div>
-                    <div className="text-[10px] font-semibold text-orange-700">El ingreso y el costo salen de las facturas reales del sistema, por la fecha de su Nro. Fiscal: son las mismas de tu Reporte General de Ventas y Costos y del Libro de Ventas, y los Bs. son los propios de cada factura (los del Libro). El ajuste «HIST-&lt;MES&gt;-2026» del sistema anterior se deja solo con los Gastos.</div>
+                    <div className="font-black text-orange-800 uppercase text-[10px] tracking-wide">🧾 Facturas reales de mayo, junio y julio → Estado de Resultados</div>
+                    <div className="text-[10px] font-semibold text-orange-700">El Estado de Resultados toma todas las facturas del período directamente, sin importar «Inicio de Contabilidad Real» (esa fecha solo se aplica al Balance General). Por eso estos meses ya no necesitan el comprobante «HIST-REAL-&lt;MES&gt;»: si lo tienes registrado, ya no se cuenta en el Estado de Resultados.</div>
                     {filasRM.map(({m,s})=>{
                       const nroAj = s.aj ? (s.aj.nroComprobante||s.aj.id) : nroAjusteRealMes(m);
-                      const alDia = !!s.aj && !s.desact;
                       const nAj = s.resAj ? s.resAj.n : 0;
                       return (
                         <div key={m.ym} className="space-y-1">
                           <div data-testid={'real-mes-'+m.ym} className="flex items-center gap-3 flex-wrap">
                             <div className="font-bold text-orange-900 flex-1 min-w-[320px]">
                               <span className="font-black">{m.nombre}</span> · {s.facts.length} factura(s) con Nro. Fiscal de {m.corto}{s.notas.length>0 ? ` + ${s.notas.length} nota(s) fiscal(es)` : ''} · Ingresos netos ${formatNum(s.tot.ing)} (Bs. {formatNum(s.tot.ingBs)}) · Costo de venta neto ${formatNum(s.tot.cos)} (Bs. {formatNum(s.tot.cosBs)})
-                              {alDia && nAj===0 && <span className="text-emerald-700"> · ✅ ya sale en el Estado de Resultados</span>}
+                              <span className="text-emerald-700"> · ✅ ya salen en el Estado de Resultados</span>
                             </div>
-                            {!s.aj && (s.facts.length+s.notas.length>0) && (
-                              <button data-testid={'real-mes-registrar-'+m.ym} onClick={()=>registrarRealMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
-                                <FileCheck size={14}/> {importandoHist?'Registrando...':`Pasar ${m.corto} al Estado de Resultados (${s.facts.length})`}
-                              </button>
-                            )}
-                            {s.aj && s.desact && (
-                              <button data-testid={'real-mes-actualizar-'+m.ym} onClick={()=>registrarRealMes(m)} disabled={importandoHist} className="bg-orange-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-orange-700 disabled:opacity-50">
-                                <FileCheck size={14}/> {importandoHist?'Actualizando...':'Actualizar comprobante'}
-                              </button>
-                            )}
                             {s.aj && (
                               <button data-testid={'real-mes-quitar-'+m.ym} onClick={()=>quitarRealMes(m)} disabled={importandoHist} className="bg-white border-2 border-orange-300 text-orange-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase hover:bg-orange-100 disabled:opacity-50">
                                 Quitar comprobante
                               </button>
                             )}
                           </div>
-                          {s.enER.length>0 && (
-                            <div data-testid={'real-mes-corte-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700">
-                              ⚠️ «Inicio de Contabilidad Real» está {s.corte ? `en ${fechaLargaDupHist(s.corte)}` : 'sin definir'}: {s.enER.length} de estas facturas ({s.enER.slice(0,8).map(nombreFacDupHist).join(', ')}{s.enER.length>8?'…':''}) YA entra(n) al Estado de Resultados por sí sola(s), así que {s.aj ? `el comprobante «${nroAj}» las suma dos veces: pulsa «Quitar comprobante» o corrige esa fecha` : 'NO registres el comprobante (las sumaría dos veces): corrige esa fecha'} en Contabilidad → Mayor Analítico → «Inicio de Contabilidad Real» (para que no entren, debe ser posterior al {m.fin} de {m.corto} de 2026).
-                            </div>
-                          )}
-                          {!s.aj && (
-                            <div data-testid={'real-mes-pend-'+m.ym} className={'pl-3 border-l-4 text-[10px] font-bold '+(s.ajM?'border-amber-400 text-amber-800':'border-slate-300 text-slate-600')}>
-                              {s.ajM?'⚠️':'ℹ️'} {s.ajM ? (nAj>0 ? `Hoy ${m.corto} sale en el Estado de Resultados desde el ajuste «${m.ajuste}» (sistema anterior): ${s.resAj.texto}. Eso NO es lo que dicen tus reportes de ventas.` : `El ajuste «${m.ajuste}» ya está solo con Gastos, así que ${m.corto} todavía no tiene ventas ni costo en el Estado de Resultados.`) : `No hay ajuste «${m.ajuste}» del sistema anterior: salvo que ya los hayas cargado a mano, ${m.corto} no tiene ventas ni costo en el Estado de Resultados.`} Al pulsar «Pasar {m.corto} al Estado de Resultados» se registra UN comprobante «{nroAj}» con las facturas reales (cada una en su fecha, contra utilidad acumulada, como los demás ajustes históricos){nAj>0 ? ` y el ajuste «${m.ajuste}» queda solo con sus Gastos (el actual se guarda en la Papelera)` : ''}; no toca Cuentas por Cobrar, IVA, Bancos ni las facturas.
-                            </div>
-                          )}
                           {s.aj && (
-                            <div data-testid={'real-mes-reg-'+m.ym} className={'pl-3 border-l-4 text-[10px] font-bold '+(s.desact?'border-red-400 text-red-700':'border-emerald-400 text-emerald-700')}>
-                              {s.desact ? '⚠️' : '✅'} Registrado como comprobante «{nroAj}»: Ingresos ${formatNum(s.ajTot.ing)} (Bs. {formatNum(s.ajTot.ingBs)}) · Costo de venta ${formatNum(s.ajTot.cos)} (Bs. {formatNum(s.ajTot.cosBs)}){s.desact ? '' : ' — ya sale en el Estado de Resultados.'}
+                            <div data-testid={'real-mes-reg-'+m.ym} className="pl-3 border-l-4 border-slate-300 text-[10px] font-bold text-slate-600">
+                              ℹ️ El comprobante «{nroAj}» (Ingresos ${formatNum(s.ajTot.ing)} · Costo de venta ${formatNum(s.ajTot.cos)}) ya NO se cuenta en el Estado de Resultados, porque esas facturas entran solas. Puedes dejarlo o quitarlo con «Quitar comprobante» (queda en la Papelera).
                             </div>
                           )}
-                          {s.aj && s.desact && (
-                            <div data-testid={'real-mes-desact-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700">
-                              ⚠️ Las facturas de {m.corto} cambiaron después de registrar el comprobante: {textoDifRealMes(s)}. Pulsa «Actualizar comprobante» para que el Estado de Resultados las tome otra vez (la versión actual queda en la Papelera).
-                            </div>
-                          )}
-                          {s.aj && nAj>0 && (
+                          {nAj>0 && (
                             <div data-testid={'real-mes-ajuste-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700 flex items-center gap-3 flex-wrap">
                               <div className="flex-1 min-w-[320px]">
-                                ⚠️ El ajuste «{m.ajuste}» todavía trae {s.resAj.texto} y ya está el comprobante «{nroAj}»: {m.corto} se está contando DOS veces en el Estado de Resultados. Pulsa «Dejar {m.corto} solo con Gastos» (no toca las facturas; el ajuste actual queda en la Papelera).
+                                ⚠️ El ajuste «{m.ajuste}» todavía trae {s.resAj.texto}: como las facturas reales de {m.corto} ya entran solas al Estado de Resultados, {m.corto} se está contando DOS veces. Pulsa «Dejar {m.corto} solo con Gastos» (no toca las facturas; el ajuste actual queda en la Papelera).
                               </div>
                               <button data-testid={'real-mes-dejarsolo-'+m.ym} onClick={()=>dejarSoloGastosMesReal(m)} disabled={importandoHist} className="bg-white border-2 border-slate-400 text-slate-700 px-3 py-1.5 rounded-xl font-black text-[10px] uppercase hover:bg-slate-100 shrink-0 disabled:opacity-50">
                                 Dejar {m.corto} solo con Gastos
                               </button>
                             </div>
                           )}
-                          {s.baseDist.length>0 && (
-                            <div data-testid={'real-mes-base-'+m.ym} className="pl-3 border-l-4 border-amber-300 text-[10px] font-semibold text-slate-700">
-                              ℹ️ {s.baseDist.length} factura(s) cuya base en $ no coincide con la suma de sus artículos (tu Reporte suma los artículos; el Estado de Resultados y el Libro de Ventas usan la base de la factura): {lista(s.baseDist, x=>`${x.nf} · ${x.cli} · base $${formatNum(x.base)} · artículos $${formatNum(x.items)}`)}.
-                            </div>
-                          )}
-                          {s.bsDist.length>0 && (
-                            <div data-testid={'real-mes-bs-'+m.ym} className="pl-3 border-l-4 border-amber-300 text-[10px] font-semibold text-slate-700">
-                              ℹ️ {s.bsDist.length} factura(s) con Bs. propios (los del Libro de Ventas) distintos de su base en $ × tasa: el Estado de Resultados usa esos Bs. del Libro y los $ de la factura — {lista(s.bsDist, x=>`${x.nf} · ${x.cli} · Libro Bs. ${formatNum(x.baseBs)} · $${formatNum(x.usd)} × ${formatTasa(x.tasa)} = Bs. ${formatNum(x.usdBs)}`)}.
-                            </div>
-                          )}
-                          {s.sinCosto.length>0 && (
-                            <div data-testid={'real-mes-sincosto-'+m.ym} className="pl-3 border-l-4 border-amber-300 text-[10px] font-semibold text-slate-700">
-                              ℹ️ {s.sinCosto.length} factura(s) con artículos sin costo guardado (el Estado de Resultados no les pone costo de venta): {s.sinCosto.slice(0,10).join(', ')}{s.sinCosto.length>10?'…':''}.
-                            </div>
-                          )}
                           {s.sinFiscal.length>0 && (
                             <div data-testid={'real-mes-sinfiscal-'+m.ym} className="pl-3 border-l-4 border-slate-300 text-[10px] font-semibold text-slate-600">
-                              ℹ️ {s.sinFiscal.length} factura(s) de {m.corto} sin Nro. Fiscal (${formatNum(s.sinFiscal.reduce((sm,f)=>sm+parseNum(f.montoBase||0),0))}) no entran, igual que en tu Reporte: {s.sinFiscal.slice(0,8).map(f=>f.documento||f.id).join(', ')}{s.sinFiscal.length>8?'…':''}.
+                              ℹ️ {s.sinFiscal.length} factura(s) de {m.corto} sin Nro. Fiscal (${formatNum(s.sinFiscal.reduce((sm,f)=>sm+parseNum(f.montoBase||0),0))}) no están en tu Reporte de ventas, pero sí entran al Estado de Resultados (toma todas las facturas): {s.sinFiscal.slice(0,8).map(f=>f.documento||f.id).join(', ')}{s.sinFiscal.length>8?'…':''}.
                             </div>
                           )}
                           {s.divergentes.length>0 && (
                             <div data-testid={'real-mes-diverg-'+m.ym} className="pl-3 border-l-4 border-slate-300 text-[10px] font-semibold text-slate-600">
                               ℹ️ {s.divergentes.length} factura(s) con fecha interna de {m.corto} pero Nro. Fiscal de otro mes (${formatNum(s.divergentes.reduce((sm,f)=>sm+parseNum(f.montoBase||0),0))}): van al mes de su Nro. Fiscal, como tu Reporte y el Libro de Ventas — {lista(s.divergentes, f=>`${nfRealMes(f)} · fiscal ${fechaLargaDupHist(fechaRealMes(f))}`)}.
-                            </div>
-                          )}
-                          {s.errores.length>0 && (
-                            <div data-testid={'real-mes-errores-'+m.ym} className="pl-3 border-l-4 border-red-400 text-[10px] font-bold text-red-700">
-                              ⚠️ No se pudo calcular: {s.errores.slice(0,5).join(' | ')}.
                             </div>
                           )}
                         </div>
@@ -67582,7 +67516,7 @@ ${resumen}
                   <input type="date" className="flex-1 border-2 border-amber-200 rounded-lg px-2 py-1 text-[10px] font-bold outline-none bg-white" value={fechaInicioContForm} onChange={e=>setFechaInicioContForm(e.target.value)}/>
                   <button onClick={guardarFechaInicioContabilidad} title="Guardar" className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[9px] font-black">✓</button>
                 </div>
-                <p className="text-[8px] text-amber-700 leading-tight">Ignora en TODOS los reportes de Contabilidad los movimientos de Procura/Ventas/Banco/Caja/Nómina/etc. anteriores a esta fecha. Los Ajustes manuales (ej. "Saldos Junio") nunca se ignoran, ni tampoco las facturas históricas importadas (Ventas → NE) ni la depreciación de Activos Fijos.{settings?.fechaInicioContabilidad?` Activo: ${contDd(settings.fechaInicioContabilidad)}.`:''}</p>
+                <p className="text-[8px] text-amber-700 leading-tight">Solo para el Balance General (y el Mayor y el Balance de Comprobación que lo respaldan): ignora los movimientos de Procura/Ventas/Banco/Caja/Nómina/etc. anteriores a esta fecha. El Estado de Resultados NO la usa: muestra todos los movimientos del período que elijas. Los Ajustes manuales (ej. "Saldos Junio") nunca se ignoran, ni tampoco las facturas históricas importadas (Ventas → NE) ni la depreciación de Activos Fijos.{settings?.fechaInicioContabilidad?` Activo: ${contDd(settings.fechaInicioContabilidad)}.`:''}</p>
               </div>
               <div className="max-h-[55vh] overflow-y-auto space-y-0.5">
                 {treeMayor.length===0 && <p className="text-[10px] text-gray-400 text-center py-4">Sin cuentas con movimiento en el rango elegido.</p>}
@@ -67843,7 +67777,8 @@ ${resumen}
     const simCostosMap = Object.fromEntries(simCostosLista.map(x=>[x.nombre.trim().toUpperCase(), x.costoReal]));
     const _fNum = (s) => { const d = String(s||'').trim().replace(/[^\d]/g,''); return d ? Number(d.slice(0,8)) : null; };
     const _desdeNum = _fNum(contFiltDesde), _hastaNum = _fNum(contFiltHasta);
-    const asientosPeriodo = getAsientosReales(simCostosActiva?simCostosMap:null).filter(a=>{
+    // «Inicio de Contabilidad Real» NO se aplica aquí (solo al Balance General): el Estado de Resultados muestra todos los movimientos del período elegido
+    const asientosPeriodo = getAsientosReales(simCostosActiva?simCostosMap:null, undefined, true).filter(a=>{
       const fNum = _fNum(a.fecha);
       if (fNum===null) return true;
       return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
@@ -67970,6 +67905,25 @@ ${resumen}
             <p className="text-gray-500 text-[10px] mt-1 font-bold uppercase tracking-widest">Ingresos, costos y gastos — utilidad o pérdida del período</p>
           </div>
           <div className="p-6 space-y-4">
+            {(()=>{
+              // «Inicio de Contabilidad Real» ya NO afecta a este estado (solo al Balance General). Se avisa en pantalla y se señalan los comprobantes manuales de fechas anteriores que podrían contarse dos veces junto con los movimientos reales.
+              const corteER = String(settings?.fechaInicioContabilidad||'');
+              if(!corteER) return null;
+              const manuales = [];
+              asientosPeriodo.forEach(a=>{
+                if(a.modulo!=='Ajustes' || a._origen==='historico_nd' || (a.fecha||'')>corteER) return;
+                if(!(a.lineas||[]).some(l=>/^[456]/.test(String(l.codigo||'')))) return;
+                if(!manuales.includes(a.comprobante)) manuales.push(a.comprobante);
+              });
+              return (
+                <div data-testid="er-aviso-corte" className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-2 text-[10px] font-bold text-sky-800 space-y-1">
+                  <p>ℹ️ Este estado muestra todos los movimientos del período que elijas, también los anteriores al «Inicio de Contabilidad Real» ({contDd(corteER)}): esa fecha solo se aplica al Balance General (con el Mayor Analítico y el Balance de Comprobación).</p>
+                  {manuales.length>0 && (
+                    <p data-testid="er-aviso-ajustes" className="text-amber-800">⚠️ Revisa estos comprobantes manuales con fecha igual o anterior a esa fecha que traen ingresos, costos o gastos: {manuales.slice(0,8).join(', ')}{manuales.length>8?`… (y ${manuales.length-8} más)`:''}. Si lo que traen ya está registrado como facturas, pagos o nómina de esos meses, este estado lo cuenta dos veces.</p>
+                  )}
+                </div>
+              );
+            })()}
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-3">
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Desde</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltDesde} onChange={e=>setContFiltDesde(e.target.value)}/></div>
               <div><label className="text-[9px] font-black text-gray-500 uppercase block mb-1">Hasta</label><input type="date" className="border-2 border-gray-200 rounded-lg px-3 py-2 text-xs font-bold outline-none" value={contFiltHasta} onChange={e=>setContFiltHasta(e.target.value)}/></div>
@@ -68110,7 +68064,7 @@ ${resumen}
                       // Utilidad con y sin el simulador, para el comparativo del comentario — se
                       // recalcula aparte (no reemplaza la corrida principal de la tabla de arriba).
                       const _sumUtil = (mapa) => {
-                        const asientos = getAsientosReales(mapa).filter(a=>{
+                        const asientos = getAsientosReales(mapa, undefined, true).filter(a=>{
                           const fNum = _fNum(a.fecha);
                           if (fNum===null) return true;
                           return (!_desdeNum||fNum>=_desdeNum) && (!_hastaNum||fNum<=_hastaNum);
