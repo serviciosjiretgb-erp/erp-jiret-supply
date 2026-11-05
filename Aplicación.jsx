@@ -11809,6 +11809,51 @@ const swapTipoCC = (ov, l) => {
   if(!ov || !ov.tipoOverride || ov.tipoOverride===l.tipo) return l;
   return {...l, tipo:ov.tipoOverride, dBs:l.hBs, hBs:l.dBs, dUSD:l.hUSD, hUSD:l.dUSD};
 };
+// ── Traslado Banco → Caja con comprobante único (con o sin diferencia de rebancarización) ──
+// BancoApp guarda UN solo asiento (D Caja · D/H Diferencia · H Banco) colgado del movimiento de BANCO. El movimiento de CAJA que lo acompaña es solo la
+// entrada del efectivo (es lo que le da el saldo a la caja): su comprobante completo ya sale por Banco. Si la Caja generara otro, el débito a Caja saldría
+// dos veces y la contrapartida sería una cuenta por cobrar que no es. Devuelve los ids de esos movimientos de Caja.
+// Solo cuenta si el movimiento de Banco existe y su comprobante está guardado: si no, no se oculta nada (así nunca se pierde un débito a Caja).
+const idsEntradaCajaTrasladoUnico = (movBanco, asientos, movCaja, cuentasCaja) => {
+  const out = new Set();
+  const lista = movBanco || [];
+  const porId = new Map(), porMovBanco = new Map();
+  (asientos || []).forEach(a => {
+    if (!a) return;
+    if (a.id) porId.set(a.id, a);
+    if (a.movimientoBancoId && !porMovBanco.has(a.movimientoBancoId)) porMovBanco.set(a.movimientoBancoId, a);
+  });
+  // (1) Los que BancoApp dejó marcados como traslado con comprobante único (trasladoDirecto).
+  lista.forEach(b => {
+    if (!b || !b.trasladoDirecto || !b.cajaDestinoMovId) return;
+    const a = porId.get(b.asientoContableId) || porMovBanco.get(b.id) || porMovBanco.get(b._docId);
+    if (!a || !(a.lineas || []).length) return;
+    out.add(b.cajaDestinoMovId);
+    if (a.movimientoCajaId) out.add(a.movimientoCajaId);
+  });
+  // (2) Los guardados SIN la marca: la entrada de caja cuelga del MISMO asiento que el movimiento de traslado de Banco. Solo si el Banco ya muestra ese asiento
+  //     por la vía normal (su total es el monto del banco) y ese asiento ya debita ESTA caja: así ocultar la entrada de caja tampoco pierde nada.
+  if ((movCaja || []).length) {
+    const bancoPorAsiento = new Map();
+    lista.forEach(b => { if (b && b.asientoContableId && (b.tipo === 'Traslado de Fondo' || b.tipo === 'Traslado Banco→Caja') && !bancoPorAsiento.has(b.asientoContableId)) bancoPorAsiento.set(b.asientoContableId, b); });
+    if (bancoPorAsiento.size) {
+      const cajaPorId = new Map((cuentasCaja || []).filter(Boolean).map(c => [c.id, c]));
+      movCaja.forEach(m => {
+        if (!m || m.tipo !== 'Ingreso' || !m.asientoContableId) return;
+        const b = bancoPorAsiento.get(m.asientoContableId), a = porId.get(m.asientoContableId);
+        if (!b || !a || !(a.lineas || []).length) return;
+        const sD = a.lineas.reduce((s, l) => s + Number(l.debeUSD || 0), 0), sH = a.lineas.reduce((s, l) => s + Number(l.haberUSD || 0), 0);
+        const tot = Math.max(sD, sH), mb = Math.abs(Number(b.montoUSD || 0));
+        if (!(tot > 0.005 && mb > 0.005 && Math.abs(tot - mb) <= 0.02)) return;
+        const cta = cajaPorId.get(m.cajaId), cod = String((cta && cta.cuentaContableCod) || '');
+        if (!cod || !a.lineas.some(l => String(l.codigo || '') === cod && (Number(l.debeBs || 0) + Number(l.debeUSD || 0)) > 0.0001)) return;
+        out.add(m._docId || m.id);
+      });
+    }
+  }
+  return out;
+};
+const esEntradaCajaTrasladoUnico = (m, ids) => !!m && !!ids && ids.size > 0 && (ids.has(m._docId) || ids.has(m.id));
 const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const {cuentas, idField, nombreCta, asientos, provs, clientes, tercerosRel, planCuentas, tabId, aplicarReclas, cuentasAnticipoCfg} = ctx;
   const cta = (cuentas||[]).find(c=>c.id===m[idField]);
@@ -11827,7 +11872,10 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   // Si el asiento guardado no coincide con el monto de ESTE movimiento (ej. varios movimientos comparten id/vinculo),
   // se ignora y se reconstruye desde el movimiento.
   const _totAsiento = asientoLigado ? Math.max((asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.debeUSD||0),0),(asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.haberUSD||0),0)) : 0;
-  const _asientoOk = asientoLigado && !(Math.abs(montoUSD)>0.005 && _totAsiento>0.005 && Math.abs(_totAsiento-Math.abs(montoUSD))>0.02);
+  // Traslado Banco→Caja con comprobante único (movimiento de BANCO): su asiento trae el débito a Caja y la diferencia de rebancarización, así que su total
+  // puede no ser el monto del banco (en una ganancia no lo es) y aun así ES el comprobante correcto: se usa siempre.
+  const _trasladoUnicoBanco = !!(m.trasladoDirecto && m.cajaDestinoMovId && asientoLigado && (asientoLigado.lineas||[]).length>0);
+  const _asientoOk = asientoLigado && (_trasladoUnicoBanco || !(Math.abs(montoUSD)>0.005 && _totAsiento>0.005 && Math.abs(_totAsiento-Math.abs(montoUSD))>0.02));
   if(!prRel && _asientoOk && asientoLigado.lineas && asientoLigado.lineas.length>0){
     return (asientoLigado.lineas||[]).map((l,li)=>{
       const r = aplicarReclas(tabId, compId, li, l.codigo||'', l.cuenta||'—');
@@ -27052,9 +27100,12 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
       const rs=_resolverMovRelacionada(pr,{movBanco,movCaja,cuentasBanco,cuentasCaja});
       if(rs.mov){ if(rs.mov._docId) relPorMov.set(rs.mov._docId,pr); if(rs.mov.id) relPorMov.set(rs.mov.id,pr); }
     });
+    // Traslado Banco→Caja con comprobante único: su comprobante completo sale SOLO por Banco; la entrada de efectivo en Caja no genera otro
+    const entradasCajaTU = esBanco ? null : idsEntradaCajaTrasladoUnico(movBanco, asientosCC, movCaja, cuentasCaja);
     const filtrados = movs.filter(m => {
       if (m.fecha < filtDesde || m.fecha > filtHasta) return false;
       if (filtCuenta && m[idField] !== filtCuenta) return false;
+      if (entradasCajaTU && esEntradaCajaTrasladoUnico(m, entradasCajaTU)) return false;
       return true;
     }).sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
     return filtrados.map(m => {
@@ -33294,11 +33345,16 @@ function App() {
     _relValidosApp.forEach(p=>{
       if(p.origen){ const r=_resolverMovRelacionada(p,{movBanco:movBancoApp, movCaja:movCajaApp, cuentasBanco:cuentasBancoApp, cuentasCaja:cuentasCajaApp}); if(r.mov){ if(r.mov._docId) _relPorMovApp.set(r.mov._docId,p); if(r.mov.id) _relPorMovApp.set(r.mov.id,p); } }
     });
+    // Traslado Banco→Caja con comprobante único: el comprobante completo (D Caja · D/H Diferencia · H Banco) ya sale por el movimiento de Banco; la entrada de
+    // efectivo en Caja no genera otro (si no, Caja se debitaría dos veces y se acreditaría una cuenta por cobrar que no es).
+    const _entradasCajaTUApp = idsEntradaCajaTrasladoUnico(movBancoApp, asientosApp, movCajaApp, cuentasCajaApp);
     [{movs:movBancoApp, cuentas:cuentasBancoApp, idField:'cuentaId', nombreCta:c=>c?.banco, mod:'Banco', tabId:'banco'},
      {movs:[...movCajaApp, ...derivarMovsCajaDesdeCxcCxp(cobrosCxc, procuraPagosCxpApp, movCajaApp, settings?.tasaBCV)], cuentas:cuentasCajaApp, idField:'cajaId', nombreCta:c=>c?.nombre, mod:'Caja', tabId:'caja'}].forEach(({movs,cuentas,idField,nombreCta,mod,tabId})=>{
       (movs||[]).forEach(m=>{
         // Caja: la contabilidad arranca en el mes del saldo inicial declarado en "Editar Caja" (mesSaldoInicial); lo anterior se ignora
         if(mod==='Caja'){ const _cj=(cuentas||[]).find(c=>c.id===m[idField]); if(_cj&&_cj.mesSaldoInicial&&(m.fecha||'')<`${_cj.mesSaldoInicial}-01`) return; }
+        // Entrada de efectivo de un traslado Banco→Caja con comprobante único: su comprobante ya sale por Banco
+        if(mod==='Caja' && esEntradaCajaTrasladoUnico(m, _entradasCajaTUApp)) return;
         // Si este movimiento YA está vinculado a un registro de "Cuentas por Pagar Relacionadas"
         // (sección 6, más abajo), se omite aquí — si no, se cuenta dos veces: una vez como
         // "Comprobante de Banco/Caja" genérico, y otra vez como "Cuentas por Pagar Relacionadas"
