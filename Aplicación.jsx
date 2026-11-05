@@ -22036,8 +22036,9 @@ const logAuditoriaSeguro = (appUser, modulo, tipo, armarDetalle) => {
 };
 
 // ── Retenciones de clientes: «Fecha de registro» = el día en que la retención se registra para las Comisiones ──
-// Desde el 01/11/2026 la comisión de cobranza de una NE que queda en cero por una retención se paga en el mes y el día en que esa retención se registró.
-const RET_FECHA_CORTE_COM = '2026-11-01';
+// La comisión de cobranza de una NE que queda en cero por una retención se paga en el mes y el día en que esa retención se registró.
+// Nunca antes del 01/10/2026 (el primer mes que todavía se está pagando): lo registrado antes de esa fecha entra en octubre, sin reabrir meses ya pagados.
+const RET_FECHA_CORTE_COM = '2026-10-01';
 const _soloFechaISO = (v) => { const s = String(v == null ? '' : v).trim(); return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.substring(0, 10) : ''; };
 // Día en que el documento quedó cargado en el sistema (createdAt / timestamp)
 const fechaGuardadoDoc = (d) => {
@@ -22049,6 +22050,13 @@ const fechaGuardadoDoc = (d) => {
 };
 // La que se ve en pantalla: la «Fecha de registro» elegida; si la retención es anterior a este campo, el día en que se cargó
 const fechaRegistroRet = (d) => _soloFechaISO(d && d.fechaRegistro) || fechaGuardadoDoc(d) || _soloFechaISO(d && (d.fechaComprobante || d.fecha));
+// La fecha con la que la retención cuenta de verdad para las Comisiones (igual que en el cálculo de saldos): la elegida; si es de antes del campo,
+// el día en que se cargó, nunca antes de RET_FECHA_CORTE_COM.
+const fechaRegistroEfectiva = (d) => {
+  const e = _soloFechaISO(d && d.fechaRegistro); if (e) return e;
+  const f = fechaGuardadoDoc(d) || _soloFechaISO(d && (d.fechaComprobante || d.fecha));
+  return f ? (f < RET_FECHA_CORTE_COM ? RET_FECHA_CORTE_COM : f) : '';
+};
 
 // ── Entrar / salir / pantallas visitadas ──
 const AA_ACC = {};
@@ -22421,13 +22429,17 @@ const onSnapshot = (ref, ...rest) => {
 const fechaRegistroMostrar = (d) => _soloFechaISO(d && d.fechaRegistro) || fechaGuardadoDoc(d);
 const _fechaDMA = (f) => (f ? String(f).substring(0, 10).split('-').reverse().join('/') : '');
 const REG_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-function CampoFechaRegistro({ valor, esEdicion, docCargado, onCambio }) {
+function CampoFechaRegistro({ valor, esEdicion, docCargado, onCambio, fechaCobro }) {
   const hoy = getTodayDate();
   const elegida = _soloFechaISO(valor);
   const antigua = !!esEdicion && !elegida;            // retención cargada antes de que existiera este campo
   const cargada = fechaGuardadoDoc(docCargado);
-  const mostrar = elegida || (esEdicion ? cargada : hoy);
+  const mostrar = elegida || (esEdicion ? fechaRegistroEfectiva(docCargado) : hoy);   // siempre la que de verdad cuenta para las Comisiones
   const mesAnterior = !antigua && !!mostrar && mostrar.substring(0, 7) < hoy.substring(0, 7);
+  // Si la NE ya se cobró en un mes y esta fecha manda la comisión a un mes DESPUÉS, se avisa (no impide nada)
+  const cobroISO = _soloFechaISO(fechaCobro);
+  const mesDe = (f) => `${REG_MESES[(parseInt(f.substring(5, 7), 10) || 1) - 1]} de ${f.substring(0, 4)}`;
+  const cuentaDespues = !!cobroISO && !!mostrar && mostrar.substring(0, 7) > cobroISO.substring(0, 7);
   return (
     <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-1">
       <label className="text-[10px] font-black text-emerald-800 uppercase block">Fecha de registro (cuenta para las Comisiones)</label>
@@ -22435,8 +22447,11 @@ function CampoFechaRegistro({ valor, esEdicion, docCargado, onCambio }) {
         onChange={e => { const v = e.target.value; if (v) onCambio(v); }}
         className="w-full border-2 border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500 bg-white" />
       <p className="text-[9px] text-emerald-700 leading-snug">Es el mes y el día en que esta retención cuenta para cerrar la NE y pagar su comisión de cobranza.</p>
-      {antigua && <p className="text-[9px] text-amber-700 font-bold leading-snug">Esta retención se cargó antes de existir este campo{cargada ? ` (se cargó el ${_fechaDMA(cargada)})` : ''}: para las Comisiones cuenta desde el {_fechaDMA(RET_FECHA_CORTE_COM)}. Si eliges una fecha, se usará esa.</p>}
+      {antigua && (cargada && cargada >= RET_FECHA_CORTE_COM
+        ? <p className="text-[9px] text-amber-700 font-bold leading-snug">Esta retención se cargó antes de existir este campo: para las Comisiones cuenta con el día en que se cargó ({_fechaDMA(cargada)}). Si eliges otra fecha, se usará esa.</p>
+        : <p className="text-[9px] text-amber-700 font-bold leading-snug">Esta retención se cargó antes de existir este campo{cargada ? ` (se cargó el ${_fechaDMA(cargada)})` : ''}: para las Comisiones cuenta desde el {_fechaDMA(RET_FECHA_CORTE_COM)}. Si eliges una fecha, se usará esa.</p>)}
       {mesAnterior && <p className="text-[9px] text-amber-700 font-bold leading-snug">⚠ Es de un mes anterior: afectará las comisiones de {REG_MESES[(parseInt(mostrar.substring(5, 7), 10) || 1) - 1]} de {mostrar.substring(0, 4)}.</p>}
+      {cuentaDespues && <p className="text-[9px] text-amber-700 font-bold leading-snug">⚠ El último cobro de esta NE fue el {_fechaDMA(cobroISO)} ({mesDe(cobroISO)}): con esta fecha, si la retención deja la NE en cero, su comisión de cobranza cuenta en {mesDe(mostrar)}. Si debe contar en {mesDe(cobroISO)}, elige una fecha de ese mes.</p>}
     </div>
   );
 }
@@ -33832,9 +33847,9 @@ function App() {
           const getRetUSDNE=(ne)=>{const d=getRetsDetalleNE(ne);return d.ivaUSD+d.otrasUSD-d.igtfUSD;};
     // Fecha en que la NE quedó en cero = la del ÚLTIMO movimiento que la cerró: cobros (su fecha, como siempre), retenciones y NC
     // (la fecha en que se REGISTRARON en el sistema, NO la del comprobante: puede ser de un mes anterior y la comisión se paga en
-    // otro mes). Nunca anterior al 01/11/2026: lo que ya estaba registrado de meses cerrados entra en noviembre, sin reabrirlos.
+    // otro mes). Nunca anterior al 01/10/2026 (primer mes que todavía se paga): lo registrado antes entra en octubre, sin reabrir meses ya pagados.
     // Una retención con «Fecha de registro» elegida al cargarla cuenta con ESA fecha (mes y día) tal cual, aunque sea de un mes anterior: es lo que la persona decidió.
-    const FECHA_CORTE_CIERRE = '2026-11-01';
+    const FECHA_CORTE_CIERRE = RET_FECHA_CORTE_COM;
     const _p2 = (n) => String(n).padStart(2, '0');
     const _fechaRegistro = (d, respaldo) => {
       if (d) {
@@ -47002,10 +47017,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const monto = parseNum(ne.total||ne.montoBase||0);
             const facturaVinculada = ne.facturaId ? (invoices||[]).find(inv=>inv.id===ne.facturaId&&!inv.esAnulacionFiscal) : null;
             const factura = facturaVinculada?.nroFiscal || '';
+            // Solo para mostrar el motivo de una NE pendiente (no cambia ningún cálculo): cuántos cobros tiene y cuánto le falta según Cuentas por Cobrar
+            let saldoCxC = null;
+            if(!cobrado && motorSaldoCom){ try{ const sv = motorSaldoCom.getSaldoNE(ne); if(typeof sv==='number' && isFinite(sv)) saldoCxC = sv; }catch(e){} }
             return {
               neId: ne.id, fecha: ne.fecha, cliente: ne.clientName||'', factura,
               monto, condicion, vencimiento, fechaPago, diasRetraso,
-              rango, pct, montoPagar: monto*(pct/100), cobrado, fechaPorCierre: fechaViaCierre && !pago.fechaPago
+              rango, pct, montoPagar: monto*(pct/100), cobrado, fechaPorCierre: fechaViaCierre && !pago.fechaPago,
+              nCobros: cobrosNEcom.length, saldoCxC
             };
           });
           const cobranzaVisible = cobranzaCalcAll.filter(r => !(comCobranza||[]).find(c=>c.neId===r.neId)?.excluido);
@@ -47393,6 +47412,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                <button onClick={()=>updCobranza(i,'cobrado',!r.cobrado)} className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase transition-all ${r.cobrado?'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-600':'bg-red-50 text-red-500 hover:bg-green-100 hover:text-green-700'}`}>
                                  {r.cobrado?'✅ Cobrado':'⏳ Pendiente'}
                                </button>
+                               {!r.cobrado && (r.nCobros===0 || (r.saldoCxC!=null && r.saldoCxC>0.01)) && <div className="text-[8px] font-bold text-gray-400 leading-tight mt-0.5 whitespace-nowrap" title="Así está esta NE en Cuentas por Cobrar">{r.nCobros===0 ? 'Sin cobros en CxC' : `Falta $${formatNum(r.saldoCxC)}`}</div>}
                              </td>
                              <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
                              <td className="px-2 py-1.5 text-center">
@@ -57404,7 +57424,7 @@ ${resumen}
                             <td className="py-2 px-3">{(()=>{const t=ret.tipoExtra?(ret.tipoLabel||ret.tipo||'Otra'):(ret.tipoRetencion||'IVA');
                               const c={IVA:'bg-blue-100 text-blue-700',ISLR:'bg-purple-100 text-purple-700',Municipal:'bg-amber-100 text-amber-700',Otro:'bg-gray-200 text-gray-700'}[t]||(ret.tipoExtra?'bg-fuchsia-100 text-fuchsia-700':'bg-gray-200 text-gray-700');
                               return <span className={`px-2 py-0.5 rounded font-black text-[9px] ${c}`}>{t}</span>;})()}</td>
-                            <td className="py-2 px-3">{ret.fechaComprobante}{ret.tipo!=='IGTF'&&fechaRegistroMostrar(ret)&&<div className={`text-[8px] font-bold whitespace-nowrap ${ret.fechaRegistro?'text-emerald-700':'text-gray-400'}`} title={ret.fechaRegistro?'Fecha de registro: el mes y el día en que esta retención cuenta para las Comisiones':`Día en que se cargó (anterior al campo «Fecha de registro»): para las Comisiones cuenta desde el ${_fechaDMA(RET_FECHA_CORTE_COM)}`}>Reg. {_fechaDMA(fechaRegistroMostrar(ret))}</div>}</td>
+                            <td className="py-2 px-3">{ret.fechaComprobante}{ret.tipo!=='IGTF'&&fechaRegistroMostrar(ret)&&<div className={`text-[8px] font-bold whitespace-nowrap ${ret.fechaRegistro?'text-emerald-700':'text-gray-400'}`} title={ret.fechaRegistro?'Fecha de registro: el mes y el día en que esta retención cuenta para las Comisiones':`Día en que se cargó (anterior al campo «Fecha de registro»): para las Comisiones cuenta con ese día${fechaRegistroMostrar(ret)<RET_FECHA_CORTE_COM?` (nunca antes del ${_fechaDMA(RET_FECHA_CORTE_COM)})`:''}`}>Reg. {_fechaDMA(fechaRegistroEfectiva(ret))}</div>}</td>
                             <td className={`py-2 px-3 font-bold ${retNeDoc==='⚠️ No vinculada'?'text-red-600 text-[10px]':'text-indigo-600'}`}>{retNeDoc}</td>
                             <td className="py-2 px-3 font-bold text-orange-600 flex items-center gap-1">
                               {nroFac}{ret.notaNro&&<span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[8px] font-black">{ret.notaTipo||'Nota'} {ret.notaNro}</span>}
@@ -57570,6 +57590,16 @@ ${resumen}
                 const _bqNota=(retBusqFact||'').toUpperCase();
                 const notasFilt=(notasVentaCD||[]).filter(n=>n.naturaleza==='FISCAL'&&n.facturaId&&(n.tipo==='ND'||n.tipo==='NC')).map(n=>({n,inv:(invoices||[]).find(i=>i.id===n.facturaId)})).filter(x=>x.inv&&(!_bqNota||[x.n.nroDocumento,x.n.nroControl,x.inv.nroFiscal,x.inv.documento,x.inv.clientName,x.n.descripcion].some(t=>String(t||'').toUpperCase().includes(_bqNota)))).sort((a,b)=>String(b.n.fecha||'').localeCompare(String(a.n.fecha||'')));
                 const selNota=retForm.notaId?(notasVentaCD||[]).find(n=>n.id===retForm.notaId):null;
+                // Fecha del último cobro de la(s) NE de la factura elegida (solo para el aviso del campo «Fecha de registro»; no cambia nada)
+                const _fechaCobroRetNE=(()=>{ try{
+                  if(!selFact||retFactManual) return '';
+                  const ids=new Set();
+                  [selFact.neOrigen,...(selFact.nesAdicionales||[])].filter(Boolean).forEach(nid=>{ const n=(notasEntrega||[]).find(x=>x.id===nid||x.documento===nid); if(n) ids.add(n.id); });
+                  (notasEntrega||[]).forEach(n=>{ if(n.facturaId&&(n.facturaId===selFact.id||n.facturaId===selFact.documento)) ids.add(n.id); });
+                  let f='';
+                  (cobrosCxc||[]).forEach(c=>{ if(c.esAnticipo||!ids.has(c.neId)) return; const d=String(c.fecha||'').substring(0,10); if(/^\d{4}-\d{2}-\d{2}$/.test(d)&&d>f) f=d; });
+                  return f;
+                }catch(e){ return ''; } })();
                 return(
                   <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 space-y-4">
@@ -57747,7 +57777,7 @@ ${resumen}
                           </div>
                           </>);
                         })()}
-                        <CampoFechaRegistro valor={retForm.fechaRegistro} esEdicion={!!(retForm.id||retForm._fsId)} docCargado={retForm} onCambio={v=>setRetForm(f=>({...f,fechaRegistro:v}))}/>
+                        <CampoFechaRegistro valor={retForm.fechaRegistro} esEdicion={!!(retForm.id||retForm._fsId)} docCargado={retForm} fechaCobro={_fechaCobroRetNE} onCambio={v=>setRetForm(f=>({...f,fechaRegistro:v}))}/>
                       </div>
                       <div className="flex gap-3 pt-2">
                         <button onClick={()=>{setShowRetModal(false);setRetNDBusq('');}} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-100">Cancelar</button>
