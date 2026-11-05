@@ -8633,6 +8633,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
       const {_periodoMes:_pm,_periodoQ:_pq,...restoForm}=editRetForm;
       await setDoc(getDocRef(col,editRet.doc.id),{...restoForm,_periodoMes:_hayOv?_pm:'',_periodoQ:_hayOv?String(_pq):'',nroComprobante:editRetForm.nroComprobante||editRet.doc.nroComprobante,updatedAt:Date.now()},{merge:true});
       setEditRet(null);
+      logAuditoriaSeguro(appUser,'Impuestos','EDICIÓN',()=>`Retención ${editRet.tipo} de proveedor EDITADA: Comprobante ${editRetForm.nroComprobante||editRet.doc.nroComprobante||'—'} · ${editRet.doc.proveedor||'—'} · Fac.: ${editRetForm.nroFactura||editRet.doc.nroFactura||'—'} · Estado: ${editRetForm.status||'PENDIENTE'} · Monto: Bs.${formatNum(pNum(editRetForm.montoBs||0))} ($${formatNum(pNum(editRetForm.monto||0))})`);
       setImpDialog({title:'✅ Actualizado',text:'Comprobante actualizado correctamente.',type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -8653,6 +8654,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
         updatedAt:Date.now(),
       },{merge:true});
       setEditIgtf(null);
+      logAuditoriaSeguro(appUser,'Impuestos','EDICIÓN',()=>`IGTF EDITADO: Comprobante ${editIgtf.nroRetencion||editIgtf.id} · Estado: ${editIgtfForm.status||'PENDIENTE'} · $${formatNum(pNum(editIgtfForm.montoRetenidoUSD||0))} (Bs.${formatNum(pNum(editIgtfForm.montoRetenido||0))}) · Cuenta: ${editIgtfForm.cuentaBancariaNombre||'—'} · Ref: ${editIgtfForm.referencia||'—'}`);
       setImpDialog({title:'✅ Actualizado',text:'IGTF actualizado correctamente.',type:'alert'});
     }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -8664,6 +8666,7 @@ function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
         try{
           const col=tipo==='IVA'?'procura_ret_iva':'procura_ret_islr';
           await deleteDoc(getDocRef(col,r.id));
+          logAuditoriaSeguro(appUser,'Impuestos','ELIMINACIÓN',()=>`Retención ${tipo} de proveedor ELIMINADA: Comprobante ${r.nroComprobante||r.id} · ${r.proveedor||'—'} · Fac.: ${r.nroFactura||'—'} · Bs.${formatNum(pNum(r.montoBs||0))}`);
           setImpDialog({title:'✅ Eliminado',text:'Comprobante eliminado.',type:'alert'});
         }catch(e){setImpDialog({title:'Error',text:e.message,type:'alert'});}
       }
@@ -13054,7 +13057,7 @@ const CXP_SALDO_INICIAL_JUNIO_2026 = [
   {cod:'P0563',nombre:'EL GRAN GALPON DEL REMATE ,C.A',cuentaContable:'2.1.01.01.001-CUENTAS POR PAGAR PROVEEDORES',facturas:[],pagos:[{fecha:'2026-06-25',desc:'ANTICIPO',aplicaciones:[],sinAplicar:1600}]},
 ];
 
-const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog}) => {
+const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog,appUser}) => {
   const [search,setSearch]=useState('');
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
@@ -13083,6 +13086,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
         factsImportadas.forEach(f=>batch.delete(getDocRef('procura_facturas_compra',f.id)));
         pagosImportados.forEach(p=>batch.delete(getDocRef('procura_pagos_cxp',p.id)));
         await batch.commit();
+        logAuditoriaSeguro(appUser,'Cuentas por Pagar','ELIMINACIÓN',()=>`Saldo Inicial CxP REVERSADO: ${factsImportadas.length} facturas y ${pagosImportados.length} anticipos borrados (los que se habían creado con la carga del Saldo Inicial)`);
         setDialog({title:'✅ Reversado',text:`Se borraron ${factsImportadas.length} facturas y ${pagosImportados.length} anticipos del Saldo Inicial. Ya puedes volver a cargarlo cuando quieras.`,type:'alert'});
       } catch(e) {
         setDialog({title:'Error',text:e.message,type:'alert'});
@@ -13174,6 +13178,7 @@ const ProveedoresView = ({proveedores,facturasCompra,pagosCxP,dialog,setDialog})
           }
         }
         await batch.commit();
+        logAuditoriaSeguro(appUser,'Cuentas por Pagar','CREACIÓN',()=>`Saldo Inicial CxP CARGADO (Junio 2026): ${proveedoresCreados} proveedores nuevos · ${facturasCreadas} facturas pendientes · ${anticiposCreados} pagos/anticipos ya aplicados a su factura`);
         setDialog({title:'✅ Saldo Inicial Cargado',text:`${proveedoresCreados} proveedores nuevos · ${facturasCreadas} facturas pendientes · ${anticiposCreados} pagos/anticipos, ya aplicados a su factura correspondiente. Cuentas por Pagar debe dar igual que tu Excel.`,type:'alert'});
       } catch(e) {
         setDialog({title:'Error',text:e.message,type:'alert'});
@@ -15562,6 +15567,7 @@ const FacturasCompraView = ({facturasCompra,proveedores,pagosCxP,ordenesCompra,d
         snapISLR.forEach(d=>batch.delete(d.ref));
         pagosAsociados.forEach(p=>batch.delete(getDocRef('procura_pagos_cxp',p.id)));
         await batch.commit();
+        logAuditoriaSeguro(appUser,'Cuentas por Pagar','ELIMINACIÓN',()=>`Factura de compra ELIMINADA: ${f.nroFactura||f.id} · Proveedor: ${f.proveedor||'—'} · Total: $${formatNum(pNum(f.total||0))}${pagosAsociados.length>0?` · Se eliminaron también ${pagosAsociados.length} pago(s) CxP por $${formatNum(pagosAsociados.reduce((t,p)=>t+pNum(p.monto),0))}`:''}${(snapIVA.size||0)+(snapISLR.size||0)>0?` · ${(snapIVA.size||0)+(snapISLR.size||0)} comprobante(s) de retención`:''}`);
         setDialog({title:'✅ Eliminada',text:`Factura ${f.nroFactura} eliminada junto con sus comprobantes${pagosAsociados.length>0?' y pagos CxP':''}.`,type:'alert'});
       }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
     };
@@ -16787,6 +16793,7 @@ const CxPView = ({
         ops++;
       });
       for(const b of batches) await b.commit();
+      logAuditoriaSeguro(appUser,'Cuentas por Pagar','EDICIÓN',()=>`Reparación de anticipos en Banco: ${movsAReparar.length} movimiento(s) de banco marcados como anticipo${afectadosReclas.length?` · ${afectadosReclas.length} reclasificación(es) anterior(es) deshecha(s)`:''}`);
       setDialog({title:'✅ Reparado en la raíz',text:`${movsAReparar.length} movimiento(s) de banco corregidos${afectadosReclas.length?`, y ${afectadosReclas.length} reclasificación(es) anterior(es) deshecha(s) para no duplicar`:''}. Revisa el Mayor Analítico de Cuentas por Pagar — ya no debería tener rastro de estos anticipos.`,type:'alert'});
     } catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
     setReparandoRaiz(false);
@@ -16801,6 +16808,7 @@ const CxPView = ({
       });
       batch.delete(getDocRef('comprobantes_ajustes','RECLAS-ANTICIPOS-ABIERTOS-CXP'));
       await batch.commit();
+      logAuditoriaSeguro(appUser,'Cuentas por Pagar','EDICIÓN',()=>`Reclasificación de anticipos abiertos DESHECHA: se borró el comprobante RECLAS-ANTICIPOS-ABIERTOS-CXP y ${afectados.length} anticipo(s) quedaron disponibles otra vez`);
       setDialog({title:'✅ Deshecho',text:`Se borró el comprobante de reclasificación y ${afectados.length} anticipo(s) volvieron a quedar disponibles para reclasificar. Ábre el botón de nuevo para corregirlos con la dirección correcta.`,type:'alert'});
     }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
     setReclasAntCxpBusy(false);
@@ -16849,6 +16857,7 @@ const CxPView = ({
         createdAt:reclasAbiertosCxpDoc?.createdAt||Date.now(), updatedAt:Date.now(), user:appUser?.name||'Sistema', origen:'reclas_anticipos_abiertos',
       });
       await batch.commit();
+      logAuditoriaSeguro(appUser,'Cuentas por Pagar','EDICIÓN',()=>`Anticipos abiertos RECLASIFICADOS: ${abiertos.length} anticipo(s) movidos de Cuentas por Pagar a su cuenta de Anticipo · fecha del ajuste ${reclasAntCxpFecha}`);
       setDialog({title:'✅ Reclasificado',text:`${abiertos.length} anticipo(s) abierto(s) movidos de Cuentas por Pagar a su cuenta de Anticipo correspondiente, con fecha ${reclasAntCxpFecha}. Revisa Balance General / Mayor Analítico para confirmar.`,type:'alert'});
       setShowReclasAntCxpModal(false);
     }catch(e){ setDialog({title:'Error',text:e.message,type:'alert'}); }
@@ -17968,6 +17977,7 @@ ${body}
                 if(ctaDoc) batch.update(getDocRef('banco_cuentas',ctaId),{saldo:parseFloat((pN(ctaDoc.saldo||0)-dec).toFixed(2))});
               });
               await batch.commit();
+              logAuditoriaSeguro(appUser,'Cuentas por Pagar','CREACIÓN',()=>`Anticipo a proveedor REGISTRADO: $${fN(totalAnt)} a ${provSel?.nombre||'—'} · ${audLineasPago(pm.lineasPago,pN)}`);
               setCxpPagoModal(null);
               setDialog({title:'✅ Anticipo registrado',text:`$${fN(totalAnt)} a favor con ${provSel?.nombre||'—'}. Podrá aplicarlo a facturas desde Registrar Pago.`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -18119,6 +18129,7 @@ ${body}
               if(ctaDoc) batch.update(getDocRef('banco_cuentas',ctaId),{saldo:parseFloat((pN(ctaDoc.saldo||0)-dec).toFixed(2))});
             });
             await batch.commit();
+            logAuditoriaSeguro(appUser,'Cuentas por Pagar','CREACIÓN',()=>`Pago REGISTRADO: $${fN(totalUSD)} a ${provSel?.nombre||'—'} · Facturas: ${distribFacts.map(({f,ap})=>`${f.nroFactura||f.id} ($${fN(ap)})`).join(', ')||'—'} · ${audLineasPago(pm.lineasPago,pN)}${restante>0.01?` · Excedente a favor del proveedor: $${fN(restante)}`:''}`);
             setCxpPagoModal(null);
             setDialog({title:'✅ Pago registrado',text:`Pago de $${fN(totalUSD)} a ${provSel?.nombre||'—'} registrado con ${(pm.lineasPago||[]).length} línea(s) de pago.`,type:'alert'});
           }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -19061,6 +19072,18 @@ tfoot td{background:#f8fafc;padding:8px 10px;font-weight:900;}
         }
       }
       await batch.commit();
+      logAuditoriaSeguro(appUser,'Cuentas por Pagar','EDICIÓN',()=>{
+        const cuentaCambio=cuentaIdF!==(editPago.cuentaId||'');
+        const cambios=audCambios([
+          ['Fecha',editPago.fecha,fechaF],['Método',editPago.metodo,metodoF],['Referencia',editPago.referencia,referenciaF],
+          ...(cuentaCambio?[['Cuenta',editPago.banco||editPago.cuentaId,bancoF||cuentaIdF]]:[]),
+          ...(editForm.moneda!=null?[['Moneda',editPago.moneda||'USD',monedaF||'USD']]:[]),
+          ...(editForm.tasa!=null?[['Tasa',editPago.tasa?fN(editPago.tasa):'',fN(tasaF)]]:[]),
+          ['Monto',`$${fN(editPago.monto)}`,`$${fN(montoUSDF)}`],
+        ]);
+        const aplicadoA=editModoSoloBanco?'':` · Aplicado a: ${editAplicaciones.filter(a=>pN(a.monto)>0.001).map(a=>`${_factMap.get(a.facturaId)?.nroFactura||a.facturaId} ($${fN(a.monto)})`).join(', ')||'sin facturas (queda como anticipo)'}`;
+        return `${editPago.esAnticipo?'Anticipo':'Pago'} EDITADO: $${fN(montoUSDF)} a ${editPago.proveedor||'—'} · Ref: ${referenciaF||'—'}${cambios?` — Cambios: ${cambios}`:''}${aplicadoA}`;
+      });
       setEditPago(null);
       setDialog({title:'✅ Guardado',text:'Pago actualizado.',type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -21930,6 +21953,18 @@ const logAuditoria = async (appUser, modulo, tipo, detalle) => {
     });
   } catch(e) { console.warn('No se pudo registrar en auditoría:', e); }
 };
+// Igual que logAuditoria, pero el texto se arma dentro de una función: si algo del texto fallara, la operación que ya se guardó no se ve afectada (la línea simplemente no sale).
+const logAuditoriaSeguro = (appUser, modulo, tipo, armarDetalle) => {
+  try { const d = armarDetalle(); if (d) logAuditoria(appUser, modulo, tipo, String(d).slice(0, 1800)); } catch(e) { console.warn('No se pudo armar el registro de auditoría:', e); }
+};
+// Texto de las líneas de un pago o cobro (método · cuenta · monto en su moneda · referencia) para «Auditoría de Sistema».
+const audLineasPago = (lineas, aNum = parseNum) => (lineas||[]).map(l => [
+  l.metodo||'', l.anticipoId ? `anticipo ${l.anticipoId}` : (l.cuentaNombre||''),
+  `${l.moneda==='Bs'?'Bs.':'$'}${formatNum(aNum(l.monto))}`, l.referencia ? `Ref: ${l.referencia}` : ''
+].filter(Boolean).join(' · ')).join(' + ');
+// «Campo: antes → después» solo de lo que cambió.
+const audCambios = (pares) => pares.filter(([, a, b]) => String(a ?? '').trim() !== String(b ?? '').trim())
+  .map(([n, a, b]) => `${n}: ${String(a ?? '').trim() || '—'} → ${String(b ?? '').trim() || '—'}`).join('; ');
 
 // Identificación de dispositivo para "Restringir a dispositivos autorizados". Un sitio web NO
 // puede leer el nombre real del equipo (Windows lo oculta por seguridad, a propósito, para
@@ -25987,7 +26022,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
     else if (campo==='tasa') valor = r.tasa?String(r.tasa):'';
     else if (campo==='montoUSD') valor = String((r.lineas[0].dUSD||r.lineas[0].hUSD||0).toFixed(2));
     else if (campo==='montoBs') valor = String((r.lineas[0].dBs||r.lineas[0].hBs||0).toFixed(2));
-    setEditandoCampoCC({id:r.id, esBanco, campo, label, tipo, valor});
+    setEditandoCampoCC({id:r.id, esBanco, campo, label, tipo, valor, valorOriginal:valor, desc:[r.fecha,r.doc,r.conc].filter(Boolean).join(' · ')});
   };
   const guardarCampoCC = async () => {
     if (!editandoCampoCC) return;
@@ -25997,6 +26032,10 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
       const {campo, valor} = editandoCampoCC;
       const patch = (campo==='montoUSD'||campo==='montoBs'||campo==='tasa') ? {[campo]: parseFloat(valor)||0} : {[campo]: valor||''};
       await updateDoc(getDocRef(coleccion, editandoCampoCC.id), patch);
+      logAuditoriaSeguro(appUser,'Comprobantes Contables','EDICIÓN',()=>{
+        const cambios=audCambios([[editandoCampoCC.label||campo,editandoCampoCC.valorOriginal,valor]]);
+        return cambios?`${editandoCampoCC.esBanco?'Movimiento de banco':'Movimiento de caja'} EDITADO desde Comprobantes${editandoCampoCC.desc?`: ${editandoCampoCC.desc}`:''} — Cambios: ${cambios}`:null;
+      });
       setEditandoCampoCC(null);
     } catch(e) { alert('Error al guardar: '+e.message); }
     setGuardandoCampoCC(false);
@@ -33639,7 +33678,9 @@ function App() {
         batch.set(getDocRef('settings','general'),{correlativoIGTF:Math.max(1,parseInt(settings?.correlativoIGTF||1,10))+1},{merge:true});
       }
       await batch.commit();
+      if(esIGTF&&!esEdicion) logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`IGTF percibido REGISTRADO (ingreso en Banco/Caja): $${formatNum(montoUSD)} (Bs.${formatNum(montoBs)}) · Fac.: ${facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', ')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'} · Cuenta: ${(cuentasBanco||[]).find(c=>c.id===otraRetForm.cuentaBancariaId)?.banco||otraRetForm.cuentaBancariaNombre||'—'} · Ref: ${otraRetForm.referencia||'—'}`);
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
+      if(!(esIGTF&&!esEdicion)) logAuditoriaSeguro(appUser,'Libro de Ventas',esEdicion?'EDICIÓN':'CREACIÓN',()=>`Retención ${tipo.label} ${esEdicion?'EDITADA':'REGISTRADA'}: Comprobante ${nroComprobante} · Bs.${formatNum(montoBs)} ($${formatNum(montoUSD)}) · Fac.: ${(facsSeleccionadas.length?facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', '):'')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'} · Fecha ${fechaComprobante}`);
       setDialog({title:esEdicion?'✅ Actualizada':'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}${esIGTF&&!esEdicion?' — movimiento creado en Banco/Caja':''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -33701,6 +33742,7 @@ function App() {
       }
       await batch.commit();
       const partes=[reparados>0?`${reparados} cobro(s) re-repartidos en ${facturasCubiertas} factura(s)`:'',neIdCorregidos>0?`${neIdCorregidos} cobro(s) reconectados a su NE correcta`:''].filter(Boolean).join(' · ');
+      logAuditoriaSeguro(appUser,'Cuentas por Cobrar','EDICIÓN',()=>`Cobros IGTF REPARADOS: ${partes}`);
       setDialog({title:'✅ Reparado',text:`${partes}. El saldo de Banco/Caja no cambió — la transacción real ya estaba correcta, solo se corrigió cómo/dónde se refleja en cada NE.`,type:'alert'});
     }catch(e){
       setDialog({title:'Error',text:e.message,type:'alert'});
@@ -33736,6 +33778,7 @@ function App() {
         });
       });
       await batch.commit();
+      logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`Cobros de cierre de nota de débito CREADOS (reparación): ${pendientes.length} ND cerrada(s) — ${pendientes.map(n=>n.nroDocumento||n.id).slice(0,10).join(', ')}${pendientes.length>10?'…':''}`);
       setDialog({title:'✅ Reparado',text:`${pendientes.length} ND cerradas correctamente — ya no deberían salir pendientes en CxC ni Estado de Cuenta.`,type:'alert'});
     }catch(e){
       setDialog({title:'Error',text:e.message,type:'alert'});
@@ -47739,6 +47782,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 });
               });
               await batch.commit();
+              logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`Cobros históricos (importación Excel Ene–Abr 2026) REGISTRADOS: ${pendientes.length} Nota(s) de Entrega cobradas por un total de $${formatNum(pendientes.reduce((t,n)=>t+parseFloat(Number(n.total||0).toFixed(2)),0))} · sin movimiento de banco`);
               alert(`Se registró el cobro completo de ${pendientes.length} NE. Ya no deberían salir en Cuentas por Cobrar.`);
             } catch(e){ alert('Error al registrar cobros: '+e.message); }
             finally{ setImportandoHist(false); }
@@ -51654,6 +51698,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               batch.set(getDocRef('banco_movimientos',mvId),{id:mvId,fecha:m.fecha,tipo:'Ingreso',origenIngreso:'Cobro NE',neId:m.neId,concepto:`Cobro ${m.neDoc} · ${m.clientName}`,referencia:m.referencia,cuentaId:m.cuentaId||'',cuentaNombre:cta?.banco||m.cuentaNombre||'',montoUSD:monto,montoBs:monto*getTasa(ne||{}),tasa:getTasa(ne||{}),montoNativo:monto,terceroNombre:m.clientName,vendedor:m.vendedor,estatus:'No Conciliado',timestamp:Date.now()});
               if(cta) batch.update(getDocRef('banco_cuentas',cta.id),{saldo:parseNum(cta.saldo||0)+monto});
               await batch.commit();
+              logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`Cobro REGISTRADO: $${formatNum(monto)} de ${m.clientName||'—'} · NE: ${m.neDoc||m.neId||'—'} · ${m.metodo||'—'} · ${m.cuentaNombre||'—'} · Ref: ${m.referencia||'—'}`);
               setCxcCobroModal(null);
               setDialog({title:'✅ Cobro registrado',text:`$${formatNum(monto)} cobrado. NE → ${nuevoStatus}.`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -51974,6 +52019,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   // ya deriva el movimiento desde este registro de cobros_cxc (evita duplicado en Caja).
                 }
                 await batch.commit();
+                logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`Anticipo de cliente REGISTRADO: $${formatNum(totalAnt)} de ${m.clientName||'—'} · ${audLineasPago(lineas,parseNum)}`);
                 setCxcPagoModal(null);
                 setDialog({title:'✅ Anticipo registrado',text:`$${formatNum(totalAnt)} a favor de ${m.clientName}. Podrá aplicarlo a facturas desde Registrar Cobro.`,type:'alert'});
               }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -52153,6 +52199,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 if(ant) batch.update(getDocRef('cobros_cxc',antId),{montoAplicado:parseFloat((parseNum(ant.montoAplicado||0)+aplicado).toFixed(2)),fechaUltimaAplicacion:getTodayDate()});
               }
               await batch.commit();
+              logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`Cobro REGISTRADO: $${formatNum(totalUSD)} de ${m.clientName||'—'} · NE: ${cobrosGenerados.map(g=>`${g.ne.documento||g.ne.id} ($${formatNum(g.montoNE)})`).join(', ')||'—'} · ${audLineasPago(lineas,parseNum)}${restante>0.01?` · Saldo a favor del cliente: $${formatNum(restante)}`:''}`);
               setCxcPagoModal(null);
               setDialog({title:'✅ Cobro registrado',text:`$${formatNum(totalUSD)} en ${lineas.length} método(s). ${cobrosGenerados.length} NE(s) actualizadas.`,type:'alert'});
             }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -55482,6 +55529,18 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       }
                     }
                     await batch.commit();
+                    logAuditoriaSeguro(appUser,'Cuentas por Cobrar','EDICIÓN',()=>{
+                      const cambios=audCambios([
+                        ['Fecha',cxcEditCobro.fecha,cxcEditForm.fecha||cxcEditCobro.fecha],['Método',cxcEditCobro.metodo,cxcEditForm.metodo||cxcEditCobro.metodo],
+                        ['Referencia',cxcEditCobro.referencia,(cxcEditForm.referencia||'').toUpperCase()],
+                        ...(cuentaCambio?[['Cuenta',cxcEditCobro.cuentaBancoNombre||cxcEditCobro.cuentaBancariaId,cxcEditForm.cuentaBancoNombre||cuentaIdF]]:[]),
+                        ['Monto',`$${formatNum(montoAnterior)}`,`$${formatNum(montoNuevo)}`],
+                        ...(Math.abs(tasaEdit-parseNum(cxcEditCobro.tasa||0))>0.0001?[['Tasa',cxcEditCobro.tasa?formatNum(cxcEditCobro.tasa):'',tasaEdit?formatNum(tasaEdit):'']]:[]),
+                        ...(Math.abs(montoBsEdit-parseNum(cxcEditCobro.montoBs||0))>0.01?[['Monto Bs.',parseNum(cxcEditCobro.montoBs||0)?formatNum(parseNum(cxcEditCobro.montoBs)):'',montoBsEdit?formatNum(montoBsEdit):'']]:[]),
+                        ['Moneda',cxcEditCobro.moneda||'USD',cxcEditForm.moneda||'USD'],['Tipo',cxcEditCobro.tipo||'Pago',cxcEditForm.tipo||'Pago'],
+                      ]);
+                      return `Cobro EDITADO: $${formatNum(montoNuevo)} · NE: ${cxcEditCobro.neDocumento||cxcEditCobro.neId||'—'} · Cliente: ${cxcEditCobro.clientName||'—'} · Ref: ${(cxcEditForm.referencia||'').toUpperCase()||'—'}${cambios?` — Cambios: ${cambios}`:''}`;
+                    });
                     setCxcEditCobro(null);
                     setDialog({title:'✅ Cobro actualizado',text:'Cobro actualizado correctamente.',type:'alert'});
                   }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
@@ -55715,6 +55774,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               }else{
                 await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
               }
+              logAuditoriaSeguro(appUser,'Libro de Ventas',isEditing?'EDICIÓN':'CREACIÓN',()=>`Retención de cliente ${isEditing?'EDITADA':'REGISTRADA'}: ${retForm.tipoRetencion||'IVA'} · Comprobante ${retForm.nroRetencion} · Bs.${formatNum(parseNum(retDataToSave.montoRetenido||0))} · Fac.: ${_selInv?.nroFiscal||_selInv?.documento||retForm._manualNroFiscal||'—'} · Cliente: ${_selInv?.clientName||retForm._manualCliente||retClientSearch||'—'}${_notaSel?` · Sobre ${_notaSel.tipo==='NC'?'nota de crédito':'nota de débito'} ${_notaSel.nroDocumento||_notaSel.id}`:''} · Fecha ${retForm.fechaComprobante}`);
               // Si se vinculó una ND (retención pendiente) desde el modo manual, esta retención YA
               // llegó — hay que CERRARLA de la misma forma en que el resto del sistema mide lo
               // cobrado de una ND: un cobros_cxc con neId='ND-'+id (así lo buscan _manualNCPorCliente
@@ -55737,6 +55797,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       concepto:`Cruce con retención ${retForm.nroRetencion||''} recibida`,
                       fecha:retForm.fechaComprobante||getTodayDate(),vendedor:'',timestamp:Date.now()
                     });
+                      logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`Cobro REGISTRADO por cruce con la retención ${retForm.nroRetencion||'—'}: $${formatNum(saldoUSDNd)} (Bs.${formatNum(saldoUSDNd*tasaNd)}) de ${ndLinked.clientName||'—'} · Nota de débito ${ndLinked.nroDocumento||ndLinked.id} · sin movimiento de banco/caja`);
                   }
                   await updateDoc(getDocRef('notasVentaCreditoDebito',ndLinked.id),{
                     montoCobrado:parseFloat((yaCobradoNd+saldoUSDNd).toFixed(2)),saldoPendiente:0,statusCxC:'COBRADA',
@@ -56921,7 +56982,7 @@ ${resumen}
                                   setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);
                                 }
                               }} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
-                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await archivarEnPapelera('retencionesClientes',ret.id,ret,`Retención ${ret.nroRetencion}`,appUser);await deleteDoc(getDocRef('retencionesClientes',ret.id));setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await archivarEnPapelera('retencionesClientes',ret.id,ret,`Retención ${ret.nroRetencion}`,appUser);await deleteDoc(getDocRef('retencionesClientes',ret.id));logAuditoriaSeguro(appUser,'Libro de Ventas','ELIMINACIÓN',()=>`Retención de cliente ELIMINADA: ${ret.tipoLabel||ret.tipoRetencion||ret.tipo||'IVA'} · Comprobante ${ret.nroRetencion||'—'} · Bs.${formatNum(parseNum(ret.montoRetenido||0))} · Fac.: ${inv?.nroFiscal||ret.nroFiscal||ret._manualNroFiscal||'—'} · Cliente: ${inv?.clientName||ret.clientName||ret._manualCliente||'—'}${ret.fechaComprobante?` · Fecha ${ret.fechaComprobante}`:''}`);setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
                             </div></td>
                           </tr>);
                         });
@@ -68794,6 +68855,7 @@ const CorregirFechasCobrosView = ({settings, appUser}) => {
       bSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('banco_movimientos',d.id),{fecha:nuevaFecha}); movs++; } });
       cSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('caja_movimientos',d.id),{fecha:nuevaFecha}); movs++; } });
       await batch.commit();
+      logAuditoriaSeguro(appUser,'Cuentas por Cobrar','EDICIÓN',()=>`Cobro ${cobro.id||cobro._id} (${cobro.clientName||'—'}) · fecha corregida (cobro con fecha futura): ${cobro.fecha} → ${nuevaFecha} · ${movs} movimiento(s) de banco/caja sincronizado(s)`);
       setCfMsg({type:'ok',text:`\u2705 ${cobro.id||cobro._id}: fecha corregida a ${nuevaFecha}. ${movs} movimiento(s) de banco/caja sincronizado(s).`});
       setCfLista(l=>(l||[]).filter(c=>c._id!==cobro._id));
       setCfEdits(e=>{const n={...e};delete n[cobro._id];return n;});
@@ -68894,6 +68956,7 @@ const CorregirCobrosBsView = ({settings, appUser}) => {
       bSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('banco_movimientos',d.id),{montoBs:nuevoBs}); movsCorregidos++; } });
       cSnap.docs.forEach(d=>{ const m={_id:d.id,...d.data()}; if(match(m)){ batch.update(getDocRef('caja_movimientos',d.id),{montoBs:nuevoBs}); movsCorregidos++; } });
       await batch.commit();
+      logAuditoriaSeguro(appUser,'Cuentas por Cobrar','EDICIÓN',()=>`Cobro ${cobro.id||cobro._id} (${cobro.clientName||'—'}) · monto en Bs. corregido: Bs.${formatNum(cobro.montoBs)} → Bs.${formatNum(nuevoBs)} · ${movsCorregidos} movimiento(s) de banco/caja sincronizado(s)`);
       setCbMsg({type:'ok',text:`\u2705 ${cobro.id||cobro._id}: Bs. actualizado a ${formatNum(nuevoBs)}. ${movsCorregidos} movimiento(s) de banco/caja sincronizado(s).`});
       setCbLista(l=>(l||[]).map(c=>c._id===cobro._id?{...c,montoBs:nuevoBs}:c));
       setCbEdits(e=>{const n={...e};delete n[cobro._id];return n;});
@@ -69548,6 +69611,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
         setRcMovsBanco(prev=>[...prev,{referencia:cobro.referencia,montoUSD:mU}]);
         setRcMsg({type:'ok',text:`✅ Movimiento restaurado en banco_movimientos (${cobro.cuentaBancoNombre||'—'})`});
       }
+      logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`Movimiento de ${esCaja?'caja':'banco'} RESTAURADO para un cobro: $${formatNum(mU)} · NE: ${ne?.documento||ne?.id||'—'} · Cliente: ${ne?.clientName||'—'} · Ref: ${cobro.referencia||'—'} · ${cobro.cuentaBancoNombre||'—'}`);
     }catch(e){setRcMsg({type:'err',text:'Error: '+e.message});}
     finally{setRcBusy(false);}
   };
@@ -74188,7 +74252,8 @@ const RestaurarCobrosView = ({settings, appUser}) => {
 
           {/* ── BANCO & TESORERÍA ── */}
            {activeTab === 'banco' && hasPerm('banco') && <BancoApp fbUser={fbUser} onBack={()=>setActiveTab('home')}
-             systemUsers={systemUsers}
+             systemUsers={systemUsers} appUser={appUser}
+             onAuditoria={(ev)=>setDoc(doc(db,'auditoria_eventos',String(ev.id)),ev)}
              ventasMode={!!(hasPerm('ventas') && !hasPerm('banco') && appUser?.role !== 'Master')}/>}
 
           {/* ── PROCURA & COMPRAS ── */}
