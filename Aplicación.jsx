@@ -66397,22 +66397,24 @@ ${resumen}
   // ============================================================================
   const renderAuditoriaModule = () => {
     const PAGE_SIZE = 25;
+    // Rol REAL de cada persona (según «Gestión de Usuarios»); si el nombre no corresponde a un usuario, no se inventa uno.
+    const rolDe = (nombre) => { const n = String(nombre||'').trim().toUpperCase(); if(!n) return '—'; const u = (systemUsers||[]).find(x=>String(x.name||'').trim().toUpperCase()===n||String(x.username||'').trim().toUpperCase()===n); return (u&&u.role)||'—'; };
     // Build logs from real system data
     const allLogs = (() => {
       const logs = [];
       (invoices||[]).forEach(inv=>{
-        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.vendedor||inv.user||'Sistema',rol:'Facturación',modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}`,ts:inv.timestamp||0});
+        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.user||'No registrado',rol:rolDe(inv.user),modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}${inv.vendedor?' — Vendedor: '+inv.vendedor:''}`,ts:inv.timestamp||0});
       });
       (invMovements||[]).forEach(m=>{
         const t={'ENTRADA':'CREACIÓN','SALIDA':'EDICIÓN','AJUSTE':'EDICIÓN','AUTOCONSUMO':'EDICIÓN'}[m.type]||'EDICIÓN';
-        logs.push({id:`MOV-${m.id}`,fecha:m.date||'',usuario:m.user||'Sistema',rol:'Almacén',modulo:'Control Inventario',tipo:t,detalle:`${m.type} — ${m.itemName||m.itemId||''} — Qty: ${formatNum(m.qty)}${m.reference?' — Ref: '+m.reference:''}`,ts:m.timestamp||0});
+        logs.push({id:`MOV-${m.id}`,fecha:m.date||'',usuario:m.user||'No registrado',rol:rolDe(m.user),modulo:'Control Inventario',tipo:t,detalle:`${m.type} — ${m.itemName||m.itemId||''} — Qty: ${formatNum(m.qty)}${m.reference?' — Ref: '+m.reference:''}`,ts:m.timestamp||0});
       });
       (requirements||[]).forEach(r=>{
         const tipo = r.status==='COMPLETADO'?'CREACIÓN':r.status==='EN PROCESO'?'EDICIÓN':'ACCESO';
-        logs.push({id:`REQ-${r.id}`,fecha:r.fechaFinalizacion||r.fecha||'',usuario:r.supervisorPlanta||appUser?.name||'Sistema',rol:'Producción',modulo:'Producción Planta',tipo,detalle:`OP #${String(r.id).replace('OP-','').padStart(5,'0')} (${r.status}) — ${r.client||'—'} — ${r.desc||r.categoria||'—'}`,ts:r.timestamp||0});
+        logs.push({id:`REQ-${r.id}`,fecha:r.fechaFinalizacion||r.fecha||'',usuario:r.supervisorPlanta||'No registrado',rol:rolDe(r.supervisorPlanta),modulo:'Producción Planta',tipo,detalle:`OP #${String(r.id).replace('OP-','').padStart(5,'0')} (${r.status}) — ${r.client||'—'} — ${r.desc||r.categoria||'—'}`,ts:r.timestamp||0});
       });
       (finishedGoodsInventory||[]).forEach(fg=>{
-        logs.push({id:`FG-${fg.id}`,fecha:fg.fechaFinalizacion||fg.updatedAt||'',usuario:'Sistema',rol:'Producción',modulo:'Inventario Terminados',tipo:'CREACIÓN',detalle:`Producto terminado: ${fg.producto||fg.id} — ${fg.cliente||'—'} — Stock: ${formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} ${fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares'}`,ts:fg.timestamp||0});
+        logs.push({id:`FG-${fg.id}`,fecha:fg.fechaFinalizacion||fg.updatedAt||'',usuario:'Sistema',rol:'—',modulo:'Inventario Terminados',tipo:'CREACIÓN',detalle:`Producto terminado: ${fg.producto||fg.id} — ${fg.cliente||'—'} — Stock: ${formatNum(fg.tipoProducto==='TERMOENCOGIBLE'?fg.kgProducidos:fg.millares)} ${fg.tipoProducto==='TERMOENCOGIBLE'?'KG':'Millares'}`,ts:fg.timestamp||0});
       });
       // Eventos reales de auditoría (eliminar/revertir/editar pagos, cobros, NE, facturas) —
       // grabados en el momento en que ocurren, a diferencia del resto de este log (arriba), que
@@ -66423,7 +66425,9 @@ ${resumen}
       return logs.sort((a,b)=>b.ts-a.ts||(b.fecha||'').localeCompare(a.fecha||''));
     })();
 
-    const modulos = ['Todos',...Array.from(new Set(allLogs.map(l=>l.modulo)))];
+    const modulos = ['Todos',...Array.from(new Set(['Bancos & Tesorería',...allLogs.map(l=>l.modulo)]))]; // «Bancos & Tesorería» siempre se puede elegir, aunque todavía no tenga registros
+    const logsBanco = allLogs.filter(l=>l.modulo==='Bancos & Tesorería');
+    const bancoDesde = logsBanco.reduce((m,l)=>(l.fecha&&(!m||l.fecha<m))?l.fecha:m,'');
     const tiposDisp = ['Todos','CREACIÓN','EDICIÓN','ELIMINACIÓN','ACCESO','SALIDA','EXPORTACIÓN','ALERTA'];
 
     const filtered = allLogs.filter(l=>{
@@ -66517,12 +66521,20 @@ ${resumen}
                 <option key={m2} value={m2}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>
               ))}
             </select>
-            {(auditSearch||auditModuleFilter!=='Todos'||auditTipoFilter!=='Todos'||auditDate) && (
-              <button onClick={()=>{setAuditSearch('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditPage(1);}}
+            {(auditSearch||auditModuleFilter!=='Todos'||auditTipoFilter!=='Todos'||auditDate||auditMes) && (
+              <button onClick={()=>{setAuditSearch('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditMes('');setAuditPage(1);}}
                 className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100">
                 ✕ Limpiar
               </button>
             )}
+          </div>
+          {/* Dónde están los registros de Banco / Caja / Relacionadas */}
+          <div className="px-6 py-2 bg-amber-50 border-b border-amber-100 text-[10px] text-amber-900 font-bold leading-relaxed">
+            🏦 Bancos, Caja y Relacionadas (módulo «Bancos & Tesorería»): <span className="font-black">{logsBanco.length}</span> registro(s){bancoDesde?` desde el ${bancoDesde.split('-').reverse().join('/')}`:''}.{' '}
+            {logsBanco.length===0
+              ? 'Todavía no hay ninguno: cada ingreso, pago, edición o eliminación NUEVO en Banco queda aquí con el usuario que lo hizo (lo anterior no guardó quién lo hizo). Si ya hizo operaciones y no aparecen, pulse Ctrl+F5 y revise el chip «Debug» (abajo a la izquierda, dentro de Banco).'
+              : 'Antes de esa fecha no se guardó quién hizo cada operación. Para verlos: Módulo «Bancos & Tesorería» y «Todos los meses».'}{' '}
+            Las líneas de Ventas, Inventario y Producción se deducen de los datos guardados (no muestran eliminaciones).
           </div>
           {/* Table */}
           <div className="overflow-x-auto">
@@ -66567,6 +66579,7 @@ ${resumen}
                       <Search size={28} className="mx-auto mb-3 text-gray-300"/>
                       <p className="font-black uppercase text-sm">Sin registros</p>
                       <p className="text-xs mt-1">Ajusta los filtros de búsqueda.</p>
+                      {(auditMes||auditDate) && <p className="text-xs mt-2 font-bold text-orange-600">Hay un filtro de {auditDate?'fecha':'mes'} activo: pruebe «Todos los meses» / quite la fecha.</p>}
                     </td>
                   </tr>
                 )}
