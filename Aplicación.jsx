@@ -11,7 +11,7 @@ import {
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, onSnapshot, deleteDoc, writeBatch, getDoc, getDocs, query, where, orderBy, arrayUnion } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc as _fsSetDoc, addDoc as _fsAddDoc, updateDoc as _fsUpdateDoc, onSnapshot as _fsOnSnapshot, deleteDoc as _fsDeleteDoc, writeBatch as _fsWriteBatch, getDoc, getDocs, query, where, orderBy, arrayUnion } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 import BancoApp from './BancoApp';
@@ -2419,6 +2419,7 @@ const rhContabPapelera = (batch, d, motivo, quien, ahora) => {
 function RRHHApp({fbUser,onBack,settings,appUser}) {
   const [rhTab,setRhTab]=useState('config'); // 'config' | 'trabajadores' | 'nomina' | 'cierre' | 'parafiscales' | 'conceptos'
   const [cfgSub,setCfgSub]=useState('estructura'); // sub-pestaña de Configuración: 'estructura' | 'tabulador' | 'hcm' | 'bolsa' | 'asiento'
+  useAudAcceso(appUser,'Recursos Humanos',(RH_TAB_NOMBRES[rhTab]||rhTab)+(rhTab==='config'?' › '+(RH_CFG_SUB_NOMBRES[cfgSub]||cfgSub):''));
   useEffect(()=>{
     const perms=appUser?.permissions||{};
     const tieneSubs=Object.keys(perms).some(k=>k.startsWith('rrhh_')&&perms[k]);
@@ -8171,6 +8172,7 @@ function RRHHApp({fbUser,onBack,settings,appUser}) {
 
 function ImpuestosApp({fbUser,onBack,settings,onNavigate,appUser}) {
   const [sec,setSec]=useState('tabla');
+  useAudAcceso(appUser,'Módulo de Impuestos',IMP_SEC_NOMBRES[sec]||sec);
   const [valorUT,setValorUT]=useState(settings?.valorUT||43);
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
@@ -21626,6 +21628,7 @@ tr.total td.lbl{text-align:left;padding-left:8px}
 
 function ProcuraApp({fbUser,onBack,settings,appUser}) {
   const [sec,setSec]=useState('dashboard');
+  useAudAcceso(appUser,'Procura & Compras',PROC_SEC_NOMBRES[sec]||sec);
   const [fetchingBCV, setFetchingBCV] = useState(false);
   const fetchTasaBCV = async (fecha) => {
     setFetchingBCV(true);
@@ -21942,21 +21945,501 @@ const archivarEnPapelera = async (coleccion, docId, datos, resumen, appUser) => 
   } catch(e) { console.warn('No se pudo archivar en papelera:', e); }
 };
 
-const logAuditoria = async (appUser, modulo, tipo, detalle) => {
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// AUDITORÍA TOTAL (a5) — «Auditoría de Sistema» muestra TODO lo que se crea, se edita o se elimina en CUALQUIER módulo y submódulo, y quién entra y sale.
+//   · Las líneas hechas a mano con logAuditoria()/logAuditoriaSeguro() siguen exactamente igual (con su texto detallado).
+//   · Red automática: toda escritura a la base de datos pasa por los envoltorios setDoc/addDoc/updateDoc/deleteDoc/writeBatch de aquí abajo; si ninguna línea «de
+//     siempre» la describió en esos segundos, se registra una línea automática (módulo › submódulo, quién, qué y —al editar— «antes → después»).
+//   · Solo MIRA: nunca cambia lo que se guarda ni su resultado. Cualquier fallo de la auditoría se ignora y no afecta a la operación.
+//   · Si la base de datos rechaza o no alcanza a guardar una línea de auditoría, queda pendiente en este equipo y se reintenta sola (y la pantalla avisa).
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+const AUD_VERSION = 'a5';
+const AA = {
+  user: null,          // persona con sesión iniciada (la fija App en cada dibujo)
+  snaps: {},           // última lectura en vivo de cada colección / documento (para saber qué había antes de una edición)
+  idx: {},             // índice por colección (se arma solo cuando hace falta)
+  explicit: [],        // líneas «de siempre» recientes: { t, user } — para no repetirlas
+  grupos: new Map(),   // escrituras en espera de resumirse en una sola línea
+  ultimoGesto: 0,      // última vez que la persona tocó algo (clic / tecla)
+  ultimaOp: 0,         // última escritura registrada (una acción larga sigue siendo de la persona)
+  loginAt: 0,          // cuándo inició sesión (lo que corre solo justo al entrar no es de la persona)
+  pantalla: null,      // módulo › submódulo que la persona tiene abierto (solo como dato de contexto)
+};
+try {
+  if (typeof document !== 'undefined') ['pointerdown', 'keydown', 'click', 'change', 'submit'].forEach((ev) => document.addEventListener(ev, () => { AA.ultimoGesto = Date.now(); }, true));
+} catch (e) {}
+
+// ── Salud del registro: se ve en la pantalla «Auditoría de Sistema» ──
+const AUD_SALUD = { ok: 0, fail: 0, ultimoOk: 0, ultimoError: '', ultimoErrorTs: 0, pend: 0, lecturaError: '' };
+const _audOyentes = new Set();
+const _audAviso = () => { _audOyentes.forEach((f) => { try { f(); } catch (e) {} }); };
+const AUD_PEND_KEY = 'aud_pend_v1';
+const _audPendLeer = () => { try { const a = JSON.parse(localStorage.getItem(AUD_PEND_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+const _audPendGuardar = (a) => { try { localStorage.setItem(AUD_PEND_KEY, JSON.stringify(a.slice(-200))); } catch (e) {} AUD_SALUD.pend = Math.min(a.length, 200); };
+try { AUD_SALUD.pend = Math.min(_audPendLeer().length, 200); } catch (e) {}
+// Cerrar la pestaña también es salir del sistema, pero no se puede guardar en la base de datos mientras se cierra: queda anotado en este equipo
+// y se guarda al volver a abrir. Si lo que ocurrió fue solo recargar la página (F5 / Ctrl+F5), no hubo salida y se descarta.
+const AUD_SAL_KEY = 'aud_salida_v1';
+try {
+  const _raw = localStorage.getItem(AUD_SAL_KEY);
+  if (_raw) {
+    localStorage.removeItem(AUD_SAL_KEY);
+    const _nav = (typeof performance !== 'undefined' && performance.getEntriesByType) ? performance.getEntriesByType('navigation')[0] : null;
+    if (!(_nav && _nav.type === 'reload')) { const _ev = JSON.parse(_raw); if (_ev && _ev.id) { const _a = _audPendLeer(); _a.push(_ev); _audPendGuardar(_a); } }
+  }
+} catch (e) {}
+const _audErrTxt = (e) => String((e && (e.code || e.message)) || e || 'error').slice(0, 160);
+const audGuardar = async (ev, esReintento) => {
   try {
+    await _fsSetDoc(getDocRef('auditoria_eventos', ev.id), ev);
+    AUD_SALUD.ok++; AUD_SALUD.ultimoOk = Date.now();
+    _audAviso();
+    return true;
+  } catch (e) {
+    AUD_SALUD.ultimoError = _audErrTxt(e); AUD_SALUD.ultimoErrorTs = Date.now();
+    if (!esReintento) { AUD_SALUD.fail++; const a = _audPendLeer(); a.push(ev); _audPendGuardar(a); }
+    _audAviso();
+    return false;
+  }
+};
+// Reintenta las líneas que no se pudieron guardar (quedan en este equipo hasta que la base de datos las acepte)
+const audReintentar = async () => {
+  const a = _audPendLeer();
+  AUD_SALUD.pend = Math.min(a.length, 200);
+  if (!a.length) return 0;
+  const quedan = [];
+  for (const ev of a) { if (!(await audGuardar(ev, true))) quedan.push(ev); }
+  _audPendGuardar(quedan); _audAviso();
+  return a.length - quedan.length;
+};
+
+const _aaQuien = (u) => String((u && (u.username || u.name)) || '');
+const logAuditoria = async (appUser, modulo, tipo, detalle, extra) => {
+  try {
+    const u = appUser || AA.user || null;
     const id = `AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
-    await setDoc(getDocRef('auditoria_eventos', id), {
+    const ev = {
       id, fecha: getTodayDate(), ts: Date.now(),
-      usuario: appUser?.name||appUser?.username||appUser?.displayName||appUser?.email||'Usuario',
-      rol: appUser?.role||'—',
+      usuario: u?.name||u?.username||u?.displayName||u?.email||'Usuario',
+      rol: u?.role||'—',
       modulo, tipo, detalle,
-    });
+      ...(extra||{}),
+    };
+    // Las líneas «de siempre» (crear / editar / eliminar…) cuentan como ya descritas: la red automática no las repite.
+    if (!extra && tipo !== 'ACCESO' && tipo !== 'SALIDA' && tipo !== 'ALERTA') AA.explicit.push({ t: ev.ts, user: _aaQuien(u) });
+    await audGuardar(ev);
   } catch(e) { console.warn('No se pudo registrar en auditoría:', e); }
 };
 // Igual que logAuditoria, pero el texto se arma dentro de una función: si algo del texto fallara, la operación que ya se guardó no se ve afectada (la línea simplemente no sale).
 const logAuditoriaSeguro = (appUser, modulo, tipo, armarDetalle) => {
   try { const d = armarDetalle(); if (d) logAuditoria(appUser, modulo, tipo, String(d).slice(0, 1800)); } catch(e) { console.warn('No se pudo armar el registro de auditoría:', e); }
 };
+
+// ── Retenciones de clientes: «Fecha de registro» = el día en que la retención se registra para las Comisiones ──
+// Desde el 01/11/2026 la comisión de cobranza de una NE que queda en cero por una retención se paga en el mes y el día en que esa retención se registró.
+const RET_FECHA_CORTE_COM = '2026-11-01';
+const _soloFechaISO = (v) => { const s = String(v == null ? '' : v).trim(); return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.substring(0, 10) : ''; };
+// Día en que el documento quedó cargado en el sistema (createdAt / timestamp)
+const fechaGuardadoDoc = (d) => {
+  if (!d) return '';
+  const c = _soloFechaISO(d.createdAt); if (c) return c;
+  const ms = Number(typeof d.createdAt === 'number' ? d.createdAt : d.timestamp);
+  if (ms > 0) { const x = new Date(ms); if (!isNaN(x.getTime())) return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`; }
+  return '';
+};
+// La que se ve en pantalla: la «Fecha de registro» elegida; si la retención es anterior a este campo, el día en que se cargó
+const fechaRegistroRet = (d) => _soloFechaISO(d && d.fechaRegistro) || fechaGuardadoDoc(d) || _soloFechaISO(d && (d.fechaComprobante || d.fecha));
+
+// ── Entrar / salir / pantallas visitadas ──
+const AA_ACC = {};
+const audAcceso = (appUser, modulo, area, detalle) => {
+  try {
+    const u = appUser || AA.user; if (!u) return;
+    const txt = detalle || `Entró a ${modulo}${area ? ' › ' + area : ''}`;
+    const k = `${_aaQuien(u)}|${modulo}|${area}|${txt}`; const ahora = Date.now();
+    if (AA_ACC[k] && ahora - AA_ACC[k] < 20000) return;   // la misma pantalla, la misma persona: una vez cada 20 s
+    AA_ACC[k] = ahora;
+    logAuditoria(u, modulo, 'ACCESO', txt, { area: area || '', origen: 'acceso' });
+  } catch (e) {}
+};
+// Una pantalla de un módulo/submódulo: se registra al quedarse en ella más de un instante (no cuenta el que solo pasa)
+const useAudAcceso = (appUser, modulo, sub) => {
+  const un = appUser ? (appUser.username || appUser.name || '') : '';
+  useEffect(() => {
+    if (!un || !sub) return;
+    AA.pantalla = { m: modulo, s: sub };
+    const t = setTimeout(() => audAcceso(appUser, modulo, sub), 1200);
+    return () => { clearTimeout(t); if (AA.pantalla && AA.pantalla.m === modulo) AA.pantalla = null; };
+  }, [un, modulo, sub]);
+};
+const audSalida = async (appUser, texto) => {
+  try {
+    await Promise.race([
+      logAuditoria(appUser, 'Sistema', 'SALIDA', texto || 'Cierre de sesión', { area: 'Sesión', origen: 'acceso' }),
+      new Promise((r) => setTimeout(r, 2500)),
+    ]);
+  } catch (e) {}
+};
+const AUD_TAB_NOMBRES = {
+  ventas: ['Ventas y Facturación', { dashboard:'Dashboard', grafica_ventas:'Gráfica', facturacion:'Facturación', notas_entrega:'NE', cotizaciones:'Cotizaciones', clientes:'Directorio', requisiciones:'OPs', productos_vendidos:'Prod. Vendidos', reporte_ventas:'Rpt. Ventas', transacciones_ventas:'Transac.', libro_ventas:'Libro de Ventas', notas_cd:'NC / ND', comisiones:'Comisiones', vendedores:'Vendedores', cxc:'Cuentas por Cobrar', estado_cuenta:'Estado de Cuenta' }],
+  produccion: ['Producción', { proyeccion:'Proyección MP', bobinas:'Prod. Bobinas', ordenes_compra:'Requisición', activos:'Producción Activa', en_proceso:'Reporte en Proceso', reportes:'Historial / Reportes' }],
+  inventario: ['Inventario', { requisiciones:'Solicitudes · Planta', almacen:'Solicitudes · Almacén/OC', catalogo:'General', finished:'Terminados', alimentario:'Orden de Salida', almacenes_mgmt:'Almacenes', entradas:'Entradas', salidas:'Salidas', toma_fisica:'Toma Física', kardex:'Kardex', reporte177:'Mov. Unidades' }],
+  formulas: ['Producción', { formulas:'Fórmulas' }, 'Fórmulas'],
+  simulador: ['Producción', {}, 'Simulador de OP'],
+  costos_operativos: ['Finanzas', {}, 'Costos operativos'],
+  kpi: ['Finanzas', {}, 'KPI gerencial'],
+  costos: ['Finanzas', { general:'General', ingresos_vs_costos:'Ing. vs Costos', mermas:'Mermas', reporte_bobinas:'Bobinas', resumen_mensual:'Resumen Mensual', super_finiquito:'Finiquito OP', estado_financiero:'Estado Financiero (PLANTA)', variaciones:'Variaciones' }, 'Reportes financieros'],
+  estado_resultado: ['Finanzas', { estado:'Estado de resultados', variaciones:'Variaciones' }, 'Estado de resultados'],
+  reciprocidad_bancaria: ['Finanzas', {}, 'Reciprocidad bancaria'],
+  estados_financieros: ['Finanzas', {}, 'Estados financieros'],
+  inversiones: ['Finanzas', {}, 'Inversiones'],
+  activos_fijos: ['Finanzas', {}, 'Activos fijos'],
+  libro_diario: ['Contabilidad', {}, 'Libro diario'],
+  plan_cuentas: ['Contabilidad', {}, 'Plan de cuentas'],
+  mayor_analitico_cc: ['Contabilidad', {}, 'Mayor analítico'],
+  balance_comprobacion_cc: ['Contabilidad', {}, 'Balance de comprobación'],
+  estado_resultados_cc: ['Contabilidad', {}, 'Estado de resultados'],
+  balance_general_cc: ['Contabilidad', {}, 'Balance general'],
+  ajuste_inflacion_cc: ['Contabilidad', {}, 'Ajuste por inflación'],
+  activos_fijos_cc: ['Contabilidad', {}, 'Activos fijos'],
+  dispositivos: ['Configuración', {}, 'Dispositivos autorizados'],
+  configuracion: ['Configuración', {}, 'Usuarios y ajustes'],
+  auditoria: ['Configuración', {}, 'Auditoría de Sistema'],
+  resena: ['Reseña', { portada:'Portada', identidad:'Identidad', empresa:'Empresa', planta:'Planta', maquinaria:'Maquinaria', productos:'Productos', clientes:'Clientes', activos:'Activos', proyeccion:'Proyección', plano:'Plano', video:'Video', catalogo:'Catálogo' }, 'Portada'],
+};
+const _aaHumano = (k) => { const s = String(k == null ? '' : k).replace(/_/g, ' ').replace(/([a-záéíóúñ])([A-Z])/g, '$1 $2').toLowerCase().trim(); return s.charAt(0).toUpperCase() + s.slice(1); };
+const PV_NOMBRES = { cotizaciones: 'Mis cotizaciones', clientes: 'Mis clientes', rendimiento: 'Mi rendimiento', actas: 'Actas de reclamo' };
+// ¿En qué pantalla está la persona? { m: módulo, s: submódulo } — null cuando la pantalla se registra sola (Banco, Procura, Impuestos, RRHH, Comprobantes) o no es un módulo
+const audPantalla = (e) => {
+  try {
+    const t = e.activeTab;
+    if (e.selectedPortal === 'vendedores_portal' && t === 'home') return { m: 'Vendedores', s: PV_NOMBRES[e.pvView] || _aaHumano(e.pvView || 'cotizaciones') };
+    if (!t || t === 'home' || t === 'banco' || t === 'procura' || t === 'impuestos' || t === 'rrhh' || t === 'comprobantes_contables') return null;
+    const def = AUD_TAB_NOMBRES[t];
+    if (!def) return { m: 'Sistema', s: _aaHumano(t) };
+    const vista = { ventas: e.ventasView, produccion: e.prodView, inventario: e.invView, formulas: e.formulasView, costos: e.showReportType, estado_resultado: e.erView, resena: e.resenaTab }[t];
+    const sub = (vista && def[1][vista]) || (vista ? _aaHumano(vista) : '') || def[2] || '';
+    return { m: def[0], s: sub };
+  } catch (x) { return null; }
+};
+const AA_PORTALES = { produccion: 'PRODUCCIÓN', administracion: 'ADMINISTRACIÓN', rrhh: 'RRHH', finanzas: 'FINANZAS', contabilidad: 'CONTABILIDAD', resena_portal: 'RESEÑA', vendedores_portal: 'VENDEDORES', redes_portal: 'REDES SOCIALES', configuracion_portal: 'CONFIGURACIÓN' };
+const RH_TAB_NOMBRES = { config: 'Configuración', elaboracion: 'Elaboración de Nómina', nomina: 'Reporte de Nómina', cierre: 'Cierre de Mes', parafiscales: 'Parafiscales', beneficios: 'Beneficios', conceptos: 'Conceptos', trabajadores: 'Trabajadores' };
+const RH_CFG_SUB_NOMBRES = { estructura: 'Centro de Costo y Departamento', tabulador: 'Tabulador de Sueldos y Cargos', hcm: 'HCM', bolsa: 'Bolsa de alimentos', tipos: 'Tipos de nómina', asiento: 'Cuentas del asiento de nómina' };
+const PROC_SEC_NOMBRES = { dashboard: 'Dashboard', proveedores: 'Proveedores', catalogo: 'Catálogo Prod/Serv', ordenes: 'Órdenes de compra', facturas: 'Facturas de compra', libro_compras: 'Libro de Compras', cxp: 'Cuentas por Pagar', historial: 'Historial de pagos', estado: 'Estado de cuenta', nc_nd_compra: 'NC / ND de compra' };
+const IMP_SEC_NOMBRES = { tabla: 'Tabla ISLR', ret_iva: 'Retenciones IVA', ret_islr: 'Retenciones ISLR', igtf: 'IGTF', det_iva: 'Determinación IVA', act_economica: 'Actividad Económica', prot_pensiones: 'Protección Pensiones', resumen_tributario: 'Resumen Tributario', config: 'Configuración' };
+const CC_SUB_NOMBRES = { banco: 'Banco', caja: 'Caja', procura: 'Procura', ventas: 'Ventas', ret_cli: 'Ret. Clientes', ret_prov: 'Ret. Proveedores', deprec: 'Depreciaciones', imp_enterar: 'Impuestos', ajustes: 'Ajustes', nomina: 'Nómina', costos_produccion: 'Costos OP', consumos_internos: 'Consumos Internos', reclasificaciones: 'Reclasificaciones', cierre_iva: 'Cierre IVA' };
+
+// ── Cómo se llama cada módulo en «Auditoría de Sistema» (las líneas viejas y las deducidas de los datos se agrupan igual que las nuevas) ──
+const AUD_MODULO_ALIAS = {
+  'Ventas': ['Ventas y Facturación', ''],
+  'Libro de Ventas': ['Ventas y Facturación', 'Libro de Ventas'],
+  'Cuentas por Cobrar': ['Ventas y Facturación', 'Cuentas por Cobrar'],
+  'Notas de Entrega': ['Ventas y Facturación', 'NE'],
+  'Comisiones de Vendedores': ['Ventas y Facturación', 'Comisiones'],
+  'Cuentas por Pagar': ['Procura & Compras', 'Cuentas por Pagar'],
+  'Notas de Crédito/Débito Compra': ['Procura & Compras', 'NC / ND de compra'],
+  'Impuestos': ['Módulo de Impuestos', ''],
+  'RRHH': ['Recursos Humanos', 'Elaboración de Nómina'],
+  'Contabilidad': ['Contabilidad', 'Comprobantes Contables'],
+  'Comprobantes Contables': ['Contabilidad', 'Comprobantes Contables'],
+  'Seguridad': ['Configuración', 'Dispositivos autorizados'],
+  'Auditoría': ['Configuración', 'Auditoría de Sistema'],
+  'Control Inventario': ['Inventario', 'Movimientos'],
+  'Inventario Terminados': ['Inventario', 'Productos terminados'],
+  'Producción Planta': ['Producción', 'Órdenes de producción'],
+};
+const audNormalizar = (modulo, area, detalle) => {
+  const a = AUD_MODULO_ALIAS[modulo];
+  if (!a) return { m: modulo || '—', s: area || '' };
+  let s = area || a[1] || '';
+  if (!s && modulo === 'Ventas') { const d = String(detalle || ''); s = /^Factura/i.test(d) ? 'Facturación' : /^OP #/i.test(d) ? 'OPs' : ''; }
+  return { m: a[0], s };
+};
+const AUD_MODULOS_TODOS = ['Ventas y Facturación', 'Bancos & Tesorería', 'Procura & Compras', 'Módulo de Impuestos', 'Recursos Humanos', 'Producción', 'Inventario', 'Finanzas', 'Contabilidad', 'Reseña', 'Vendedores', 'Configuración', 'Sistema'];
+
+// ── La red automática: qué es cada tabla de la base de datos (módulo › submódulo, nombre y cómo se nombra un registro) ──
+const _aaPrimero = (d, ...ks) => { for (const k of ks) { const v = d && d[k]; if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim(); } return ''; };
+const _aaM = (n) => { const x = parseFloat(n); return isFinite(x) ? formatNum(x) : ''; };
+const _aaUsd = (n) => { const m = _aaM(n); return m ? '$' + m : ''; };
+const _aaUnir = (...a) => a.filter(Boolean).join(' · ');
+const AA_IGNORAR = new Set(['auditoria_eventos', 'userActivity', 'activeSessions', 'notifications', 'papelera']);
+const _aaAjuste = (id) => {
+  const s = String(id);
+  if (/^(osaCounter|cuentasFavoritas)$/.test(s)) return null;                                  // contadores y preferencias de pantalla
+  if (s === 'general') return ['Configuración', 'Ajustes del sistema', 'ajustes del sistema', /^(tasaDeprecUltima|correlativo.*)$/];
+  if (s === 'comisionesCobranzaOverrides') return ['Ventas y Facturación', 'Comisiones', 'cobranza manual de comisiones'];
+  if (/^(det-iva|lc-resumen)/.test(s)) return ['Módulo de Impuestos', 'Determinación IVA', 'datos de la determinación de IVA (' + s + ')'];
+  if (/^act-economica/.test(s)) return ['Módulo de Impuestos', 'Actividad Económica', 'datos de actividad económica (' + s + ')'];
+  if (/^prot-pensiones/.test(s)) return ['Módulo de Impuestos', 'Protección Pensiones', 'datos de protección de pensiones (' + s + ')'];
+  if (/^igtf-declaracion/.test(s)) return ['Módulo de Impuestos', 'IGTF', 'declaración de IGTF (' + s + ')'];
+  if (/^resumen-tributario/.test(s)) return ['Módulo de Impuestos', 'Resumen Tributario', 'resumen tributario (' + s + ')'];
+  if (/^(simulacionCostosReales|finanzasProvisional)$/.test(s)) return ['Finanzas', 'Estados financieros', 'datos financieros (' + s + ')'];
+  if (/^(cuentas|cuenta[A-Z]|ventasCuentas|anticiposCuentas|produccionCuentas|actividadEconomica|protPensionesCuentas|anticipoIslrCuentas|islrAnualCuentas|activoFijoContabilidadCfg|retCliente)/.test(s)) return ['Contabilidad', 'Cuentas contables configuradas', 'configuración de cuentas contables (' + s + ')'];
+  return ['Configuración', 'Ajustes (' + s + ')', 'ajustes (' + s + ')'];
+};
+const AA_COLS = {
+  // ── Ventas y Facturación ──
+  maquilaInvoices: ['Ventas y Facturación', 'Facturación', 'factura de venta', 'facturas de venta', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'nroFiscal') || id, _aaPrimero(d, 'clientName'), _aaUsd(d.total || d.montoBase))],
+  notasEntrega: ['Ventas y Facturación', 'NE', 'nota de entrega', 'notas de entrega', (d, id) => _aaUnir(_aaPrimero(d, 'documento') || id, _aaPrimero(d, 'clientName'), _aaUsd(d.total || d.montoBase))],
+  notasVentaCreditoDebito: ['Ventas y Facturación', 'NC / ND', 'nota de crédito/débito de venta', 'notas de crédito/débito de venta', (d, id) => _aaUnir(`${_aaPrimero(d, 'tipo') || 'Nota'} ${_aaPrimero(d, 'nroDocumento') || id}`, _aaPrimero(d, 'clientName'))],
+  cotizaciones: ['Ventas y Facturación', 'Cotizaciones', 'cotización', 'cotizaciones', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'numero') || id, _aaPrimero(d, 'clientName', 'cliente'), _aaUsd(d.total || d.montoBase))],
+  clientes: ['Ventas y Facturación', 'Directorio', 'cliente', 'clientes', (d, id) => _aaUnir(_aaPrimero(d, 'name', 'nombre') || id, _aaPrimero(d, 'rif'))],
+  retencionesClientes: ['Ventas y Facturación', 'Libro de Ventas', 'retención de cliente', 'retenciones de clientes', (d, id) => _aaUnir(_aaPrimero(d, 'tipoLabel', 'tipoRetencion', 'tipo') || 'IVA', _aaPrimero(d, 'nroRetencion') ? 'Comprobante ' + _aaPrimero(d, 'nroRetencion') : '', d.montoRetenido != null ? 'Bs.' + _aaM(d.montoRetenido) : '')],
+  libroVentasConfig: ['Ventas y Facturación', 'Libro de Ventas', 'configuración del libro de ventas', 'configuraciones del libro de ventas', (d, id) => 'período ' + id, /^(saldoCierre|saldoCierreCF)$/],
+  cobros_cxc: ['Ventas y Facturación', 'Cuentas por Cobrar', 'cobro', 'cobros', (d, id) => _aaUnir(_aaPrimero(d, 'neDocumento', 'neId') || id, _aaPrimero(d, 'clientName'), _aaPrimero(d, 'metodo'), _aaUsd(d.monto))],
+  consignaciones: ['Ventas y Facturación', 'Consignaciones', 'consignación', 'consignaciones', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'numero') || id, _aaPrimero(d, 'clientName', 'cliente'))],
+  comisionesReportes: ['Ventas y Facturación', 'Comisiones', 'reporte de comisiones', 'reportes de comisiones', (d, id) => _aaUnir(_aaPrimero(d, 'vendedor', 'titulo', 'nombre') || id, _aaPrimero(d, 'mesLabel', 'periodo', 'mes'))],
+  actasReclamo: ['Vendedores', 'Actas de reclamo', 'acta de reclamo', 'actas de reclamo', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'numero') || id, _aaPrimero(d, 'clientName', 'cliente'))],
+  // ── Inventario y Producción ──
+  inventory: ['Inventario', 'General', 'ítem de inventario', 'ítems de inventario', (d, id) => _aaUnir(_aaPrimero(d, 'displayId') || String(id).split('___')[0], _aaPrimero(d, 'name', 'nombre', 'description', 'descripcion'))],
+  inventoryMovements: ['Inventario', 'Movimientos', 'movimiento de inventario', 'movimientos de inventario', (d, id) => _aaUnir(_aaPrimero(d, 'type'), _aaPrimero(d, 'itemName', 'itemId') || id, d.qty != null ? 'Cant. ' + _aaM(d.qty) : '')],
+  inventoryRequisitions: ['Inventario', 'Solicitudes', 'solicitud de inventario', 'solicitudes de inventario', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'numero') || id, _aaPrimero(d, 'status'))],
+  invRequisitions: ['Inventario', 'Solicitudes', 'solicitud de inventario', 'solicitudes de inventario', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'numero') || id, _aaPrimero(d, 'status'))],
+  finishedGoodsInventory: ['Inventario', 'Productos terminados', 'producto terminado', 'productos terminados', (d, id) => _aaUnir(_aaPrimero(d, 'producto') || id, _aaPrimero(d, 'cliente'))],
+  tomasFisicas: ['Inventario', 'Toma física', 'toma física', 'tomas físicas', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'nombre') || id, _aaPrimero(d, 'fecha'))],
+  depositos: ['Inventario', 'Almacenes', 'almacén', 'almacenes', (d, id) => _aaPrimero(d, 'nombre') || id],
+  inventario_alimentario: ['Inventario', 'Orden de Salida', 'orden de salida', 'órdenes de salida', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'numero', 'nombre', 'name', 'descripcion') || id)],
+  purchaseOrders: ['Inventario', 'Almacén/OC', 'orden de compra de almacén', 'órdenes de compra de almacén', (d, id) => _aaUnir(_aaPrimero(d, 'documento', 'numero') || id, _aaPrimero(d, 'proveedor', 'supplier'), _aaPrimero(d, 'status'))],
+  wipInventory: ['Producción', 'Producto en proceso', 'producto en proceso', 'productos en proceso', (d, id) => _aaUnir(_aaPrimero(d, 'producto', 'descripcion') || id)],
+  bobinaProductions: ['Producción', 'Prod. Bobinas', 'producción de bobina', 'producciones de bobina', (d, id) => _aaUnir(_aaPrimero(d, 'codigo', 'lote', 'bobina') || id, _aaPrimero(d, 'opId', 'reqId'))],
+  requirements: ['Producción', 'Órdenes de producción', 'orden de producción', 'órdenes de producción', (d, id) => _aaUnir('OP ' + String(id).replace('OP-', ''), _aaPrimero(d, 'client'), _aaPrimero(d, 'status'))],
+  formulas: ['Producción', 'Fórmulas', 'fórmula', 'fórmulas', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'name', 'producto') || id, _aaPrimero(d, 'categoria'))],
+  produccion_tasas_manuales: ['Producción', 'Tasas manuales', 'tasa manual de producción', 'tasas manuales de producción', (d, id) => id],
+  operatingCosts: ['Finanzas', 'Costos operativos', 'costo operativo', 'costos operativos', (d, id) => _aaUnir(_aaPrimero(d, 'concepto', 'descripcion', 'categoria') || id, d.monto != null ? _aaUsd(d.monto) : '')],
+  // ── Procura & Compras ──
+  procura_proveedores: ['Procura & Compras', 'Proveedores', 'proveedor', 'proveedores', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'razonSocial', 'name') || id, _aaPrimero(d, 'rif'))],
+  procura_ordenes_compra: ['Procura & Compras', 'Órdenes de compra', 'orden de compra', 'órdenes de compra', (d, id) => _aaUnir(_aaPrimero(d, 'numero', 'documento', 'nroOC') || id, _aaPrimero(d, 'proveedorNombre', 'proveedor'), _aaPrimero(d, 'status'))],
+  procura_facturas_compra: ['Procura & Compras', 'Facturas de compra', 'factura de compra', 'facturas de compra', (d, id) => _aaUnir(_aaPrimero(d, 'nroFactura', 'numero', 'documento') || id, _aaPrimero(d, 'proveedorNombre', 'proveedor'), _aaUsd(d.total))],
+  procura_pagos_cxp: ['Procura & Compras', 'Cuentas por Pagar', 'pago a proveedor', 'pagos a proveedores', (d, id) => _aaUnir(_aaPrimero(d, 'proveedorNombre', 'proveedor') || id, _aaPrimero(d, 'metodo'), _aaUsd(d.monto))],
+  cxp_terceros_relacionados: ['Procura & Compras', 'Cuentas por Pagar', 'tercero relacionado', 'terceros relacionados', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'razonSocial') || id, _aaPrimero(d, 'rif'))],
+  cxp_pagos_relacionados: ['Procura & Compras', 'Cuentas por Pagar', 'pago a tercero relacionado', 'pagos a terceros relacionados', (d, id) => _aaUnir(_aaPrimero(d, 'terceroNombre', 'nombre') || id, _aaUsd(d.monto))],
+  notasCompraCreditoDebito: ['Procura & Compras', 'NC / ND de compra', 'nota de crédito/débito de compra', 'notas de crédito/débito de compra', (d, id) => _aaUnir(`${_aaPrimero(d, 'tipo') || 'Nota'} ${_aaPrimero(d, 'nroDocumento') || id}`, _aaPrimero(d, 'proveedorNombre', 'proveedor'))],
+  procura_categorias_servicio: ['Procura & Compras', 'Catálogo Prod/Serv', 'categoría de servicio', 'categorías de servicio', (d, id) => _aaPrimero(d, 'nombre') || id],
+  procura_servicios: ['Procura & Compras', 'Catálogo Prod/Serv', 'servicio', 'servicios', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'descripcion') || id, _aaPrimero(d, 'codigo'))],
+  // ── Módulo de Impuestos ──
+  procura_ret_iva: ['Módulo de Impuestos', 'Retenciones IVA', 'retención de IVA a proveedor', 'retenciones de IVA a proveedores', (d, id) => _aaUnir(_aaPrimero(d, 'nroComprobante', 'numero') || id, _aaPrimero(d, 'proveedor', 'proveedorNombre'))],
+  procura_ret_islr: ['Módulo de Impuestos', 'Retenciones ISLR', 'retención de ISLR a proveedor', 'retenciones de ISLR a proveedores', (d, id) => _aaUnir(_aaPrimero(d, 'nroComprobante', 'numero') || id, _aaPrimero(d, 'proveedor', 'proveedorNombre'))],
+  iva_overrides_manuales: ['Módulo de Impuestos', 'Determinación IVA', 'ajuste manual de IVA', 'ajustes manuales de IVA', (d, id) => id],
+  iva_tasas_manuales: ['Módulo de Impuestos', 'Determinación IVA', 'tasa manual de IVA', 'tasas manuales de IVA', (d, id) => id],
+  // ── Bancos & Tesorería (lo que hacen los flujos de Ventas/Compras sobre Banco y Caja) ──
+  banco_movimientos: ['Bancos & Tesorería', 'Banco', 'movimiento de banco', 'movimientos de banco', (d, id) => _aaUnir(_aaPrimero(d, 'tipo'), _aaPrimero(d, 'concepto', 'descripcion') || id, _aaPrimero(d, 'cuentaNombre'), _aaUsd(d.montoUSD))],
+  caja_movimientos: ['Bancos & Tesorería', 'Caja', 'movimiento de caja', 'movimientos de caja', (d, id) => _aaUnir(_aaPrimero(d, 'tipo'), _aaPrimero(d, 'concepto', 'descripcion') || id, _aaPrimero(d, 'cuentaNombre'), _aaUsd(d.montoUSD))],
+  banco_cuentas: ['Bancos & Tesorería', 'Banco', 'cuenta bancaria', 'cuentas bancarias', (d, id) => _aaUnir(_aaPrimero(d, 'banco', 'nombre') || id, _aaPrimero(d, 'numero', 'nroCuenta'))],
+  caja_cuentas: ['Bancos & Tesorería', 'Caja', 'cuenta de caja', 'cuentas de caja', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'banco') || id)],
+  banco_tasas: ['Bancos & Tesorería', 'Tasas de cambio', 'tasa de cambio', 'tasas de cambio', (d, id) => _aaUnir(_aaPrimero(d, 'fecha') || id, d.tasaRef != null ? _aaM(d.tasaRef) + ' Bs/$' : '')],
+  // ── Contabilidad ──
+  planDeCuentas: ['Contabilidad', 'Plan de cuentas', 'cuenta contable', 'cuentas contables', (d, id) => _aaUnir(_aaPrimero(d, 'codigo'), _aaPrimero(d, 'nombre') || id)],
+  asientosContables: ['Contabilidad', 'Libro diario', 'asiento contable', 'asientos contables', (d, id) => _aaUnir(_aaPrimero(d, 'numero', 'nroAsiento') || id, _aaPrimero(d, 'descripcion', 'concepto'), _aaPrimero(d, 'fecha'))],
+  cont_asientos: ['Contabilidad', 'Libro diario', 'asiento contable', 'asientos contables', (d, id) => _aaUnir(_aaPrimero(d, 'numero', 'nroAsiento') || id, _aaPrimero(d, 'descripcion', 'concepto'), _aaPrimero(d, 'fecha'))],
+  comprobantes_ajustes: ['Contabilidad', 'Comprobantes Contables', 'comprobante de ajuste', 'comprobantes de ajuste', (d, id) => _aaUnir(_aaPrimero(d, 'nroComprobante', 'concepto', 'descripcion', 'tipo') || id, _aaPrimero(d, 'fecha'))],
+  comprobantes_cierre_iva: ['Contabilidad', 'Comprobantes Contables', 'comprobante de cierre de IVA', 'comprobantes de cierre de IVA', (d, id) => _aaUnir(_aaPrimero(d, 'periodo', 'concepto') || id)],
+  comprobantes_nomina: ['Contabilidad', 'Comprobantes Contables', 'comprobante de nómina', 'comprobantes de nómina', (d, id) => _aaUnir(_aaPrimero(d, 'periodo', 'concepto', 'mes') || id)],
+  comprobantes_reclasificaciones: ['Contabilidad', 'Comprobantes Contables', 'reclasificación contable', 'reclasificaciones contables', (d, id) => _aaUnir(_aaPrimero(d, 'conceptoComprobante', 'concepto', 'descripcion') || id, _aaPrimero(d, 'fecha'))],
+  activos_fijos: ['Contabilidad', 'Activos fijos', 'activo fijo', 'activos fijos', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'descripcion') || id, _aaPrimero(d, 'codigo'))],
+  activos_fijos_depreciaciones_mensuales: ['Contabilidad', 'Activos fijos', 'depreciación mensual', 'depreciaciones mensuales', (d, id) => _aaUnir(_aaPrimero(d, 'periodo', 'mes') || id)],
+  indices_inflacion: ['Contabilidad', 'Ajuste por inflación', 'índice de inflación', 'índices de inflación', (d, id) => _aaUnir(_aaPrimero(d, 'periodo') || id, _aaPrimero(d, 'indice'))],
+  // ── Recursos Humanos ──
+  rrhh_trabajadores: ['Recursos Humanos', 'Trabajadores', 'trabajador', 'trabajadores', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'nombres', 'name') || id, _aaPrimero(d, 'cedula', 'ci'))],
+  rrhh_nominas: ['Recursos Humanos', 'Elaboración de Nómina', 'nómina', 'nóminas', (d, id) => _aaUnir(_aaPrimero(d, 'concepto', 'nombre', 'periodo', 'mes') || id, _aaPrimero(d, 'estado'))],
+  rrhh_nomina_detalles: ['Recursos Humanos', 'Elaboración de Nómina', 'detalle de nómina', 'detalles de nómina', (d, id) => _aaUnir(_aaPrimero(d, 'trabajadorNombre', 'nombre') || id)],
+  rrhh_cierres_mes: ['Recursos Humanos', 'Cierre de Mes', 'cierre de mes de RRHH', 'cierres de mes de RRHH', (d, id) => _aaUnir(_aaPrimero(d, 'mes', 'periodo') || id)],
+  rrhh_conceptos: ['Recursos Humanos', 'Conceptos', 'concepto de nómina', 'conceptos de nómina', (d, id) => _aaUnir(_aaPrimero(d, 'nombre', 'descripcion') || id, _aaPrimero(d, 'codigo'))],
+  rrhh_config: ['Recursos Humanos', 'Configuración', 'configuración de RRHH', 'configuraciones de RRHH', (d, id) => id],
+  rrhh_centros_costo: ['Recursos Humanos', 'Configuración', 'centro de costo', 'centros de costo', (d, id) => _aaPrimero(d, 'nombre') || id],
+  rrhh_departamentos: ['Recursos Humanos', 'Configuración', 'departamento', 'departamentos', (d, id) => _aaPrimero(d, 'nombre') || id],
+  rrhh_tipos_nomina: ['Recursos Humanos', 'Configuración', 'tipo de nómina', 'tipos de nómina', (d, id) => _aaPrimero(d, 'nombre') || id],
+  rrhh_tabulador_cargos: ['Recursos Humanos', 'Configuración', 'cargo del tabulador', 'cargos del tabulador', (d, id) => _aaUnir(_aaPrimero(d, 'cargo', 'nombre') || id, d.salarioBase != null ? _aaUsd(d.salarioBase) : '')],
+  rrhh_parametros_formula: ['Recursos Humanos', 'Configuración', 'parámetro de fórmula', 'parámetros de fórmula', (d, id) => _aaPrimero(d, 'nombre', 'clave') || id],
+  rrhh_cuentas_nomina: ['Recursos Humanos', 'Configuración', 'cuenta de nómina', 'cuentas de nómina', (d, id) => _aaPrimero(d, 'nombre', 'concepto') || id],
+  // ── Reseña / Configuración / Seguridad ──
+  resenaImagenes: ['Reseña', 'Imágenes', 'imagen de la reseña', 'imágenes de la reseña', (d, id) => id],
+  resenaConfig: ['Reseña', 'Contenido', 'contenido de la reseña', 'contenidos de la reseña', (d, id) => id],
+  users: ['Configuración', 'Usuarios', 'usuario del sistema', 'usuarios del sistema', (d, id) => _aaUnir((_aaPrimero(d, 'name', 'username') || id) + (_aaPrimero(d, 'username') && _aaPrimero(d, 'name') ? ' (' + _aaPrimero(d, 'username') + ')' : ''), _aaPrimero(d, 'role') ? 'rol ' + _aaPrimero(d, 'role') : '')],
+  dispositivos_autorizados: ['Configuración', 'Dispositivos autorizados', 'dispositivo autorizado', 'dispositivos autorizados', (d, id) => _aaUnir(_aaPrimero(d, 'nombreUsuario', 'username') || id, _aaPrimero(d, 'deviceLabel'), _aaPrimero(d, 'estado'))],
+};
+const _aaMeta = (col, id) => {
+  if (!col || /^sandbox_/.test(col) || AA_IGNORAR.has(col)) return null;
+  if (col === 'settings') {
+    const a = _aaAjuste(id);
+    if (!a) return null;
+    return { m: a[0], a: a[1], n: a[2], np: a[2], l: () => a[2], ignorar: a[3] || null };
+  }
+  const m = AA_COLS[col];
+  if (m) return { m: m[0], a: m[1], n: m[2], np: m[3], l: m[4], ignorar: m[5] || null };
+  return { m: 'Sistema', a: col, n: 'registro', np: 'registros', l: null, ignorar: null };
+};
+const _aaSecreto = /(pass|clave|contrase|token|secret|^pin$)/i;
+const _aaIgnorado = /^(id|_fsId|timestamp|createdAt|updatedAt|creadoEn|actualizadoEn|user|usuario|userName|_.*)$/;
+const _aaVal = (v) => { if (v === null || v === undefined || v === '') return '—'; if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100); if (typeof v === 'boolean') return v ? 'sí' : 'no'; if (typeof v === 'string') return v.length > 40 ? v.slice(0, 40) + '…' : v; if (Array.isArray(v)) return `[${v.length}]`; return '{…}'; };
+const _aaIgual = (a, b) => {
+  if (a === b) return true;
+  if (a === undefined || a === null || b === undefined || b === null) return (a == null || a === '') && (b == null || b === '');
+  if (typeof a !== 'object' && typeof b !== 'object') return String(a) === String(b);
+  try { const x = JSON.stringify(a), y = JSON.stringify(b); return x.length > 30000 ? false : x === y; } catch (e) { return false; }
+};
+const _aaCambios = (prev, data, extraIgnorar) => {
+  if (!data || typeof data !== 'object') return '';
+  const out = [];
+  for (const k of Object.keys(data)) {
+    if (_aaIgnorado.test(k) || (extraIgnorar && extraIgnorar.test(k))) continue;
+    const nuevo = data[k], antes = prev ? prev[k] : undefined;
+    if (prev && _aaIgual(antes, nuevo)) continue;
+    if (_aaSecreto.test(k)) { out.push(`${_aaHumano(k)}: (cambiada)`); continue; }
+    if (nuevo !== null && typeof nuevo === 'object') { out.push(`${_aaHumano(k)}: modificado`); continue; }
+    out.push(prev ? `${_aaHumano(k)}: ${_aaVal(antes)} → ${_aaVal(nuevo)}` : `${_aaHumano(k)}: ${_aaVal(nuevo)}`);
+  }
+  return out.slice(0, 6).join('; ') + (out.length > 6 ? ` (+${out.length - 6} más)` : '');
+};
+const _aaVerbo = { 'CREACIÓN': ['creó', 'crearon'], 'EDICIÓN': ['editó', 'editaron'], 'ELIMINACIÓN': ['eliminó', 'eliminaron'] };
+// Lo que hay guardado AHORA (antes de que la escritura se aplique) de una colección o documento que alguna pantalla ya está leyendo
+AA.alimentar = (ref, snap) => {
+  try {
+    if (!ref || !snap || ref.type === 'query') return;
+    const path = ref.path; if (!path) return;
+    if (snap.docs || typeof snap.exists === 'function') AA.snaps[path] = snap;
+  } catch (e) {}
+};
+AA.prev = (col, id) => {
+  try {
+    const sid = String(id);
+    const sd = AA.snaps[col + '/' + sid];
+    if (sd) return (typeof sd.exists === 'function' && sd.exists()) ? sd.data() : null;
+    const s = AA.snaps[col];
+    if (s && s.docs) {
+      let c = AA.idx[col];
+      if (!c || c.snap !== s) { c = { snap: s, map: new Map() }; s.docs.forEach((d) => c.map.set(d.id, d)); AA.idx[col] = c; }
+      const d = c.map.get(sid); return d ? d.data() : null;
+    }
+  } catch (e) {}
+  return null;
+};
+AA.hayStore = (col, id) => !!(AA.snaps[col] || AA.snaps[col + '/' + id]);
+// ANTES de escribir: de quién es la acción, si cuenta como hecha por una persona y qué había guardado (la lectura en vivo todavía no recibió esta escritura).
+AA.preparar = (tipo, ref) => {
+  try {
+    const ruta = String((ref && ref.path) || '').split('/');
+    const col = ruta[0];
+    if (!col || /^sandbox_/.test(col) || AA_IGNORAR.has(col)) return null;
+    const quien = AA.user;
+    if (!quien) return null;
+    const ahora = Date.now();
+    // Solo cuenta lo que hace una persona: lo que corre solo justo al entrar no; tiene que haber tocado algo hace poco (o seguir una acción ya registrada)
+    if (AA.loginAt && ahora - AA.loginAt < 6000) return null;
+    if (!(ahora - AA.ultimoGesto < 45000 || ahora - AA.ultimaOp < 20000)) return null;
+    const id0 = tipo === 'add' ? '' : ruta.slice(1).join('/');
+    return { tipo, col, id0, quien, t: ahora, prev: tipo === 'add' ? null : AA.prev(col, id0), hayStore: AA.hayStore(col, id0) };
+  } catch (e) { return null; }
+};
+// DESPUÉS de pedir la escritura: cuando la base de datos la confirma, se anota (si falla, no se anota nada)
+AA.escritura = (c, data, p) => {
+  if (!c) return;
+  const reg = (id) => AA.registrar({ tipo: c.tipo, col: c.col, id, data, prev: c.prev, hayStore: c.hayStore, quien: c.quien, t: c.t });
+  if (p && typeof p.then === 'function') p.then((r) => reg(c.tipo === 'add' ? ((r && r.id) || '') : c.id0), () => {});
+  else reg(c.id0);
+};
+AA.lote = (ops, p) => { ops.forEach((o) => AA.escritura(o.c, o.data, p)); };
+AA.registrar = (op) => {
+  try {
+    const meta = _aaMeta(op.col, op.id);
+    if (!meta) return;
+    const accion = op.tipo === 'delete' ? 'ELIMINACIÓN' : op.tipo === 'add' ? 'CREACIÓN' : op.tipo === 'update' ? 'EDICIÓN'
+      : op.tipo === 'merge' ? (op.prev ? 'EDICIÓN' : (op.hayStore ? 'CREACIÓN' : 'EDICIÓN')) : (op.prev ? 'EDICIÓN' : 'CREACIÓN');
+    const base = Object.assign({}, op.prev || {}, (op.data && typeof op.data === 'object') ? op.data : {});
+    // Ajustes internos que el sistema guarda solo (último mes depreciado, correlativos…): no son algo que una persona haya hecho, ni al crear ni al editar
+    if (meta.ignorar && accion !== 'ELIMINACIÓN' && op.data && typeof op.data === 'object' && !Object.keys(op.data).some((k) => !_aaIgnorado.test(k) && !meta.ignorar.test(k))) return;
+    let label = '';
+    try { label = meta.l ? meta.l(base, op.id) : ''; } catch (e) {}
+    if (!label) label = _aaPrimero(base, 'nombre', 'name', 'descripcion', 'documento', 'numero') || op.id || '';
+    let cambios = '';
+    if (accion === 'EDICIÓN') {
+      cambios = _aaCambios(op.prev, op.data, meta.ignorar);
+      if (!cambios && op.prev) return;                       // se guardó lo mismo que ya había: no hay nada que mostrar
+      if (!cambios && meta.ignorar) return;                  // solo se tocaron campos internos
+    }
+    const ahora = Date.now();
+    AA.ultimaOp = ahora;
+    const key = `${_aaQuien(op.quien)}|${op.col}|${accion}`;
+    let g = AA.grupos.get(key);
+    if (g && ahora - g.t0 > 20000) { AA.volcar(key); g = null; }
+    if (!g) { g = { key, quien: op.quien, col: op.col, meta, accion, t0: op.t, t1: ahora, n: 0, ops: [], timer: null, desde: AA.pantalla }; AA.grupos.set(key, g); }
+    g.t1 = ahora; g.n++;
+    if (g.ops.length < 40) g.ops.push({ label: label || op.id || '—', cambios });
+    clearTimeout(g.timer);
+    g.timer = setTimeout(() => AA.volcar(key), 3300);
+  } catch (e) {}
+};
+AA.volcar = (key) => {
+  const g = AA.grupos.get(key); if (!g) return;
+  AA.grupos.delete(key); clearTimeout(g.timer);
+  try {
+    const uid = _aaQuien(g.quien);
+    const lim = Date.now() - 40000; AA.explicit = AA.explicit.filter((e) => e.t >= lim);
+    if (AA.explicit.some((e) => e.user === uid && e.t >= g.t0 - 2500 && e.t <= g.t1 + 3500)) return;   // ya la describió una línea de las de siempre
+    const v = _aaVerbo[g.accion], m = g.meta;
+    const lineas = g.ops.map((o) => o.label + (o.cambios ? ` (${o.cambios})` : ''));
+    let det = g.n === 1
+      ? `Se ${v[0]} ${m.n}: ${g.ops[0].label}${g.ops[0].cambios ? ' — ' + g.ops[0].cambios : ''}`
+      : `Se ${v[1]} ${g.n} ${m.np}: ${lineas.slice(0, 6).join('; ')}${g.n > 6 ? ` … (+${g.n - 6} más)` : ''}`;
+    if (g.desde && g.desde.m && g.desde.m !== m.m) det += ` · Hecho desde: ${g.desde.m}${g.desde.s ? ' › ' + g.desde.s : ''}`;
+    logAuditoria(g.quien, m.m, g.accion, det.slice(0, 1800), { area: m.a, origen: 'auto' });
+  } catch (e) {}
+};
+// Envoltorios de la base de datos: hacen EXACTAMENTE lo mismo que los originales (devuelven lo mismo) y solo avisan a la red automática.
+const setDoc = (ref, data, opts) => { let c = null; try { c = AA.preparar(opts && opts.merge ? 'merge' : 'set', ref); } catch (e) {} const p = opts === undefined ? _fsSetDoc(ref, data) : _fsSetDoc(ref, data, opts); try { AA.escritura(c, data, p); } catch (e) {} return p; };
+const addDoc = (ref, data) => { let c = null; try { c = AA.preparar('add', ref); } catch (e) {} const p = _fsAddDoc(ref, data); try { AA.escritura(c, data, p); } catch (e) {} return p; };
+const updateDoc = (ref, ...rest) => { let c = null; try { c = AA.preparar('update', ref); } catch (e) {} const p = _fsUpdateDoc(ref, ...rest); try { AA.escritura(c, typeof rest[0] === 'string' ? { [rest[0]]: rest[1] } : rest[0], p); } catch (e) {} return p; };
+const deleteDoc = (ref) => { let c = null; try { c = AA.preparar('delete', ref); } catch (e) {} const p = _fsDeleteDoc(ref); try { AA.escritura(c, null, p); } catch (e) {} return p; };
+const writeBatch = (...args) => {
+  const b = _fsWriteBatch(...args);
+  const ops = [];
+  const w = {
+    set: (ref, data, opts) => { try { ops.push({ data, c: AA.preparar(opts && opts.merge ? 'merge' : 'set', ref) }); } catch (e) {} if (opts === undefined) b.set(ref, data); else b.set(ref, data, opts); return w; },
+    update: (ref, ...rest) => { try { ops.push({ data: typeof rest[0] === 'string' ? { [rest[0]]: rest[1] } : rest[0], c: AA.preparar('update', ref) }); } catch (e) {} b.update(ref, ...rest); return w; },
+    delete: (ref) => { try { ops.push({ data: null, c: AA.preparar('delete', ref) }); } catch (e) {} b.delete(ref); return w; },
+    commit: () => { const p = b.commit(); try { AA.lote(ops, p); } catch (e) {} return p; },
+  };
+  return w;
+};
+// Lecturas en vivo: además de entregar los datos a quien los pidió, se guarda la última lectura para saber qué había antes de una edición.
+const onSnapshot = (ref, ...rest) => {
+  try {
+    const i = rest.findIndex((x) => typeof x === 'function');
+    if (i >= 0) {
+      const cb = rest[i];
+      rest = rest.slice();
+      rest[i] = (snap, ...r) => { try { AA.alimentar(ref, snap); } catch (e) {} return cb(snap, ...r); };
+    } else if (rest[0] && typeof rest[0].next === 'function') {
+      const o = rest[0];
+      rest = [Object.assign({}, o, { next: (snap, ...r) => { try { AA.alimentar(ref, snap); } catch (e) {} return o.next(snap, ...r); } })];
+    }
+  } catch (e) {}
+  return _fsOnSnapshot(ref, ...rest);
+};
+
+// ── «Fecha de registro» en el formulario de retenciones de clientes (Registrar Retención y Otras Retenciones) ──
+// La fecha que se ve en el listado: la elegida; si la retención es de antes de este campo, el día en que se cargó (sin inventar nada si no hay ninguno)
+const fechaRegistroMostrar = (d) => _soloFechaISO(d && d.fechaRegistro) || fechaGuardadoDoc(d);
+const _fechaDMA = (f) => (f ? String(f).substring(0, 10).split('-').reverse().join('/') : '');
+const REG_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+function CampoFechaRegistro({ valor, esEdicion, docCargado, onCambio }) {
+  const hoy = getTodayDate();
+  const elegida = _soloFechaISO(valor);
+  const antigua = !!esEdicion && !elegida;            // retención cargada antes de que existiera este campo
+  const cargada = fechaGuardadoDoc(docCargado);
+  const mostrar = elegida || (esEdicion ? cargada : hoy);
+  const mesAnterior = !antigua && !!mostrar && mostrar.substring(0, 7) < hoy.substring(0, 7);
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-1">
+      <label className="text-[10px] font-black text-emerald-800 uppercase block">Fecha de registro (cuenta para las Comisiones)</label>
+      <input type="date" aria-label="Fecha de registro de la retención" max={hoy} value={mostrar || ''}
+        onChange={e => { const v = e.target.value; if (v) onCambio(v); }}
+        className="w-full border-2 border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-emerald-500 bg-white" />
+      <p className="text-[9px] text-emerald-700 leading-snug">Es el mes y el día en que esta retención cuenta para cerrar la NE y pagar su comisión de cobranza.</p>
+      {antigua && <p className="text-[9px] text-amber-700 font-bold leading-snug">Esta retención se cargó antes de existir este campo{cargada ? ` (se cargó el ${_fechaDMA(cargada)})` : ''}: para las Comisiones cuenta desde el {_fechaDMA(RET_FECHA_CORTE_COM)}. Si eliges una fecha, se usará esa.</p>}
+      {mesAnterior && <p className="text-[9px] text-amber-700 font-bold leading-snug">⚠ Es de un mes anterior: afectará las comisiones de {REG_MESES[(parseInt(mostrar.substring(5, 7), 10) || 1) - 1]} de {mostrar.substring(0, 4)}.</p>}
+    </div>
+  );
+}
 // Texto de las líneas de un pago o cobro (método · cuenta · monto en su moneda · referencia) para «Auditoría de Sistema».
 const audLineasPago = (lineas, aNum = parseNum) => (lineas||[]).map(l => [
   l.metodo||'', l.anticipoId ? `anticipo ${l.anticipoId}` : (l.cuentaNombre||''),
@@ -25985,6 +26468,7 @@ const ccAjAvisoCorregido = (aj) => (aj && aj.corregidoExcel) ? `\n\n⚠ «${aj.n
 
 function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, appUser }) {
   const [sub, setSub] = useState(initialSub||''); // '', 'banco', 'caja', 'ret_cli'
+  useAudAcceso(appUser,'Contabilidad','Comprobantes Contables'+((sub||initialSub)?' › '+(CC_SUB_NOMBRES[sub||initialSub]||(sub||initialSub)):''));
   const [movBanco, setMovBanco] = useState([]);
   const [asientosCC, setAsientosCC] = useState([]);
   const [movCaja, setMovCaja] = useState([]);
@@ -32416,7 +32900,7 @@ function App() {
   };
   const [auditoriaEventos, setAuditoriaEventos] = useState([]);
   useEffect(()=>{
-    const u = onSnapshot(getColRef('auditoria_eventos'), s=>setAuditoriaEventos(s.docs.map(d=>d.data())));
+    const u = onSnapshot(getColRef('auditoria_eventos'), s=>{ AUD_SALUD.lecturaError=''; setAuditoriaEventos(s.docs.map(d=>d.data())); }, e=>{ AUD_SALUD.lecturaError=_audErrTxt(e); _audAviso(); });
     return ()=>u();
   },[]);
   const [dispositivosAutorizados, setDispositivosAutorizados] = useState([]);
@@ -33349,6 +33833,7 @@ function App() {
     // Fecha en que la NE quedó en cero = la del ÚLTIMO movimiento que la cerró: cobros (su fecha, como siempre), retenciones y NC
     // (la fecha en que se REGISTRARON en el sistema, NO la del comprobante: puede ser de un mes anterior y la comisión se paga en
     // otro mes). Nunca anterior al 01/11/2026: lo que ya estaba registrado de meses cerrados entra en noviembre, sin reabrirlos.
+    // Una retención con «Fecha de registro» elegida al cargarla cuenta con ESA fecha (mes y día) tal cual, aunque sea de un mes anterior: es lo que la persona decidió.
     const FECHA_CORTE_CIERRE = '2026-11-01';
     const _p2 = (n) => String(n).padStart(2, '0');
     const _fechaRegistro = (d, respaldo) => {
@@ -33361,8 +33846,11 @@ function App() {
     };
     const fechaCierre = (ne, fechasCobros) => {
       const cands = (fechasCobros||[]).filter(Boolean).map(f => String(f).substring(0, 10));
+      let hayFechaElegida = false;
       (_retsPorNE.get(ne.id)||[]).forEach(r => {
         if (r.tipo === 'IGTF' || !(r._montoUSD > 0.005)) return;
+        const fElegida = _soloFechaISO(r.fechaRegistro);
+        if (fElegida) { cands.push(fElegida); hayFechaElegida = true; return; }
         const f = _fechaRegistro(r, r.fechaComprobante||r.fecha); if (f) cands.push(f);
       });
       _ncsVistas(ne).forEach(n => {
@@ -33371,7 +33859,7 @@ function App() {
         const f = _fechaRegistro(n, n.fecha); if (f) cands.push(f);
       });
       let f = cands.sort().slice(-1)[0] || '';
-      if (f && f < FECHA_CORTE_CIERRE) f = FECHA_CORTE_CIERRE;
+      if (f && f < FECHA_CORTE_CIERRE && !hayFechaElegida) f = FECHA_CORTE_CIERRE;
       return f;
     };
     // El motor se reconstruye cuando cambian los datos, así que dentro de una misma versión de los datos el saldo de cada NE no cambia: se calcula una vez.
@@ -33532,6 +34020,11 @@ function App() {
   const guardarOtraRet=async()=>{
     const {facturaId,fechaComprobante,tipoId}=otraRetForm;
     const esIGTF=tipoId==='IGTF';
+    // «Fecha de registro» (cuenta para las Comisiones): la elegida; nueva = hoy; una de antes de este campo que se edita sin tocarla no la recibe; el IGTF no la lleva
+    const _hoyReg=getTodayDate();
+    const _fRegEleg=esIGTF?'':_soloFechaISO(otraRetForm.fechaRegistro);
+    if(_fRegEleg>_hoyReg) return setDialog({title:'Fecha de registro inválida',text:'La «Fecha de registro» no puede ser posterior a hoy.',type:'alert'});
+    const fechaRegistroFinal=esIGTF?'':(_fRegEleg||(otraRetForm._editId?'':_hoyReg));
     // IGTF: número de comprobante interno, autogenerado — ya no se escribe a mano. Mismo formato
     // (AAAAMM00NNNNNN) que el correlativo de Retención IVA (Impuestos → Configuración →
     // Numeración de Comprobantes), pero con su propia secuencia independiente. El mes/año sale de
@@ -33627,6 +34120,7 @@ function App() {
         periodoLibroMes:esIGTF?(otraRetForm.periodoLibroMes||(fechaComprobante||'').substring(0,7)):'',
         periodoLibroQ:esIGTF?(otraRetForm.periodoLibroQ||'1'):'',
         observaciones:otraRetForm.observaciones||'',
+        ...(fechaRegistroFinal?{fechaRegistro:fechaRegistroFinal}:{}),
         timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
       });
       }
@@ -33680,7 +34174,7 @@ function App() {
       await batch.commit();
       if(esIGTF&&!esEdicion) logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`IGTF percibido REGISTRADO (ingreso en Banco/Caja): $${formatNum(montoUSD)} (Bs.${formatNum(montoBs)}) · Fac.: ${facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', ')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'} · Cuenta: ${(cuentasBanco||[]).find(c=>c.id===otraRetForm.cuentaBancariaId)?.banco||otraRetForm.cuentaBancariaNombre||'—'} · Ref: ${otraRetForm.referencia||'—'}`);
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
-      if(!(esIGTF&&!esEdicion)) logAuditoriaSeguro(appUser,'Libro de Ventas',esEdicion?'EDICIÓN':'CREACIÓN',()=>`Retención ${tipo.label} ${esEdicion?'EDITADA':'REGISTRADA'}: Comprobante ${nroComprobante} · Bs.${formatNum(montoBs)} ($${formatNum(montoUSD)}) · Fac.: ${(facsSeleccionadas.length?facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', '):'')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'} · Fecha ${fechaComprobante}`);
+      if(!(esIGTF&&!esEdicion)) logAuditoriaSeguro(appUser,'Libro de Ventas',esEdicion?'EDICIÓN':'CREACIÓN',()=>`Retención ${tipo.label} ${esEdicion?'EDITADA':'REGISTRADA'}: Comprobante ${nroComprobante} · Bs.${formatNum(montoBs)} ($${formatNum(montoUSD)}) · Fac.: ${(facsSeleccionadas.length?facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', '):'')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'} · Fecha ${fechaComprobante}${fechaRegistroFinal?` · Registro ${fechaRegistroFinal}`:''}`);
       setDialog({title:esEdicion?'✅ Actualizada':'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}${esIGTF&&!esEdicion?' — movimiento creado en Banco/Caja':''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -34323,6 +34817,7 @@ function App() {
   // ── Auditoría module state ──
   const [auditSearch, setAuditSearch] = useState('');
   const [auditModuleFilter, setAuditModuleFilter] = useState('Todos');
+  const [auditSubFilter, setAuditSubFilter] = useState('Todos');
   const [auditTipoFilter, setAuditTipoFilter] = useState('Todos');
   const [auditDate, setAuditDate] = useState('');
   const [auditMes, setAuditMes] = useState('');
@@ -34803,6 +35298,51 @@ function App() {
     doDelete();
   }, [requirements, appUser]);
 
+  // ── Auditoría total (a5): quién entra a cada portal / módulo / submódulo, quién entra y quién sale del sistema ──
+  AA.user = appUser || null;
+  const [audTick, setAudTick] = useState(0);
+  useEffect(() => {
+    // La pantalla «Auditoría de Sistema» se redibuja cuando cambia el estado del registro (solo mientras está abierta)
+    if (activeTab !== 'auditoria') return;
+    const f = () => setAudTick(t => t + 1);
+    _audOyentes.add(f);
+    return () => { _audOyentes.delete(f); };
+  }, [activeTab]);
+  useEffect(() => {
+    if (!appUser) { AA.kPortal = ''; AA.kPant = ''; AA.pantalla = null; return; }
+    const t = setTimeout(() => {
+      try {
+        if (selectedPortal && AA.kPortal !== selectedPortal) { AA.kPortal = selectedPortal; audAcceso(appUser, 'Sistema', 'Portales', `Entró al portal ${AA_PORTALES[selectedPortal] || selectedPortal}`); }
+        if (!selectedPortal) AA.kPortal = '';
+        const p = audPantalla({ activeTab, selectedPortal, ventasView, prodView, invView, formulasView, showReportType, resenaTab, pvView, erView });
+        if (p) { const kp = `${p.m}|${p.s}`; AA.pantalla = p; if (AA.kPant !== kp) { AA.kPant = kp; audAcceso(appUser, p.m, p.s); } }
+        else { AA.kPant = ''; if (!activeTab || activeTab === 'home') AA.pantalla = null; }
+      } catch (e) {}
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [appUser?.username, selectedPortal, activeTab, ventasView, prodView, invView, formulasView, showReportType, resenaTab, pvView, erView]);
+  useEffect(() => {
+    // Las líneas que no se pudieron guardar (sin red, permisos…) se reintentan solas
+    if (!fbUser) return;
+    audReintentar().catch(() => {});
+    const t = setInterval(() => { audReintentar().catch(() => {}); }, 60000);
+    return () => clearInterval(t);
+  }, [fbUser]);
+  useEffect(() => {
+    // Cerrar la pestaña o el navegador también es salir del sistema: queda anotado en este equipo y se guarda en cuanto se vuelve a abrir (recargar la página no cuenta)
+    if (!appUser) return;
+    const alCerrar = (e) => {
+      try {
+        if ((e && e.persisted) || !AA.user) return;
+        const u = AA.user;
+        const ev = { id: `AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`, fecha: getTodayDate(), ts: Date.now(), usuario: u.name||u.username||'Usuario', rol: u.role||'—', modulo: 'Sistema', tipo: 'SALIDA', detalle: 'Salió del sistema (cerró la pestaña o el navegador sin pulsar «Salir»)', area: 'Sesión', origen: 'acceso' };
+        localStorage.setItem(AUD_SAL_KEY, JSON.stringify(ev));
+      } catch (x) {}
+    };
+    window.addEventListener('pagehide', alCerrar);
+    return () => window.removeEventListener('pagehide', alCerrar);
+  }, [appUser?.username]);
+
   // Heartbeat: update lastPing every 30 seconds to keep session alive
   useEffect(() => {
     if (!appUser || appUser.role === 'Master') return;
@@ -34855,7 +35395,10 @@ function App() {
       // Recreate in Firestore — sin await para no bloquear login
       setDoc(getDocRef('users','Administrador'), {...foundUser, timestamp: Date.now()}).catch(()=>{});
     }
-    if (!foundUser) return setLoginError('Credenciales incorrectas. Intente nuevamente.');
+    if (!foundUser) {
+      try { logAuditoria({ name: '(sin sesión iniciada)', role: '—' }, 'Sistema', 'ALERTA', `Intento de inicio de sesión FALLIDO con el usuario «${String(user).slice(0, 60)}»`, { area: 'Sesión', origen: 'acceso' }); } catch (e) {}
+      return setLoginError('Credenciales incorrectas. Intente nuevamente.');
+    }
     // Dispositivos autorizados — Master siempre puede entrar (si no, nadie podría aprobar equipos).
     if (foundUser.restringirDispositivo && foundUser.role !== 'Master') {
       const deviceId = getDeviceId();
@@ -34873,6 +35416,7 @@ function App() {
               fechaSolicitud: Date.now(),
             });
           }
+          try { logAuditoria(foundUser, 'Sistema', 'ALERTA', `Intento de entrar desde un equipo NO autorizado (${getDeviceLabel()})`, { area: 'Sesión', origen: 'acceso' }); } catch (e) {}
           return setLoginError('Este equipo no está autorizado para tu usuario. Se notificó al administrador — inténtalo de nuevo cuando sea aprobado en Dispositivos Autorizados.');
         }
       } catch(e) {
@@ -34902,6 +35446,8 @@ function App() {
       module: 'Sistema', details: 'Inicio de sesión',
       timestamp: Date.now(), date: getTodayDate()
     }).catch(()=>{});
+    // Auditoría: quién entró (y lo que corre solo en los primeros segundos no se atribuye a la persona)
+    try { AA.loginAt = Date.now(); AA.user = foundUser; AA.kPortal = ''; AA.kPant = ''; logAuditoria(foundUser, 'Sistema', 'ACCESO', 'Inicio de sesión', { area: 'Sesión', origen: 'acceso' }); } catch (e) {}
     setAppUser({ ...foundUser, _sessionId });
     setLoginError('');
   };
@@ -35841,7 +36387,7 @@ function App() {
         } else {
           // Update existing doc
           for (const docSnap of snap.docs) {
-            await import('firebase/firestore').then(({updateDoc}) => updateDoc(docSnap.ref, { nombre }));
+            await updateDoc(docSnap.ref, { nombre });
           }
         }
         setDialog({ title: '✅ Actualizado', text: `Depósito renombrado a "${nombre}".`, type: 'alert' });
@@ -46834,7 +47380,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             <td className="px-2 py-1.5 text-center text-[10px]">{r.vencimiento||'—'}</td>
                             <td className="px-2 py-1.5 text-center">
                               <input type="date" value={r.fechaPago||''}
-                                title={r.fechaPorCierre?'Fecha automática: la NE quedó en cero al registrarse la retención / nota (igual que en Cuentas por Cobrar). Puedes cambiarla a mano.':undefined}
+                                title={r.fechaPorCierre?'Fecha automática: la NE quedó en cero con la retención / nota (la «Fecha de registro» de la retención; igual que en Cuentas por Cobrar). Puedes cambiarla a mano.':undefined}
                                 onChange={e=>updCobranza(i,'fechaPago',e.target.value)}
                                 className="border-2 border-orange-200 rounded-lg px-1 py-0.5 text-[10px] w-28 focus:border-orange-400 outline-none"/>
                             </td>
@@ -55336,6 +55882,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       value={otraRetForm.observaciones||''}
                       onChange={e=>setOtraRetForm(f=>({...f,observaciones:e.target.value}))}/>
                   </div>
+                  {otraRetForm.tipoId!=='IGTF'&&<div className="col-span-2"><CampoFechaRegistro valor={otraRetForm.fechaRegistro} esEdicion={!!otraRetForm._editId} docCargado={otraRetForm} onCambio={v=>setOtraRetForm(f=>({...f,fechaRegistro:v}))}/></div>}
                 </div>
               </div>
               <div className="px-5 pb-5 flex justify-end gap-3">
@@ -55743,6 +56290,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const handleSaveRetencion=async()=>{
             if(!retForm.facturaId||!retForm.nroRetencion||!retForm.fechaComprobante||!retForm.montoRetenido)
               return setDialog({title:'Datos incompletos',text:'Completa todos los campos requeridos.',type:'alert'});
+            // «Fecha de registro» (cuenta para las Comisiones): la elegida; en una retención nueva, hoy; en una de antes de este campo que no se toca, no se agrega
+            const _hoyReg=getTodayDate();
+            const _fRegEleg=_soloFechaISO(retForm.fechaRegistro);
+            if(_fRegEleg>_hoyReg) return setDialog({title:'Fecha de registro inválida',text:'La «Fecha de registro» no puede ser posterior a hoy.',type:'alert'});
             try{
               const isEditing=!!(retForm.id||retForm._fsId);
               const id=isEditing?(retForm.id||retForm._fsId):`RET-${Date.now()}-${Math.random().toString(36).substr(2,8)}`;
@@ -55763,6 +56314,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 clientRif:_clientRifRet,
                 tasa:_tasaRet,
                 periodoLibroMes:retForm.periodoLibroMes||(retForm.fechaComprobante||'').substring(0,7)||'',
+                ...((_fRegEleg||!isEditing)?{fechaRegistro:_fRegEleg||_hoyReg}:{}),
                 ...(_notaSel?{notaId:_notaSel.id,notaTipo:_notaSel.tipo||'',notaNro:_notaSel.nroDocumento||'',notaNroControl:_notaSel.nroControl||'',
                   montoRetenido:(_notaSel.tipo==='NC'?-1:1)*Math.abs(parseNum(retForm.montoRetenido||0))}:{}),
                 // La nota ya no se encuentra (borrada) pero la retención sigue siendo de una nota: el signo se fuerza con el tipo guardado
@@ -55774,7 +56326,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               }else{
                 await setDoc(getDocRef('retencionesClientes',id),{...retDataClean,id,timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'});
               }
-              logAuditoriaSeguro(appUser,'Libro de Ventas',isEditing?'EDICIÓN':'CREACIÓN',()=>`Retención de cliente ${isEditing?'EDITADA':'REGISTRADA'}: ${retForm.tipoRetencion||'IVA'} · Comprobante ${retForm.nroRetencion} · Bs.${formatNum(parseNum(retDataToSave.montoRetenido||0))} · Fac.: ${_selInv?.nroFiscal||_selInv?.documento||retForm._manualNroFiscal||'—'} · Cliente: ${_selInv?.clientName||retForm._manualCliente||retClientSearch||'—'}${_notaSel?` · Sobre ${_notaSel.tipo==='NC'?'nota de crédito':'nota de débito'} ${_notaSel.nroDocumento||_notaSel.id}`:''} · Fecha ${retForm.fechaComprobante}`);
+              logAuditoriaSeguro(appUser,'Libro de Ventas',isEditing?'EDICIÓN':'CREACIÓN',()=>`Retención de cliente ${isEditing?'EDITADA':'REGISTRADA'}: ${retForm.tipoRetencion||'IVA'} · Comprobante ${retForm.nroRetencion} · Bs.${formatNum(parseNum(retDataToSave.montoRetenido||0))} · Fac.: ${_selInv?.nroFiscal||_selInv?.documento||retForm._manualNroFiscal||'—'} · Cliente: ${_selInv?.clientName||retForm._manualCliente||retClientSearch||'—'}${_notaSel?` · Sobre ${_notaSel.tipo==='NC'?'nota de crédito':'nota de débito'} ${_notaSel.nroDocumento||_notaSel.id}`:''} · Fecha ${retForm.fechaComprobante}${retDataToSave.fechaRegistro?` · Registro ${retDataToSave.fechaRegistro}`:''}`);
               // Si se vinculó una ND (retención pendiente) desde el modo manual, esta retención YA
               // llegó — hay que CERRARLA de la misma forma en que el resto del sistema mide lo
               // cobrado de una ND: un cobros_cxc con neId='ND-'+id (así lo buscan _manualNCPorCliente
@@ -56852,7 +57404,7 @@ ${resumen}
                             <td className="py-2 px-3">{(()=>{const t=ret.tipoExtra?(ret.tipoLabel||ret.tipo||'Otra'):(ret.tipoRetencion||'IVA');
                               const c={IVA:'bg-blue-100 text-blue-700',ISLR:'bg-purple-100 text-purple-700',Municipal:'bg-amber-100 text-amber-700',Otro:'bg-gray-200 text-gray-700'}[t]||(ret.tipoExtra?'bg-fuchsia-100 text-fuchsia-700':'bg-gray-200 text-gray-700');
                               return <span className={`px-2 py-0.5 rounded font-black text-[9px] ${c}`}>{t}</span>;})()}</td>
-                            <td className="py-2 px-3">{ret.fechaComprobante}</td>
+                            <td className="py-2 px-3">{ret.fechaComprobante}{ret.tipo!=='IGTF'&&fechaRegistroMostrar(ret)&&<div className={`text-[8px] font-bold whitespace-nowrap ${ret.fechaRegistro?'text-emerald-700':'text-gray-400'}`} title={ret.fechaRegistro?'Fecha de registro: el mes y el día en que esta retención cuenta para las Comisiones':`Día en que se cargó (anterior al campo «Fecha de registro»): para las Comisiones cuenta desde el ${_fechaDMA(RET_FECHA_CORTE_COM)}`}>Reg. {_fechaDMA(fechaRegistroMostrar(ret))}</div>}</td>
                             <td className={`py-2 px-3 font-bold ${retNeDoc==='⚠️ No vinculada'?'text-red-600 text-[10px]':'text-indigo-600'}`}>{retNeDoc}</td>
                             <td className="py-2 px-3 font-bold text-orange-600 flex items-center gap-1">
                               {nroFac}{ret.notaNro&&<span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[8px] font-black">{ret.notaTipo||'Nota'} {ret.notaNro}</span>}
@@ -56982,7 +57534,7 @@ ${resumen}
                                   setRetForm({...ret});setRetFactManual((ret.facturaId||'').startsWith('MANUAL-'));setRetBusqFact(inv?.nroFiscal||'');setShowRetModal(true);
                                 }
                               }} className="p-1.5 bg-blue-50 text-blue-500 rounded hover:bg-blue-500 hover:text-white"><Edit size={13}/></button>
-                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await archivarEnPapelera('retencionesClientes',ret.id,ret,`Retención ${ret.nroRetencion}`,appUser);await deleteDoc(getDocRef('retencionesClientes',ret.id));logAuditoriaSeguro(appUser,'Libro de Ventas','ELIMINACIÓN',()=>`Retención de cliente ELIMINADA: ${ret.tipoLabel||ret.tipoRetencion||ret.tipo||'IVA'} · Comprobante ${ret.nroRetencion||'—'} · Bs.${formatNum(parseNum(ret.montoRetenido||0))} · Fac.: ${inv?.nroFiscal||ret.nroFiscal||ret._manualNroFiscal||'—'} · Cliente: ${inv?.clientName||ret.clientName||ret._manualCliente||'—'}${ret.fechaComprobante?` · Fecha ${ret.fechaComprobante}`:''}`);setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
+                              <button onClick={()=>setDialog({title:'Eliminar retención',text:`¿Eliminar comprobante ${ret.nroRetencion}?`,type:'confirm',onConfirm:async()=>{try{await archivarEnPapelera('retencionesClientes',ret.id,ret,`Retención ${ret.nroRetencion}`,appUser);await deleteDoc(getDocRef('retencionesClientes',ret.id));logAuditoriaSeguro(appUser,'Libro de Ventas','ELIMINACIÓN',()=>`Retención de cliente ELIMINADA: ${ret.tipoLabel||ret.tipoRetencion||ret.tipo||'IVA'} · Comprobante ${ret.nroRetencion||'—'} · Bs.${formatNum(parseNum(ret.montoRetenido||0))} · Fac.: ${inv?.nroFiscal||ret.nroFiscal||ret._manualNroFiscal||'—'} · Cliente: ${inv?.clientName||ret.clientName||ret._manualCliente||'—'}${ret.fechaComprobante?` · Fecha ${ret.fechaComprobante}`:''}${_soloFechaISO(ret.fechaRegistro)?` · Registro ${_soloFechaISO(ret.fechaRegistro)}`:''}`);setDialog({title:'✅ Eliminada',text:'',type:'alert'});}catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}}})} className="p-1.5 bg-red-50 text-red-500 rounded hover:bg-red-500 hover:text-white"><Trash2 size={13}/></button>
                             </div></td>
                           </tr>);
                         });
@@ -57195,6 +57747,7 @@ ${resumen}
                           </div>
                           </>);
                         })()}
+                        <CampoFechaRegistro valor={retForm.fechaRegistro} esEdicion={!!(retForm.id||retForm._fsId)} docCargado={retForm} onCambio={v=>setRetForm(f=>({...f,fechaRegistro:v}))}/>
                       </div>
                       <div className="flex gap-3 pt-2">
                         <button onClick={()=>{setShowRetModal(false);setRetNDBusq('');}} className="flex-1 py-2.5 border-2 border-gray-200 rounded-xl font-black text-xs hover:bg-gray-100">Cancelar</button>
@@ -66403,7 +66956,7 @@ ${resumen}
     const allLogs = (() => {
       const logs = [];
       (invoices||[]).forEach(inv=>{
-        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.user||'No registrado',rol:rolDe(inv.user),modulo:'Ventas',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}${inv.vendedor?' — Vendedor: '+inv.vendedor:''}`,ts:inv.timestamp||0});
+        logs.push({id:`INV-${inv.id}`,fecha:inv.fecha||'',usuario:inv.user||'No registrado',rol:rolDe(inv.user),modulo:'Ventas',area:'Facturación',tipo:'CREACIÓN',detalle:`Factura ${inv.documento||inv.id} — Cliente: ${inv.clientName||'—'} — Total: $${formatNum(parseNum(inv.total||inv.montoBase||0))}${inv.vendedor?' — Vendedor: '+inv.vendedor:''}`,ts:inv.timestamp||0});
       });
       (invMovements||[]).forEach(m=>{
         const t={'ENTRADA':'CREACIÓN','SALIDA':'EDICIÓN','AJUSTE':'EDICIÓN','AUTOCONSUMO':'EDICIÓN'}[m.type]||'EDICIÓN';
@@ -66420,20 +66973,31 @@ ${resumen}
       // grabados en el momento en que ocurren, a diferencia del resto de este log (arriba), que
       // se infiere de los datos que existen ahora y por eso nunca puede mostrar una eliminación.
       (auditoriaEventos||[]).forEach(ev=>{
-        logs.push({id:ev.id, fecha:ev.fecha||'', usuario:ev.usuario||'—', rol:ev.rol||'—', modulo:ev.modulo||'—', tipo:ev.tipo||'—', detalle:ev.detalle||'', ts:ev.ts||0});
+        logs.push({id:ev.id, fecha:ev.fecha||'', usuario:ev.usuario||'—', rol:ev.rol||'—', modulo:ev.modulo||'—', area:ev.area||'', tipo:ev.tipo||'—', detalle:ev.detalle||'', ts:ev.ts||0});
       });
-      return logs.sort((a,b)=>b.ts-a.ts||(b.fecha||'').localeCompare(a.fecha||''));
+      // Entradas y salidas de antes de esta versión (se guardaban aparte, en «actividad de usuarios»): se muestran sin repetir las que esta versión ya registró
+      const _sesNuevas=(auditoriaEventos||[]).filter(ev=>ev&&ev.area==='Sesión');
+      (userActivityLog||[]).forEach(a=>{
+        if(!a||(a.action!=='LOGIN'&&a.action!=='LOGOUT')) return;
+        const t=Number(a.timestamp)||0; const quien=String(a.name||a.username||'').trim().toUpperCase();
+        if(_sesNuevas.some(ev=>String(ev.usuario||'').trim().toUpperCase()===quien&&Math.abs((ev.ts||0)-t)<20000)) return;
+        const f=a.date||a.createdAt||(t?new Date(t).toISOString().slice(0,10):'');
+        logs.push({id:`UA-${a.id}`,fecha:f,usuario:a.name||a.username||'—',rol:rolDe(a.name||a.username),modulo:'Sistema',area:'Sesión',tipo:a.action==='LOGIN'?'ACCESO':'SALIDA',detalle:a.action==='LOGIN'?'Inicio de sesión':(a.details||'Cierre de sesión'),ts:t});
+      });
+      return logs.map(l=>{ const n=audNormalizar(l.modulo,l.area,l.detalle); return {...l,modulo:n.m,area:n.s}; }).sort((a,b)=>b.ts-a.ts||(b.fecha||'').localeCompare(a.fecha||''));
     })();
 
-    const modulos = ['Todos',...Array.from(new Set(['Bancos & Tesorería',...allLogs.map(l=>l.modulo)]))]; // «Bancos & Tesorería» siempre se puede elegir, aunque todavía no tenga registros
+    const modulos = ['Todos',...Array.from(new Set([...AUD_MODULOS_TODOS,...allLogs.map(l=>l.modulo)]))]; // todos los módulos se pueden elegir, aunque todavía no tengan registros
+    const subModulos = ['Todos',...Array.from(new Set(allLogs.filter(l=>auditModuleFilter==='Todos'||l.modulo===auditModuleFilter).map(l=>l.area).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'es'))];
     const logsBanco = allLogs.filter(l=>l.modulo==='Bancos & Tesorería');
     const bancoDesde = logsBanco.reduce((m,l)=>(l.fecha&&(!m||l.fecha<m))?l.fecha:m,'');
-    const tiposDisp = ['Todos','CREACIÓN','EDICIÓN','ELIMINACIÓN','ACCESO','SALIDA','EXPORTACIÓN','ALERTA'];
+    const tiposDisp = ['Todos','CREACIÓN','EDICIÓN','ELIMINACIÓN','ANULACIÓN','CORRECCIÓN','ACCESO','SALIDA','EXPORTACIÓN','ALERTA'];
 
     const filtered = allLogs.filter(l=>{
       const s=(auditSearch||'').toUpperCase();
-      if(s && !(l.usuario||'').toUpperCase().includes(s) && !(l.detalle||'').toUpperCase().includes(s) && !(l.tipo||'').toUpperCase().includes(s) && !(l.modulo||'').toUpperCase().includes(s)) return false;
+      if(s && !(l.usuario||'').toUpperCase().includes(s) && !(l.detalle||'').toUpperCase().includes(s) && !(l.tipo||'').toUpperCase().includes(s) && !(l.modulo||'').toUpperCase().includes(s) && !(l.area||'').toUpperCase().includes(s) && !(l.rol||'').toUpperCase().includes(s)) return false;
       if(auditModuleFilter!=='Todos' && l.modulo!==auditModuleFilter) return false;
+      if(auditSubFilter!=='Todos' && l.area!==auditSubFilter) return false;
       if(auditTipoFilter!=='Todos' && l.tipo!==auditTipoFilter) return false;
       if(auditDate && !(l.fecha||'').startsWith(auditDate)) return false;
       if(auditMes && (l.fecha||'').substring(5,7)!==auditMes) return false;
@@ -66446,10 +67010,23 @@ ${resumen}
 
     const tipoStyle = (t) => ({'CREACIÓN':{c:'text-green-700',bg:'bg-green-50',b:'border-green-200'},'EDICIÓN':{c:'text-orange-600',bg:'bg-orange-50',b:'border-orange-200'},'ELIMINACIÓN':{c:'text-red-700',bg:'bg-red-50',b:'border-red-200'},'ACCESO':{c:'text-blue-700',bg:'bg-blue-50',b:'border-blue-200'},'SALIDA':{c:'text-gray-600',bg:'bg-gray-100',b:'border-gray-200'},'EXPORTACIÓN':{c:'text-purple-700',bg:'bg-purple-50',b:'border-purple-200'},'ALERTA':{c:'text-red-700',bg:'bg-red-100',b:'border-red-300'}}[t]||{c:'text-gray-700',bg:'bg-gray-50',b:'border-gray-200'});
 
+    // Prueba del registro: guarda una línea de verdad y dice si la base de datos la aceptó
+    const probarAud = async () => {
+      const u = appUser||{};
+      const ev = { id:`AUD-${Date.now()}-${Math.random().toString(36).slice(2,8)}`, fecha:getTodayDate(), ts:Date.now(), usuario:u.name||u.username||'Usuario', rol:u.role||'—', modulo:'Configuración', tipo:'ACCESO', detalle:'Prueba del registro de auditoría (botón «Probar registro»)', area:'Auditoría de Sistema', origen:'prueba' };
+      const ok = await audGuardar(ev);
+      setDialog(ok
+        ? {title:'✅ El registro funciona',text:'La línea de prueba se guardó. Debe aparecer arriba en la lista (Módulo «Configuración»). Todo lo que se cree, edite o elimine en cualquier módulo queda registrado igual.',type:'alert'}
+        : {title:'❌ No se pudo guardar',text:`La base de datos rechazó el registro: ${AUD_SALUD.ultimoError||'sin detalle'}. Quedó pendiente en este equipo y se reintenta sola; si el problema continúa, hay que revisar los permisos de la colección «auditoria_eventos».`,type:'alert'});
+    };
+    const reintentarAud = async () => {
+      const n = await audReintentar();
+      setDialog({title:n>0?'✅ Reenviados':'Sin cambios',text:n>0?`Se guardaron ${n} línea(s) que estaban pendientes.`:'No se pudo guardar ninguna: la base de datos sigue rechazándolas o no hay red.',type:'alert'});
+    };
     const exportExcel = () => {
       const empresa = settings?.empresaRazonSocial||'SERVICIOS JIRET G&B, C.A.';
-      let html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>th{background:#000;color:#fff;padding:5px;border:1px solid #000}td{border:1px solid #ccc;padding:4px;font-size:10px}</style></head><body><h2>${empresa}</h2><h3>Auditoría de Sistema — ${getTodayDate()}</h3><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Rol</th><th>Módulo</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>`;
-      html+=filtered.map(l=>`<tr><td>${l.fecha||''}</td><td>${l.usuario||''}</td><td>${l.rol||''}</td><td>${l.modulo||''}</td><td>${l.tipo||''}</td><td>${(l.detalle||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td></tr>`).join('');
+      let html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>th{background:#000;color:#fff;padding:5px;border:1px solid #000}td{border:1px solid #ccc;padding:4px;font-size:10px}</style></head><body><h2>${empresa}</h2><h3>Auditoría de Sistema — ${getTodayDate()}</h3><table><thead><tr><th>Fecha</th><th>Hora</th><th>Usuario</th><th>Rol</th><th>Módulo</th><th>Submódulo</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>`;
+      html+=filtered.map(l=>`<tr><td>${l.fecha||''}</td><td>${l.ts>0?new Date(l.ts).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'}):''}</td><td>${l.usuario||''}</td><td>${l.rol||''}</td><td>${l.modulo||''}</td><td>${l.area||''}</td><td>${l.tipo||''}</td><td>${(l.detalle||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td></tr>`).join('');
       html+=`</tbody></table></body></html>`;
       const blob=new Blob(['\uFEFF'+html],{type:'application/vnd.ms-excel'});
       const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Auditoria_${getTodayDate()}.xls`;a.click();
@@ -66504,9 +67081,13 @@ ${resumen}
                 className="w-full pl-9 py-3 border-2 border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-orange-500 bg-white"
                 placeholder="Buscar por usuario, módulo, detalle..."/>
             </div>
-            <select value={auditModuleFilter} onChange={e=>{setAuditModuleFilter(e.target.value);setAuditPage(1);}}
+            <select value={auditModuleFilter} onChange={e=>{setAuditModuleFilter(e.target.value);setAuditSubFilter('Todos');setAuditPage(1);}}
               className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500 bg-white">
               {modulos.map(m=><option key={m} value={m}>{m==='Todos'?'Todos los Módulos':m}</option>)}
+            </select>
+            <select value={auditSubFilter} onChange={e=>{setAuditSubFilter(e.target.value);setAuditPage(1);}}
+              className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500 bg-white">
+              {subModulos.map(m=><option key={m} value={m}>{m==='Todos'?'Todos los Submódulos':m}</option>)}
             </select>
             <select value={auditTipoFilter} onChange={e=>{setAuditTipoFilter(e.target.value);setAuditPage(1);}}
               className="border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-black outline-none focus:border-orange-500 bg-white">
@@ -66521,8 +67102,8 @@ ${resumen}
                 <option key={m2} value={m2}>{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][i]}</option>
               ))}
             </select>
-            {(auditSearch||auditModuleFilter!=='Todos'||auditTipoFilter!=='Todos'||auditDate||auditMes) && (
-              <button onClick={()=>{setAuditSearch('');setAuditModuleFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditMes('');setAuditPage(1);}}
+            {(auditSearch||auditModuleFilter!=='Todos'||auditSubFilter!=='Todos'||auditTipoFilter!=='Todos'||auditDate||auditMes) && (
+              <button onClick={()=>{setAuditSearch('');setAuditModuleFilter('Todos');setAuditSubFilter('Todos');setAuditTipoFilter('Todos');setAuditDate('');setAuditMes('');setAuditPage(1);}}
                 className="px-4 py-2 rounded-xl text-[10px] font-black uppercase bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100">
                 ✕ Limpiar
               </button>
@@ -66534,8 +67115,22 @@ ${resumen}
             {logsBanco.length===0
               ? 'Todavía no hay ninguno: cada ingreso, pago, edición o eliminación NUEVO en Banco queda aquí con el usuario que lo hizo (lo anterior no guardó quién lo hizo). Si ya hizo operaciones y no aparecen, pulse Ctrl+F5 y revise el chip «Debug» (abajo a la izquierda, dentro de Banco).'
               : 'Antes de esa fecha no se guardó quién hizo cada operación. Para verlos: Módulo «Bancos & Tesorería» y «Todos los meses».'}{' '}
-            Las líneas de Ventas, Inventario y Producción se deducen de los datos guardados (no muestran eliminaciones).
+            Las líneas más antiguas de Ventas, Inventario y Producción se deducen de los datos guardados (no muestran eliminaciones); desde la versión {AUD_VERSION} todo lo nuevo —crear, editar, eliminar, entrar y salir— queda registrado en todos los módulos y submódulos.
           </div>
+          {/* Estado del registro de auditoría de esta sesión */}
+          {(()=>{
+            const S=AUD_SALUD; const pend=_audPendLeer().length; const recuperado=S.fail>0&&pend===0&&!S.lecturaError&&S.ultimoOk>=S.ultimoErrorTs; const hayProblema=pend>0||!!S.lecturaError||(S.fail>0&&!recuperado);
+            return (
+              <div className={`px-6 py-2 border-b text-[10px] font-bold leading-relaxed flex flex-wrap items-center gap-x-4 gap-y-1 ${hayProblema?'bg-red-50 border-red-200 text-red-800':'bg-emerald-50 border-emerald-100 text-emerald-900'}`}>
+                <span>🛡 Registro de auditoría — versión <span className="font-black">{AUD_VERSION}</span>: <span className="font-black">{hayProblema?'⚠ hay problemas':'✓ funcionando'}</span></span>
+                <span>Guardados en esta sesión: <b>{S.ok}</b> · Con error: <b>{S.fail}</b>{recuperado?' (ya reenviados)':''} · Pendientes de reenviar: <b>{pend}</b></span>
+                {S.lecturaError&&<span>No se pudo leer el historial: <b>{S.lecturaError}</b></span>}
+                {S.ultimoError&&<span>{recuperado?'Último error (ya resuelto)':'Último error al guardar'}: <b>{S.ultimoError}</b></span>}
+                <button onClick={probarAud} className="px-3 py-1 rounded-lg bg-black text-white font-black uppercase text-[9px] hover:bg-orange-500">Probar registro</button>
+                {pend>0&&<button onClick={reintentarAud} className="px-3 py-1 rounded-lg bg-red-600 text-white font-black uppercase text-[9px] hover:bg-red-700">Reintentar pendientes</button>}
+              </div>
+            );
+          })()}
           {/* Table */}
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-xs" style={{minWidth:780}}>
@@ -66543,7 +67138,7 @@ ${resumen}
                 <tr className="bg-black text-white text-[9px] uppercase tracking-widest">
                   <th className="p-3 font-black border-r border-gray-800 w-24 text-left">Fecha</th>
                   <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Usuario / Rol</th>
-                  <th className="p-3 font-black border-r border-gray-800 w-36 text-left">Módulo</th>
+                  <th className="p-3 font-black border-r border-gray-800 w-40 text-left">Módulo › Submódulo</th>
                   <th className="p-3 font-black border-r border-gray-800 w-28 text-left">Tipo</th>
                   <th className="p-3 font-black text-left">Detalle del Evento</th>
                 </tr>
@@ -66555,6 +67150,7 @@ ${resumen}
                     <tr key={log.id||idx} className="hover:bg-gray-50 group">
                       <td className="p-3 align-top">
                         <div className="text-[10px] font-black text-gray-900">{log.fecha}</div>
+                        {log.ts>0&&<div className="text-[8px] text-gray-400 font-bold">{new Date(log.ts).toLocaleTimeString('es-VE',{hour:'2-digit',minute:'2-digit'})}</div>}
                       </td>
                       <td className="p-3 align-top">
                         <div className="text-[10px] font-black group-hover:text-orange-600">{log.usuario}</div>
@@ -66562,6 +67158,7 @@ ${resumen}
                       </td>
                       <td className="p-3 align-top">
                         <span className="text-[9px] font-bold text-gray-700 bg-gray-100 px-2 py-1 rounded-lg">{log.modulo}</span>
+                        {log.area&&<div className="text-[8px] text-gray-500 font-bold mt-1">› {log.area}</div>}
                       </td>
                       <td className="p-3 align-top">
                         <div className={`inline-flex items-center text-[9px] font-black uppercase px-2 py-1 rounded-lg border ${st.c} ${st.bg} ${st.b}`}>
@@ -71605,7 +72202,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
             <div style={{width:32,height:32,background:OR,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:900,fontSize:12}}>
               {vendNombre.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase()}
             </div>
-            <button onClick={async()=>{try{await deleteDoc(getDocRef('activeSessions',appUser.username))}catch(e){}try{await signOut(auth)}catch(e){}setAppUser(null);}}
+            <button onClick={async()=>{try{await audSalida(appUser)}catch(e){}try{await deleteDoc(getDocRef('activeSessions',appUser.username))}catch(e){}try{await signOut(auth)}catch(e){}setAppUser(null);}}
               style={{padding:'6px 12px',borderRadius:8,border:'1px solid rgba(239,68,68,0.4)',background:'transparent',color:'#f87171',fontSize:11,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
               <LogOut size={12}/> Salir
             </button>
@@ -72209,7 +72806,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
               <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center"><User size={14} className="text-white"/></div>
               <span className="text-white text-xs font-bold">{appUser?.name || 'Usuario'}</span>
             </div>
-            <button onClick={async()=>{ try{ if(appUser?.role!=='Master'){ await deleteDoc(getDocRef('activeSessions', appUser.username)); } }catch(e){} try{ await signOut(auth);}catch(e){} setAppUser(null); }}
+            <button onClick={async()=>{ try{ await audSalida(appUser); }catch(e){} try{ if(appUser?.role!=='Master'){ await deleteDoc(getDocRef('activeSessions', appUser.username)); } }catch(e){} try{ await signOut(auth);}catch(e){} setAppUser(null); }}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-black text-red-400 hover:text-white hover:bg-red-500/30 rounded-xl transition-all border border-red-500/30">
               <LogOut size={14}/> <span>Salir</span>
             </button>
@@ -72240,7 +72837,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                 const permsOk = appUser?.role==='Master' || !p.permsReq || p.permsReq.length===0 || p.permsReq.some(pm=>hasPerm(pm)||Object.keys(_permsUsr).some(k=>k.startsWith(pm+'_')&&_permsUsr[k]));
                 const allowed = portalOk && permsOk;
                 return (
-                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') { setActiveTab('resena'); setResenaTab('catalogo'); } else if(p.id==='vendedores_portal') { setActiveTab('home'); setVentasView('cotizaciones'); } else setActiveTab('home'); } else { setPortalDenied(p.title); } }}
+                <button key={p.id} onClick={()=>{ if(allowed){ setPortalDenied(''); clearAllReports(); setSelectedPortal(p.id); if(p.id==='resena_portal') setActiveTab('resena'); else if(p.id==='brochure_portal') { setActiveTab('resena'); setResenaTab('catalogo'); } else if(p.id==='vendedores_portal') { setActiveTab('home'); setVentasView('cotizaciones'); } else setActiveTab('home'); } else { setPortalDenied(p.title); try { logAuditoria(appUser, 'Sistema', 'ALERTA', `Intentó entrar al portal ${p.title} sin tener permiso`, { area: 'Portales', origen: 'acceso' }); } catch (e) {} } }}
                   style={{textAlign:'left', position:'relative', background:allowed?'#ffffff':'rgba(255,255,255,0.55)',
                     border:'none', borderLeft:`5px solid ${allowed?p.color:'#9ca3af'}`, borderRadius:16, padding:'28px 24px',
                     cursor:'pointer', color:allowed?'#111':'#6b7280', opacity:allowed?1:0.7, transition:'transform 0.2s, box-shadow 0.2s', boxShadow:'0 4px 24px rgba(0,0,0,0.22)'}}
@@ -72578,6 +73175,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                  </button>
 
                  <button onClick={async () => {
+                   try { await audSalida(appUser); } catch(e) {}
                    if (appUser?.role !== 'Master') {
                      try {
                        await deleteDoc(getDocRef('activeSessions', appUser.username));
