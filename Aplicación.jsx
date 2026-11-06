@@ -52243,9 +52243,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                             (invRef?.subcategory||'').toUpperCase().includes('BOLSA')||(invRef?.subcategory||'').toUpperCase().includes('TERMO');
                           const almacenesConStock=(inventory||[]).filter(i=>(i.displayId||(i.id||'').split('___')[0])===code);
                           const wqty=it.warehouseQtys||{};
-                          const totalCant=Object.values(wqty).reduce((s,v)=>s+parseNum(v||0),0);
+                          // Artículo del histórico importado (no maneja cantidades por almacén): conserva su cantidad. Antes se ponía en 0 al abrir el formulario y la NE se guardaba en $0,00.
+                          const _histSinAlm = form.origenImport==='HIST_ENE_ABR_2026_XLSX' && Object.keys(wqty).length===0;
+                          const totalCant=_histSinAlm ? parseNum(it.cantidad||0) : Object.values(wqty).reduce((s,v)=>s+parseNum(v||0),0);
                           // Sincronizar cantidad total
-                          if(Math.abs(parseNum(it.cantidad)-totalCant)>0.001) {
+                          if(!_histSinAlm && Math.abs(parseNum(it.cantidad)-totalCant)>0.001) {
                             const ni=[...form.items];ni[idx]={...ni[idx],cantidad:totalCant};
                             setTimeout(()=>setForm(f=>({...f,items:ni})),0);
                           }
@@ -52424,23 +52426,28 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             console.log(msg);
           };
           const repararTotalesNEHistoricas = async () => {
-            const nesHist = (notasEntrega||[]).filter(n=>parseNum(n.total||n.montoBase||0)<=0.01);
-            if(nesHist.length===0){ alert('No hay NE históricas con total en $0 — no hay nada que reparar.'); return; }
-            const candidatas = nesHist.map(n=>{
-              const cobro=(cobrosCxc||[]).find(c=>c.neId===n.id && parseNum(c.monto||0)>0);
-              return {ne:n, cobro};
+            const MARCA_R = 'HIST_ENE_ABR_2026_XLSX';
+            const nesCero = (notasEntrega||[]).filter(n=>Math.abs(parseNum(n.total||n.montoBase||0))<=0.01);       // en $0 (las devoluciones, que van en negativo, no)
+            if(nesCero.length===0){ alert('No hay NE con total en $0 — no hay nada que reparar.'); return; }
+            const candidatas = nesCero.map(n=>{
+              const esH = n.origenImport===MARCA_R;
+              const cobro=(cobrosCxc||[]).find(c=>c.neId===n.id && (esH ? (c.origenImport===MARCA_R && Math.abs(parseNum(c.monto||0))>0.005) : parseNum(c.monto||0)>0));   // históricas: su cobro histórico (en las devoluciones va en negativo)
+              return {ne:n, cobro, esH};
             }).filter(x=>x.cobro);
             if(candidatas.length===0){ alert('Hay NE con total en $0, pero ninguna tiene un cobro histórico asociado para tomar el monto correcto.'); return; }
             const totalImpacto=candidatas.reduce((s,x)=>s+parseNum(x.cobro.monto||0),0);
-            const detalle=candidatas.slice(0,10).map(x=>`${x.ne.documento||x.ne.id}: $0,00 → $${x.cobro.monto.toFixed(2)}`).join('\n')+(candidatas.length>10?`\n...y ${candidatas.length-10} más`:'');
-            if(!window.confirm(`Se van a corregir ${candidatas.length} Nota(s) de Entrega — su "total" pasa de $0,00 al monto de su cobro histórico ya registrado (total: $${totalImpacto.toFixed(2)}).\n\n${detalle}\n\nEsto NO crea ni modifica ningún cobro, banco ni caja — solo corrige el campo total de la NE. ¿Continuar?`)) return;
+            const detalle=candidatas.slice(0,10).map(x=>`${x.ne.documento||x.ne.id}: $0,00 → $${parseNum(x.cobro.monto||0).toFixed(2)}`).join('\n')+(candidatas.length>10?`\n...y ${candidatas.length-10} más`:'');
+            const nHistR = candidatas.filter(x=>x.esH).length;
+            if(!window.confirm(`Se van a corregir ${candidatas.length} Nota(s) de Entrega — su "total" pasa de $0,00 al monto de su cobro histórico ya registrado (total: $${totalImpacto.toFixed(2)}).\n\n${detalle}\n\nEsto NO crea ni modifica ningún cobro, banco ni caja — solo corrige el campo total de la NE.${nHistR>0?'\n\nLas históricas quedan con su monto (sin IVA) y sus artículos siguen en cero: el recuadro violeta «Aplicar IVA 16 %» las restaura completas (artículos y monto) desde el histórico original y les suma el IVA.':''} ¿Continuar?`)) return;
             setImportandoHist(true);
             try{
               const batch = writeBatch(db);
-              candidatas.forEach(({ne,cobro})=>{
+              candidatas.forEach(({ne,cobro,esH})=>{
                 const _m = parseFloat(Number(cobro.monto||0).toFixed(2));
-                if(ne.aplicaIva==='SI'){ const _b = redond2Hist(_m/(1+IVA_HIST_PCT)); batch.update(getDocRef('notasEntrega', ne.id), {total:_m, montoBase:_b, ivaAmt:redond2Hist(_m-_b)}); }   // con IVA: el cobro es el total
-                else batch.update(getDocRef('notasEntrega', ne.id), {total:_m, montoBase:_m});
+                const _ref = getDocRef('notasEntrega', ne.id);
+                if(esH && ne.ivaHistAplicado!==true) batch.update(_ref, {total:_m, montoBase:_m, aplicaIva:'NO', ivaAmt:0});   // histórica sin el IVA aplicado desde aquí: su cobro es la base (Monto = Total); el IVA se suma con «Aplicar IVA 16 %»
+                else if(ne.aplicaIva==='SI'){ const _pb = parseNum((ne.ivaHistPrev&&ne.ivaHistPrev.montoBase)||0); const _b = (esH && Math.abs(_pb)>0.005 && Math.abs(redond2Hist(_pb+ivaDeBaseHist(_pb))-_m)<=0.011) ? _pb : redond2Hist(_m/(1+IVA_HIST_PCT)); batch.update(_ref, {total:_m, montoBase:_b, ivaAmt:redond2Hist(_m-_b)}); }   // con IVA: el cobro es el total
+                else batch.update(_ref, {total:_m, montoBase:_m});
               });
               await batch.commit();
               alert(`Se corrigió el total de ${candidatas.length} Nota(s) de Entrega.`);
@@ -52936,16 +52943,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // Las NE del histórico se importaron con la BASE de tu reporte antiguo y SIN IVA (Monto = Total). Aquí se les suma el IVA 16 % sobre esa base: la NE pasa a mostrar
           // Monto + IVA = Total y, a la vez, se actualizan su factura histórica (Libro de Ventas y declaración de IVA) y su cobro histórico (Cuentas por Cobrar sigue en $0: el cobro sube igual que el total).
           // Los Ingresos del Estado de Resultados NO cambian (siguen siendo la base). Solo se tocan las NE, facturas y cobros que siguen tal cual se importaron; lo demás se deja igual y se avisa. Se puede deshacer.
+          // Las NE que se editaron antes en el formulario y quedaron en $0 (artículos en cero) o con el monto descuadrado se restauran primero desde el histórico original (artículos y monto); eso no se deshace, solo el IVA.
           const IVA_HIST_PCT = 0.16;
           const ivaDeBaseHist = (base) => redond2Hist(parseNum(base||0)*IVA_HIST_PCT);
           const estadoIvaNEHist = () => {
             const MARCA = 'HIST_ENE_ABR_2026_XLSX', eps = 0.011;
             const nes = (notasEntrega||[]).filter(n=>n && n.origenImport===MARCA);
+            const histDoc = new Map(); HIST_NE_ENE_ABR_2026.forEach(f=>histDoc.set(String(f.doc), f));   // el histórico original (de ahí salieron las NE al importarlas)
             const invPorId = new Map(); (invoices||[]).forEach(i=>{ if(i && i.id!=null) invPorId.set(String(i.id), i); });
             const cobPorNE = new Map(); (cobrosCxc||[]).forEach(c=>{ if(!c || c.neId==null || c.neId==='') return; const k=String(c.neId); if(!cobPorNE.has(k)) cobPorNE.set(k, []); cobPorNE.get(k).push(c); });
             const e = {nes, aplicar:[], yaConIva:[], omitidas:[], deshacer:[], noDeshacer:[]};
             nes.forEach(ne=>{
               const base = parseNum(ne.montoBase||0), total = parseNum(ne.total||0), iva = parseNum(ne.ivaAmt||0);
+              const arts = Array.isArray(ne.items) ? ne.items.filter(Boolean) : [];
+              const sumaArt = redond2Hist(arts.reduce((s,it)=>s+parseNum(it.cantidad||0)*parseNum(it.precioUnit||0),0));
               const cobs = cobPorNE.get(String(ne.id)) || [];
               const cob = cobs.find(c=>c.origenImport===MARCA) || null;                 // su cobro histórico (COB-HIST-…)
               const otros = cobs.filter(c=>c!==cob);                                     // cualquier otro cobro de esa NE
@@ -52967,19 +52978,42 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 return;
               }
               if(ne.status==='ANULADA'){ e.omitidas.push({ne, motivo:'anulada'}); return; }
-              if(ne.aplicaIva==='SI' || Math.abs(iva)>0.005){ e.yaConIva.push(ne); return; }
-              if(Math.abs(base)<0.005){ e.omitidas.push({ne, motivo:'su monto es $0'}); return; }
+              // ¿Quedó mal al editarla? (artículos con cantidad 0, o monto distinto de la suma de sus artículos) → se restaura desde el histórico original antes de sumar el IVA.
+              // El formulario de edición ponía en 0 la cantidad de estos artículos: la NE se guardaba en $0,00 y «Reparar Totales» solo devolvía el monto (no los artículos).
+              const H = histDoc.get(String(ne.origenDoc||'')) || null;
+              const hOK = !!(H && Array.isArray(H.items) && Math.abs(parseNum(H.montoBase||0))>0.005);
+              const sinArt = Math.abs(sumaArt)<0.005, descuadre = !sinArt && Math.abs(sumaArt-base)>eps;
+              let B = base, rest = null;                                                  // B = el monto base de verdad; rest = qué se restaura (si hace falta)
+              if(hOK && (sinArt || descuadre)){
+                B = redond2Hist(parseNum(H.montoBase));
+                if(sinArt){
+                  const conAlm = arts.some(it=>it.warehouseQtys && Object.values(it.warehouseQtys).some(v=>Math.abs(parseNum(v||0))>0.0005));
+                  if(arts.length!==H.items.length || conAlm){ e.omitidas.push({ne, motivo:'sus artículos no coinciden con el histórico original'}); return; }
+                  rest = {items: arts.map((it,i)=>{ const hi=H.items[i]; const r={...it, cantidad:hi.cantidad, precioUnit:hi.precioUnit, costoUnit:hi.costoUnit}; delete r.warehouseQtys; return r; }), costoTotal:H.costoTotal};
+                } else {
+                  if(Math.abs(sumaArt-B)>eps){ e.omitidas.push({ne, motivo:'su monto no coincide con sus artículos ni con el histórico original'}); return; }
+                  rest = {items:null, costoTotal:null};                                   // los artículos están bien: solo se corrige el monto
+                }
+              } else if(descuadre){ e.omitidas.push({ne, motivo:'su monto no coincide con sus artículos'}); return; }
+              if(!rest){
+                if(ne.aplicaIva==='SI' || Math.abs(iva)>0.005){ e.yaConIva.push(ne); return; }
+                if(Math.abs(base)<0.005){ e.omitidas.push({ne, motivo:'su monto es $0'}); return; }
+              }
               const m = [];
-              if(Math.abs(total-base)>eps) m.push('su total no es igual a su monto');
+              if(!rest && Math.abs(total-base)>eps) m.push('su total no es igual a su monto');
               if(otros.length>0) m.push('tiene cobros que no son el histórico');
-              if(cob && Math.abs(parseNum(cob.monto||0)-total)>eps) m.push('su cobro histórico no coincide con su total');
+              if(cob){
+                const cm = parseNum(cob.monto||0);
+                if(rest){ if(Math.abs(cm-B)>eps && Math.abs(cm)>0.005) m.push('su cobro histórico no coincide con el histórico original'); }
+                else if(Math.abs(cm-total)>eps) m.push('su cobro histórico no coincide con su total');
+              }
               if(inv){
                 if(!invHist) m.push('ya tiene otra factura (hecha en el sistema)');
-                else if(inv.aplicaIva==='SI' || Math.abs(im.iva)>0.005 || Math.abs(im.total-im.base)>eps || Math.abs(im.base-base)>eps || im.bs>0.005) m.push('su factura histórica ya tiene valores distintos');
+                else if(inv.aplicaIva==='SI' || Math.abs(im.iva)>0.005 || Math.abs(im.total-im.base)>eps || Math.abs(im.base-B)>eps || im.bs>0.005) m.push('su factura histórica ya tiene valores distintos');
               }
               if(m.length>0){ e.omitidas.push({ne, motivo:m.join('; ')}); return; }
-              const ivaN = ivaDeBaseHist(base);
-              e.aplicar.push({ne, base, iva:ivaN, total:redond2Hist(base+ivaN), cob, inv:inv&&invHist?inv:null});
+              const ivaN = ivaDeBaseHist(B);
+              e.aplicar.push({ne, base:B, iva:ivaN, total:redond2Hist(B+ivaN), cob, inv:inv&&invHist?inv:null, rest});
             });
             return e;
           };
@@ -52994,7 +53028,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const lineasMes = Object.keys(porMes).sort().map(ym=>{ const mm=MESES_FACT_HIST.find(z=>z.ym===ym); return `• ${mm?mm.nombre:ym}: ${porMes[ym].length} NE · Monto $${formatNum(sumaIvaHist(porMes[ym],'base'))} + IVA $${formatNum(sumaIvaHist(porMes[ym],'iva'))} = Total $${formatNum(sumaIvaHist(porMes[ym],'total'))}`; }).join('\n');
             const nOmit = e.omitidas.length;
             const nSinCob = e.aplicar.filter(x=>!x.cob).length, nVend = e.aplicar.filter(x=>String(x.ne.vendedor||'').trim()!=='').length;
-            if(!window.confirm(`Se va a sumar el IVA (16 %) a ${e.aplicar.length} Nota(s) de Entrega histórica(s):\n\n${lineasMes}\n\nTotal: Monto $${formatNum(sumaIvaHist(e.aplicar,'base'))} + IVA $${formatNum(sumaIvaHist(e.aplicar,'iva'))} = $${formatNum(sumaIvaHist(e.aplicar,'total'))}\n\nA la vez se actualizan ${nInv} factura(s) histórica(s) (salen con su IVA en el Libro de Ventas y en la declaración de IVA) y ${nCob} cobro(s) histórico(s) (en Cuentas por Cobrar el cobro sube igual que el total, así que esas NE siguen sin saldo).${nSinCob>0?`\n\n⚠ ${pluNEHist(nSinCob,'no tiene cobro histórico','no tienen cobro histórico')}: en Cuentas por Cobrar ${nSinCob===1?'sigue pendiente':'siguen pendientes'}, ahora por su Total con IVA.`:''}${nVend>0?`\n\n⚠ ${pluNEHist(nVend,'tiene vendedor','tienen vendedor')}: en Comisiones su base es el Total, así que sube con el IVA (igual que en cualquier otra NE con IVA).`:''}\n\nLos Ingresos del Estado de Resultados NO cambian: siguen siendo el Monto.${nOmit>0?`\n\nSe dejan igual ${nOmit} NE que no están tal cual se importaron (el recuadro dice cuáles).`:''}\n\nSe puede deshacer con «Quitar IVA aplicado». ¿Continuar?`)) return;
+            const restauradas = e.aplicar.filter(x=>x.rest), nRest = restauradas.length, nRestArt = restauradas.filter(x=>x.rest.items).length;
+            const textoRest = nRest>0 ? `\n\n♻ ${pluNEHist(nRest,'quedó en $0 o descuadrada por haberla editado','quedaron en $0 o descuadradas por haberlas editado')}: antes de sumar el IVA se restaura su monto${nRestArt>0?' y sus artículos':''} desde el histórico original (${restauradas.slice(0,12).map(x=>x.ne.id).join(', ')}${nRest>12?', …':''}). Esa restauración no se deshace con «Quitar IVA aplicado» (solo el IVA).` : '';
+            if(!window.confirm(`Se va a sumar el IVA (16 %) a ${e.aplicar.length} Nota(s) de Entrega histórica(s):\n\n${lineasMes}\n\nTotal: Monto $${formatNum(sumaIvaHist(e.aplicar,'base'))} + IVA $${formatNum(sumaIvaHist(e.aplicar,'iva'))} = $${formatNum(sumaIvaHist(e.aplicar,'total'))}\n\nA la vez se actualizan ${nInv} factura(s) histórica(s) (salen con su IVA en el Libro de Ventas y en la declaración de IVA) y ${nCob} cobro(s) histórico(s) (en Cuentas por Cobrar el cobro sube igual que el total, así que esas NE siguen sin saldo).${textoRest}${nSinCob>0?`\n\n⚠ ${pluNEHist(nSinCob,'no tiene cobro histórico','no tienen cobro histórico')}: en Cuentas por Cobrar ${nSinCob===1?'sigue pendiente':'siguen pendientes'}, ahora por su Total con IVA.`:''}${nVend>0?`\n\n⚠ ${pluNEHist(nVend,'tiene vendedor','tienen vendedor')}: en Comisiones su base es el Total, así que sube con el IVA (igual que en cualquier otra NE con IVA).`:''}\n\nLos Ingresos del Estado de Resultados NO cambian: siguen siendo el Monto.${nOmit>0?`\n\nSe dejan igual ${nOmit} NE que no están tal cual se importaron (el recuadro dice cuáles).`:''}\n\nSe puede deshacer con «Quitar IVA aplicado». ¿Continuar?`)) return;
             setImportandoHist(true);
             let hechas = 0;
             try{
@@ -53002,12 +53038,14 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               for(let i=0;i<e.aplicar.length;i+=150){                                    // por tandas (la base de datos admite 500 escrituras por lote; cada NE usa hasta 3)
                 const lote = e.aplicar.slice(i,i+150);
                 const batch = writeBatch(db);
-                lote.forEach(({ne,base,iva,total,cob,inv})=>{
-                  const prev = {montoBase:base, aplicaIva:String(ne.aplicaIva||'NO'), ivaAmt:parseNum(ne.ivaAmt||0), total:parseNum(ne.total||0)};
+                lote.forEach(({ne,base,iva,total,cob,inv,rest})=>{
+                  // «prev» = cómo queda la NE justo antes del IVA (si se restauró, ya con su monto de verdad y sin IVA): a eso vuelve «Quitar IVA aplicado»
+                  const prev = rest ? {montoBase:base, aplicaIva:'NO', ivaAmt:0, total:base, restaurada:true} : {montoBase:base, aplicaIva:String(ne.aplicaIva||'NO'), ivaAmt:parseNum(ne.ivaAmt||0), total:parseNum(ne.total||0)};
                   const cambios = {aplicaIva:'SI', ivaAmt:iva, total};
+                  if(rest){ cambios.montoBase = base; if(rest.items) cambios.items = rest.items; if(rest.costoTotal!=null) cambios.costoTotal = rest.costoTotal; }
                   const tasaNE = parseNum(ne.tasa||0);
-                  if(tasaNE>0 && Math.abs(parseNum(ne.totalBs||0))>0.004){ prev.totalBs = parseNum(ne.totalBs); cambios.totalBs = redond2Hist(total*tasaNE); }
-                  if(ne.montoCobrado!=null && Math.abs(parseNum(ne.montoCobrado)-parseNum(ne.total||0))<=0.011){ prev.montoCobrado = parseNum(ne.montoCobrado); cambios.montoCobrado = total; }
+                  if(tasaNE>0 && Math.abs(parseNum(ne.totalBs||0))>0.004){ prev.totalBs = rest ? redond2Hist(base*tasaNE) : parseNum(ne.totalBs); cambios.totalBs = redond2Hist(total*tasaNE); }
+                  if(ne.montoCobrado!=null && Math.abs(parseNum(ne.montoCobrado)-(rest?base:parseNum(ne.total||0)))<=0.011){ prev.montoCobrado = rest ? base : parseNum(ne.montoCobrado); cambios.montoCobrado = total; }
                   batch.update(getDocRef('notasEntrega', ne.id), {...cambios, ivaHistAplicado:true, ivaHistFecha:hoy, ivaHistPrev:prev, updatedAt:ahora});
                   if(inv) batch.update(getDocRef('maquilaInvoices', inv.id), {iva, total, aplicaIva:'SI', ivaHistAplicado:true});
                   if(cob){
@@ -53019,8 +53057,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 await batch.commit();
                 hechas += lote.length;
               }
-              logAuditoriaSeguro(appUser,'Notas de Entrega','CORRECCIÓN',()=>`IVA 16 % aplicado a ${hechas} NE históricas (Ene–Abr 2026): Monto $${formatNum(sumaIvaHist(e.aplicar,'base'))} + IVA $${formatNum(sumaIvaHist(e.aplicar,'iva'))} = Total $${formatNum(sumaIvaHist(e.aplicar,'total'))} · ${nInv} factura(s) y ${nCob} cobro(s) actualizados · los Ingresos del Estado de Resultados no cambian`);
-              alert(`Listo — se sumó el IVA a ${hechas} NE históricas (${nInv} facturas y ${nCob} cobros actualizados). Ya se ve en la lista de Notas de Entrega, en el Libro de Ventas y en Cuentas por Cobrar${nSinCob>0?` (${nSinCob===1?'1 NE sin cobro histórico sigue pendiente':`${nSinCob} NE sin cobro histórico siguen pendientes`}, ahora con su IVA)`:' (donde estas NE siguen sin saldo)'}.`);
+              logAuditoriaSeguro(appUser,'Notas de Entrega','CORRECCIÓN',()=>`IVA 16 % aplicado a ${hechas} NE históricas (Ene–Abr 2026): Monto $${formatNum(sumaIvaHist(e.aplicar,'base'))} + IVA $${formatNum(sumaIvaHist(e.aplicar,'iva'))} = Total $${formatNum(sumaIvaHist(e.aplicar,'total'))} · ${nInv} factura(s) y ${nCob} cobro(s) actualizados${nRest>0?` · ${nRest} restaurada(s) desde el histórico original`:''} · los Ingresos del Estado de Resultados no cambian`);
+              alert(`Listo — se sumó el IVA a ${hechas} NE históricas (${nInv} facturas y ${nCob} cobros actualizados${nRest>0?`, ${nRest} restaurada(s) desde el histórico original`:''}). Ya se ve en la lista de Notas de Entrega, en el Libro de Ventas y en Cuentas por Cobrar${nSinCob>0?` (${nSinCob===1?'1 NE sin cobro histórico sigue pendiente':`${nSinCob} NE sin cobro histórico siguen pendientes`}, ahora con su IVA)`:' (donde estas NE siguen sin saldo)'}.`);
             } catch(err){ alert('Error al aplicar el IVA: '+err.message+(hechas>0?`\n\nYa se habían actualizado ${hechas} NE; pulsa de nuevo el botón para seguir con las que faltan.`:'')); }
             finally{ setImportandoHist(false); }
           };
@@ -53038,7 +53076,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 const lote = e.deshacer.slice(i,i+150);
                 const batch = writeBatch(db);
                 lote.forEach(({ne,prev,cob,inv})=>{
-                  const resto = {...prev}; delete resto.montoBase;
+                  const resto = {...prev}; delete resto.montoBase; delete resto.restaurada;
                   batch.update(getDocRef('notasEntrega', ne.id), {...resto, ivaHistAplicado:false, ivaHistPrev:null, ivaHistFecha:'', updatedAt:ahora});
                   if(inv) batch.update(getDocRef('maquilaInvoices', inv.id), {iva:0, total:redond2Hist(parseNum(inv.montoBase||0)), aplicaIva:'NO', ivaHistAplicado:false});
                   if(cob){
@@ -53374,11 +53412,20 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       <CheckCircle2 size={14}/> {importandoHist?'Registrando...':'Registrar Cobro Histórico (quita de CxC)'}
                     </button>
                   )}
-                  {(notasEntrega||[]).some(n=>parseNum(n.total||n.montoBase||0)<=0.01) && (
+                  {(notasEntrega||[]).some(n=>Math.abs(parseNum(n.total||n.montoBase||0))<=0.01) && (
                     <button onClick={repararTotalesNEHistoricas} disabled={importandoHist} className="bg-rose-600 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-rose-700 disabled:opacity-50">
                       <RefreshCw size={14}/> {importandoHist?'Reparando...':'Reparar Totales en $0'}
                     </button>
                   )}
+                  {(() => {
+                    const ivH = estadoIvaNEHist();
+                    if(ivH.aplicar.length===0) return null;
+                    return (
+                      <button data-testid="iva-hist-aplicar-top" onClick={aplicarIvaNEHistoricas} disabled={importandoHist} title="Suma el IVA 16 % a las NE históricas (con vista previa; se puede deshacer)" className="bg-violet-700 text-white px-4 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-violet-800 disabled:opacity-50 ring-2 ring-violet-300">
+                        💲 {importandoHist?'Aplicando...':`Aplicar IVA 16 % a NE históricas (${ivH.aplicar.length})`}
+                      </button>
+                    );
+                  })()}
                   <button onClick={()=>setNeForm(initNEForm())} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl font-black text-xs uppercase flex items-center gap-2 hover:bg-orange-600"><Plus size={14}/> Nueva Nota de Entrega</button>
                 </div>
               </div>
@@ -53405,15 +53452,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               {(() => {
                 const iv = estadoIvaNEHist();
                 if (iv.nes.length===0) return null;
-                const nInvI = iv.aplicar.filter(x=>x.inv).length, nCobI = iv.aplicar.filter(x=>x.cob).length, nSinCobI = iv.aplicar.length-nCobI;
+                const nInvI = iv.aplicar.filter(x=>x.inv).length, nCobI = iv.aplicar.filter(x=>x.cob).length, nSinCobI = iv.aplicar.length-nCobI, nRestI = iv.aplicar.filter(x=>x.rest).length;
                 const omit = [...iv.omitidas, ...iv.noDeshacer];
                 return (
-                  <div data-testid="iva-hist-panel" className="bg-violet-50 border-2 border-violet-200 rounded-2xl px-4 py-3 text-xs space-y-2">
+                  <div data-testid="iva-hist-panel" className="bg-violet-50 border-2 border-violet-400 rounded-2xl px-4 py-3 text-xs space-y-2">
                     <div className="font-black text-violet-800 uppercase text-[10px] tracking-wide">💲 IVA de las Notas de Entrega históricas (enero–abril 2026)</div>
                     {iv.aplicar.length>0 ? (
                       <div className="flex items-center gap-3 flex-wrap">
                         <div data-testid="iva-hist-resumen" className="font-bold text-violet-900 flex-1 min-w-[320px]">
-                          {iv.aplicar.length} NE histórica(s) están sin IVA (Monto = Total). Al aplicarlo: Monto ${formatNum(sumaIvaHist(iv.aplicar,'base'))} + IVA 16 % ${formatNum(sumaIvaHist(iv.aplicar,'iva'))} = Total ${formatNum(sumaIvaHist(iv.aplicar,'total'))}. También se actualizan {nInvI} factura(s) (Libro de Ventas) y {nCobI} cobro(s) (en Cuentas por Cobrar el cobro sube igual que el total: esas NE siguen sin saldo).{nSinCobI>0 ? ` ${pluNEHist(nSinCobI,'no tiene cobro histórico','no tienen cobro histórico')}: ${nSinCobI===1?'sigue pendiente':'siguen pendientes'} en Cuentas por Cobrar, ahora por su Total con IVA.` : ''} Los Ingresos del Estado de Resultados no cambian.
+                          {iv.aplicar.length} NE histórica(s) están sin IVA (Monto = Total). Al aplicarlo: Monto ${formatNum(sumaIvaHist(iv.aplicar,'base'))} + IVA 16 % ${formatNum(sumaIvaHist(iv.aplicar,'iva'))} = Total ${formatNum(sumaIvaHist(iv.aplicar,'total'))}. También se actualizan {nInvI} factura(s) (Libro de Ventas) y {nCobI} cobro(s) (en Cuentas por Cobrar el cobro sube igual que el total: esas NE siguen sin saldo).{nSinCobI>0 ? ` ${pluNEHist(nSinCobI,'no tiene cobro histórico','no tienen cobro histórico')}: ${nSinCobI===1?'sigue pendiente':'siguen pendientes'} en Cuentas por Cobrar, ahora por su Total con IVA.` : ''} Los Ingresos del Estado de Resultados no cambian.{nRestI>0 ? ` ${pluNEHist(nRestI,'quedó en $0 o descuadrada por haberla editado','quedaron en $0 o descuadradas por haberlas editado')}: ${nRestI===1?'se restaura':'se restauran'} su monto y sus artículos desde el histórico original antes de sumar el IVA.` : ''}
                         </div>
                         <button data-testid="iva-hist-aplicar" onClick={aplicarIvaNEHistoricas} disabled={importandoHist} className="bg-violet-700 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase flex items-center gap-2 hover:bg-violet-800 disabled:opacity-50">
                           {importandoHist?'Aplicando...':`Aplicar IVA 16 % (${iv.aplicar.length} NE)`}
@@ -61019,6 +61066,19 @@ ${resumen}
                 <button onClick={exportExcel} className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-green-700 flex items-center gap-2"><Download size={14}/>Excel</button>
                 <button onClick={exportPDF} className="bg-gray-800 text-white px-4 py-2 rounded-xl font-black text-xs hover:bg-black flex items-center gap-2"><Printer size={14}/>PDF</button>
               </div>
+
+              {(() => {
+                const sinIvaH = factsPeriodo.filter(i=>i && i.origenImport==='HIST_ENE_ABR_2026_XLSX' && !i.esAnulacionFiscal && i.aplicaIva!=='SI' && Math.abs(parseNum(i.iva||0))<0.005);
+                if(sinIvaH.length===0) return null;
+                return (
+                  <div data-testid="libro-iva-hist-aviso" className="bg-amber-50 border-2 border-amber-300 rounded-2xl px-4 py-3 text-xs flex items-center gap-3 flex-wrap">
+                    <div className="flex-1 min-w-[300px] font-bold text-amber-900">
+                      ⚠️ {sinIvaH.length} factura(s) del histórico (Ene–Abr 2026) de este período salen sin IVA (alícuota 0 %): se importaron solo con su monto base. Para sumarles el IVA 16 % ve a Ventas → Notas de Entrega y pulsa «Aplicar IVA 16 %» (un solo clic, con vista previa, se puede deshacer): se actualizan las NE, estas facturas y Cuentas por Cobrar.
+                    </div>
+                    <button data-testid="libro-ir-ne-iva" onClick={()=>{clearAllReports();setVentasView('notas_entrega');window.scrollTo({top:0,behavior:'smooth'});}} className="bg-violet-700 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase hover:bg-violet-800">Ir a Notas de Entrega</button>
+                  </div>
+                );
+              })()}
 
               {showAnulFiscalModal && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setShowAnulFiscalModal(false)}>
