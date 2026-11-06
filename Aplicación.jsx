@@ -51132,7 +51132,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                 if(cobFiltro==='pendiente') return !r.cobrado;
                 return !r.cobrado || (r.fechaPago||'').startsWith(ym);
               });
-          const totalCobranza = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0);
+          // Cobranza que SÍ genera comisión en el mes: NE cobradas en el mes que no se quitaron de la relación. No cambia con la pestaña que se esté viendo
+          // (antes el total seguía a la pestaña: en «Excluidas» sumaba las quitadas y en «Pendientes» daba 0). Es lo que va al total a pagar, al recibo y al reporte guardado.
+          const cobranzaMes = cobranzaVisible.filter(r => r.cobrado && (r.fechaPago||'').startsWith(ym));
+          const totalCobranza = cobranzaMes.reduce((s,r)=>s+r.montoPagar,0);
+          const totalCobranzaVista = cobranzaCalc.reduce((s,r)=>s+r.montoPagar,0); // solo el pie de la tabla: suma de las filas que se están viendo
           const updCobranza = (i,campo,val) => {
             const neId = cobranzaCalc[i]?.neId;
             if(!neId) return;
@@ -51251,7 +51255,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               ...(tipoComisionVend==='PORCENTUAL'
                 ? {porcentaje:pctSimple, comisionPorcentual}
                 : {comisionMeta, montoMix, totalCobranza, bonos:{...bonos},
-                   cobranzaDetalle: cobranzaCalcAll.filter(x=>x.cobrado&&(x.fechaPago||'').startsWith(ym)).map(x=>({neId:x.neId,cliente:x.cliente,factura:x.factura,fechaNE:x.fecha,monto:x.monto,fechaPago:x.fechaPago,diasRetraso:x.diasRetraso,pct:x.pct,montoPagar:x.montoPagar}))}),
+                   cobranzaDetalle: cobranzaMes.map(x=>({neId:x.neId,cliente:x.cliente,factura:x.factura,fechaNE:x.fecha,monto:x.monto,fechaPago:x.fechaPago,diasRetraso:x.diasRetraso,pct:x.pct,montoPagar:x.montoPagar}))}),
               nNEs: nesMesCom.length,
               ts: Date.now(),
               user: appUser?.name||'Sistema',
@@ -51272,9 +51276,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               fila('Recuperación de Cliente (+6m)',`${recuperadosCount} recuperado(s)`,bonos.recuperacion),
               fila('Mix de Categor\u00eda','Manual',montoMix),
               fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
-              fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
+              fila('Comisión por Cobranza',`${cobranzaMes.length} pagos`,totalCobranza),
             ].join('');
-            const cobrRows=cobranzaCalc.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td(r.factura||'—')}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
+            const cobrRows=cobranzaMes.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td(r.factura||'—')}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
             const metaRows=(cfg.metaTabla||[]).map(e=>{const a=totalVentasVend>=e.min&&totalVentasVend<=e.max;return`<tr>${td('$'+formatNum(e.min)+' a $'+formatNum(e.max))}${td(e.pct+'%',true)}${td(a?'✓ Alcanzado':'No alcanzado')}${td('$'+formatNum(a?totalVentasVend*(e.pct/100):0),true)}</tr>`;}).join('');
             const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;margin-bottom:14px;}th{background:#000;color:#fff;font-size:10px;text-transform:uppercase;padding:6px 9px;border:1px solid #000;}h3{color:#f97316;font-size:13px;margin:10px 0 4px;}</style></head><body>
             <div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #16a34a;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:15px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="color:#16a34a;font-size:14px;">RECIBO DE COMISIONES — ${comVendedor||'GENERAL'}</h3><p style="font-size:11px;">Período: ${mesLabel} ${comAnio} | Generado: ${getTodayDate()}</p></div>
@@ -51295,9 +51299,9 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               fila('Recuperación de Cliente (+6m)',`${recuperadosCount} recuperado(s)`,bonos.recuperacion),
               fila('Mix de Categor\u00eda','Manual',montoMix),
               fila('Comisión por Meta de Venta',escMeta?`${escMeta.pct}%`:'No alcanzado',comisionMeta),
-              fila('Comisión por Cobranza',`${cobranzaCalc.length} pagos`,totalCobranza),
+              fila('Comisión por Cobranza',`${cobranzaMes.length} pagos`,totalCobranza),
             ].join('');
-            const cobrRows=cobranzaCalc.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td(r.factura||'—')}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
+            const cobrRows=cobranzaMes.map(r=>`<tr>${td(r.fecha)}${td(r.cliente)}${td(r.factura||'—')}${td('$'+formatNum(r.monto),true)}${td(r.condicion+'d')}${td(r.vencimiento)}${td(r.fechaPago)}${td(formatNum(r.diasRetraso),true)}${td(r.rango)}${td(formatNum(r.pct)+'%',true)}${td('$'+formatNum(r.montoPagar),true,true)}</tr>`).join('');
             const metaRows=(cfg.metaTabla||[]).map(e=>{const a=totalVentasVend>=e.min&&totalVentasVend<=e.max;return`<tr>${td('$'+formatNum(e.min)+' a $'+formatNum(e.max))}${td(e.pct+'%',true)}${td(a?'✓ Alcanzado':'No alcanzado')}${td('$'+formatNum(a?totalVentasVend*(e.pct/100):0),true)}</tr>`;}).join('');
             const html=`<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
 <div style="font-size:15px;font-weight:900">RECIBO DE COMISIONES — ${comVendedor||'GENERAL'}</div>
@@ -51417,7 +51421,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <tr><td className="px-3 py-2 font-bold">Recuperación de Cliente <span className="text-[8px] text-gray-400">(+6 meses inactivo)</span></td><td className="px-3 py-2 text-right"><input type="number" value={bonos.recuperacion||''} onChange={e=>setComBonos({...bonos,recuperacion:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/><div className="text-[7px] text-gray-400 mt-0.5">{recuperadosCount} recuperado(s){recuperadosCount>0?`: ${recuperadosLista.slice(0,3).join(', ')}${recuperadosLista.length>3?'…':''}`:''}</div></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(bonos.recuperacion)}</td></tr>
                         <tr className="bg-blue-50"><td className="px-3 py-2 font-bold">{'Mix de Categor\u00eda'}</td><td className="px-3 py-2 text-right"><input type="number" value={bonos.mix||''} onChange={e=>setComBonos({...bonos,mix:parseNum(e.target.value)})} className="w-24 border rounded-lg px-2 py-1 text-right font-black text-xs" placeholder="0"/></td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(montoMix)}</td></tr>
                         <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Meta de Venta</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{escMeta?`${escMeta.pct}%`:'No alcanzado'}</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(comisionMeta)}</td></tr>
-                        <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Cobranza</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{cobranzaCalc.length} pagos</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(totalCobranza)}</td></tr>
+                        <tr className="bg-orange-50"><td className="px-3 py-2 font-bold">Comisión por Cobranza</td><td className="px-3 py-2 text-right text-[9px] text-gray-500 uppercase">{cobranzaMes.length} pagos</td><td className="px-3 py-2 text-right font-black text-green-700">${formatNum(totalCobranza)}</td></tr>
                       </tbody>
                       <tfoot className="bg-gray-900 text-white font-black">
                         <tr><td className="px-3 py-2.5 uppercase text-[10px]" colSpan="2">Compensación Total</td><td className="px-3 py-2.5 text-right text-base">${formatNum(compensacionTotal)}</td></tr>
@@ -51510,7 +51514,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                                </button>
                                {!r.cobrado && (r.nCobros===0 || (r.saldoCxC!=null && r.saldoCxC>0.01)) && <div className="text-[8px] font-bold text-gray-400 leading-tight mt-0.5 whitespace-nowrap" title="Así está esta NE en Cuentas por Cobrar">{r.nCobros===0 ? 'Sin cobros en CxC' : `Falta $${formatNum(r.saldoCxC)}`}</div>}
                              </td>
-                             <td className="px-2 py-1.5 text-right font-black text-green-700">${formatNum(r.montoPagar)}</td>
+                             <td className={`px-2 py-1.5 text-right font-black ${cobFiltro==='excluidas'?'text-gray-400 line-through':'text-green-700'}`} title={cobFiltro==='excluidas'?'Quitada de la relación: no se suma al total':undefined}>${formatNum(r.montoPagar)}</td>
                              <td className="px-2 py-1.5 text-center">
                                {cobFiltro==='excluidas' ? (
                                  <button onClick={()=>updCobranza(i,'excluido',false)} title="Restaurar esta NE a la relación de cobranza" className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-black uppercase bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-colors">
@@ -51526,10 +51530,10 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         ))}
                       </tbody>
                       {cobranzaCalc.length>0 && <tfoot className="bg-gray-100 font-black"><tr>
-                        <td colSpan="4" className="px-2 py-2 uppercase text-[9px]">Total Cobranza ({cobranzaCalc.filter(r=>r.fechaPago).length}/{cobranzaCalc.length} pagados)</td>
+                        <td colSpan="4" className="px-2 py-2 uppercase text-[9px]">{cobFiltro==='excluidas' ? `Quitadas de la relación (${cobranzaCalc.length}) — no se suman al total` : `Total Cobranza (${cobranzaCalc.filter(r=>r.fechaPago).length}/${cobranzaCalc.length} pagados)`}</td>
                         <td className="px-2 py-2 text-right">${formatNum(cobranzaCalc.reduce((s,r)=>s+parseNum(r.monto),0))}</td>
                         <td colSpan="7"></td>
-                        <td className="px-2 py-2 text-right text-green-700">${formatNum(totalCobranza)}</td>
+                        <td className="px-2 py-2 text-right text-green-700">{cobFiltro==='excluidas' ? '—' : '$'+formatNum(totalCobranzaVista)}</td>
                         <td></td>
                       </tr></tfoot>}
                     </table>
@@ -51560,9 +51564,23 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             (!comHistMesFilt || r.ym===comHistMesFilt)
           );
 
+          // Reportes guardados ANTES de este arreglo pueden traer en el detalle una NE que después se quitó de la relación (el total guardado ya no la sumaba).
+          // Se ocultan solo cuando así cuadra con el total guardado; si el total guardado todavía la incluía es una foto de antes de quitarla y se deja tal cual hasta que se vuelva a guardar.
+          const detalleCobranzaVigente = (r) => {
+            const det = Array.isArray(r.cobranzaDetalle) ? r.cobranzaDetalle : [];
+            const quitadas = new Set((comCobranza||[]).filter(c=>c.excluido).map(c=>c.neId));
+            if(!quitadas.size) return det;
+            const fuera = det.filter(d=>quitadas.has(d.neId));
+            if(!fuera.length) return det;
+            const suma = (a) => a.reduce((t,d)=>t+parseNum(d.montoPagar||0),0);
+            if(Math.abs((suma(det)-suma(fuera))-parseNum(r.totalCobranza||0)) <= 0.011) return det.filter(d=>!quitadas.has(d.neId));
+            return det;
+          };
+
           // ── PDF individual por reporte ──
           const genPdfIndividual = (r) => {
             const esPct = r.tipoComision==='PORCENTUAL';
+            const detCob = detalleCobranzaVigente(r);
             const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
               <style>
                 body{font-family:Arial,sans-serif;padding:32px;color:#111;font-size:12px}
@@ -51623,11 +51641,11 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   <tr><td>Recuperación de Cliente</td><td style="color:#64748b;font-size:9px">5 de cada mes</td><td class="r">$${formatNum(r.bonos?.recuperacion||0)}</td></tr>
                   <tr class="total-row"><td colspan="2" style="color:#fff">COMPENSACIÓN TOTAL</td><td style="text-align:right;color:#4ade80;font-size:18px">$${formatNum(r.compensacionTotal)}</td></tr>
                 </table>
-                ${(r.cobranzaDetalle&&r.cobranzaDetalle.length)?`
+                ${detCob.length?`
                 <h2 style="font-size:13px;margin-top:22px">Detalle de Cobranza del Mes <span style="font-size:9px;color:#b45309;font-weight:900">· Se paga el 15 de cada mes</span></h2>
                 <table>
                   <tr><th>NE</th><th>Cliente</th><th>Fecha NE</th><th>Fecha Cobro</th><th style="text-align:right">Monto NE</th><th style="text-align:right">Días Retr.</th><th style="text-align:right">%</th><th style="text-align:right">Comisión</th></tr>
-                  ${r.cobranzaDetalle.map(d=>`<tr><td style="font-weight:700;color:#E8541A">${d.neId}</td><td>${d.cliente||''}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td class="r">$${formatNum(d.monto||0)}</td><td class="r">${formatNum(d.diasRetraso||0)}d</td><td class="r">${formatNum(d.pct||0)}%</td><td class="r" style="color:#16a34a">$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
+                  ${detCob.map(d=>`<tr><td style="font-weight:700;color:#E8541A">${d.neId}</td><td>${d.cliente||''}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td class="r">$${formatNum(d.monto||0)}</td><td class="r">${formatNum(d.diasRetraso||0)}d</td><td class="r">${formatNum(d.pct||0)}%</td><td class="r" style="color:#16a34a">$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
                   <tr class="total-row"><td colspan="7">TOTAL COBRANZA</td><td style="text-align:right;color:#4ade80">$${formatNum(r.totalCobranza||0)}</td></tr>
                 </table>`:''}
               `}
@@ -51642,14 +51660,15 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           // ── Excel individual ──
           const genExcelIndividual = (r) => {
             const esPct = r.tipoComision==='PORCENTUAL';
+            const detCob = detalleCobranzaVigente(r);
             const rows = esPct
               ? [['Concepto','Monto'],['Ventas brutas sin IVA','$'+formatNum(r.totalVentas)],['% Comisión',r.porcentaje+'%'],['COMISIÓN TOTAL','$'+formatNum(r.compensacionTotal)]]
               : [['Concepto','Fecha de Pago','Monto'],['Comisión por Meta','5 de cada mes','$'+formatNum(r.comisionMeta||0)],['Comisión por Cobranza','15 de cada mes','$'+formatNum(r.totalCobranza||0)],['Bono Mix','5 de cada mes','$'+formatNum(r.montoMix||0)],['Bono Vehículo','5 de cada mes','$'+formatNum(r.bonos?.bonoVehiculo||0)],['Salario Garantizado','5 de cada mes','$'+formatNum(r.bonos?.salarioGarantizado||0)],['Captación','5 de cada mes','$'+formatNum(r.bonos?.captacion||0)],['Recuperación','5 de cada mes','$'+formatNum(r.bonos?.recuperacion||0)],['TOTAL','','$'+formatNum(r.compensacionTotal)]];
-            const detalleCobr=(!esPct&&r.cobranzaDetalle&&r.cobranzaDetalle.length)?`
+            const detalleCobr=(!esPct&&detCob.length)?`
               <tr><td colspan="9"></td></tr>
               <tr><td colspan="9" style="font-weight:900;font-size:12px;background:#fef3c7">DETALLE DE COBRANZA DEL MES — Se paga el 15 de cada mes</td></tr>
               <tr style="font-weight:900;background:#f1f5f9"><td>NE</td><td>Cliente</td><td>Factura</td><td>Fecha NE</td><td>Fecha Cobro</td><td>Monto NE</td><td>Días Retraso</td><td>%</td><td>Comisión</td></tr>
-              ${r.cobranzaDetalle.map(d=>`<tr><td>${d.neId}</td><td>${d.cliente||''}</td><td>${d.factura||'—'}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td>$${formatNum(d.monto||0)}</td><td>${formatNum(d.diasRetraso||0)}</td><td>${formatNum(d.pct||0)}%</td><td>$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
+              ${detCob.map(d=>`<tr><td>${d.neId}</td><td>${d.cliente||''}</td><td>${d.factura||'—'}</td><td>${d.fechaNE||''}</td><td>${d.fechaPago||''}</td><td>$${formatNum(d.monto||0)}</td><td>${formatNum(d.diasRetraso||0)}</td><td>${formatNum(d.pct||0)}%</td><td>$${formatNum(d.montoPagar||0)}</td></tr>`).join('')}
               <tr style="font-weight:900;background:#111;color:#fff"><td colspan="8">TOTAL COBRANZA</td><td>$${formatNum(r.totalCobranza||0)}</td></tr>`:'';
             const html=`<html><head><meta charset="utf-8"></head><body><table border="1">
               <tr><td colspan="8" style="font-weight:900;font-size:14px">COMISIÓN ${r.vendedor} — ${r.mesLabel}</td></tr>
