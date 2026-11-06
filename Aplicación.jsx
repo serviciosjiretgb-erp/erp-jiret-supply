@@ -21968,6 +21968,405 @@ const CODIGO_ALIAS_PT = {
 };
 const resolverAliasCodigo = (codigo) => CODIGO_ALIAS_PT[String(codigo||'').toUpperCase().trim()] || codigo;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// UNIFICAR PRODUCTOS HISTÓRICOS → PRODUCTO ACTUAL (solo a nivel de producto)
+// Las cargas históricas (enero–abril 2026) trajeron productos con otro código o descripción que en realidad son
+// productos del catálogo actual. En Configuración se elige a cuál corresponde cada uno y la equivalencia se guarda
+// aparte (settings/productosEquivalencias). NO se modifica ninguna nota de entrega, factura, costo, inventario,
+// comisión ni asiento guardado: los reportes de análisis leen copias en memoria con el producto ya unificado.
+// Con la lista de equivalencias vacía todo funciona exactamente igual que antes (las copias son las mismas listas).
+// ══════════════════════════════════════════════════════════════════════════════
+const prodEqTxt = (v) => (v === undefined || v === null ? '' : String(v));
+const prodEqSinTildes = (s) => prodEqTxt(s).normalize('NFD').replace(/[̀-ͯ]/g, '');
+// Misma regla que usa la Gráfica de Ventas para quitar el prefijo «CÓDIGO — » del nombre de un producto
+const prodEqSinCodigo = (s) => prodEqTxt(s).replace(/^[A-Z][A-Z0-9.\/-]{1,30}\s+—\s+/, '').trim();
+// Clave de un producto histórico: su descripción sin prefijo de código, en mayúsculas, sin tildes y con espacios simples
+const prodEqClave = (s) => prodEqSinTildes(prodEqSinCodigo(s)).toUpperCase().replace(/\s+/g, ' ').trim();
+const prodEqCodigoDe = (raw) => prodEqTxt(raw).split('___')[0].replace(/-RESTORE$/i, '').replace(/-BACKUP$/i, '').trim();
+const prodEqFecha = (f) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(prodEqTxt(f)); return m ? m[3] + '/' + m[2] + '/' + m[1] : prodEqTxt(f); };
+
+// Mismo criterio que el buscador de artículos de la Nota de Entrega para «Productos Terminados»
+const prodEqEsPT = (i) => i.activo !== false && (i.category === 'Productos Terminados' || i.category === 'Terminados'
+  || prodEqTxt(i.category).toUpperCase().includes('FLEJE') || prodEqTxt(i.subcategory || i.subCategory).toUpperCase().includes('FLEJE')
+  || prodEqTxt(i.displayId || prodEqTxt(i.id).split('___')[0]).toUpperCase().startsWith('FLJ-'));
+
+// Catálogo actual: los ítems del inventario sin repetir (un producto puede tener un registro por almacén)
+const prodEqCatalogo = (inventory) => {
+  const porCodigo = new Map();
+  (inventory || []).forEach((i) => {
+    if (!i || typeof i !== 'object') return;
+    const cod = prodEqCodigoDe(i.displayId || prodEqTxt(i.id).split('___')[0]);
+    if (!cod) return;
+    const k = cod.toUpperCase();
+    let c = porCodigo.get(k);
+    if (!c) { c = { codigo: cod, desc: '', categoria: '', subcategoria: '', pt: false, clave: '', perfil: null, _d: new Map() }; porCodigo.set(k, c); }
+    const d = prodEqTxt(i.desc || i.descripcion || i.name).trim();
+    if (d) c._d.set(d, (c._d.get(d) || 0) + 1);
+    if (!c.categoria && i.category) c.categoria = prodEqTxt(i.category);
+    const sc = prodEqTxt(i.subCategory || i.subcategory);
+    if (!c.subcategoria && sc) c.subcategoria = sc;
+    if (prodEqEsPT(i)) c.pt = true;
+  });
+  porCodigo.forEach((c) => {
+    let mejor = '', n = 0;
+    c._d.forEach((cuantos, d) => { if (cuantos > n) { n = cuantos; mejor = d; } });   // la descripción más repetida entre sus registros
+    c.desc = mejor; c.clave = prodEqClave(mejor);
+  });
+  const lista = [...porCodigo.values()].filter((c) => c.desc);
+  const base = lista.some((c) => c.pt) ? lista.filter((c) => c.pt) : lista;
+  return { lista, base, porCodigo, claves: new Set(lista.map((c) => c.clave)) };
+};
+
+// ── Parecido entre la descripción de un producto histórico y la de un producto actual ──
+const PQ_UNID = ['CM', 'MM', 'M', 'MIC', 'KG', 'GR', 'L', 'YD', 'MIL', 'IN'];
+const PQ_SIN = {
+  TRANSP: 'TRANSPARENTE', TRANSPARENT: 'TRANSPARENTE', TRANS: 'TRANSPARENTE', TR: 'TRANSPARENTE',
+  AUTOM: 'AUTOMATICO', AUTOMAT: 'AUTOMATICO', AUTOMATICA: 'AUTOMATICO', AUTO: 'AUTOMATICO',
+  MTS: 'M', MTRS: 'M', MTR: 'M', MT: 'M', MTO: 'M', MTOS: 'M', METRO: 'M', METROS: 'M',
+  YDS: 'YD', YARDA: 'YD', YARDAS: 'YD', YARD: 'YD', YARDS: 'YD',
+  MC: 'MIC', MCS: 'MIC', MICRA: 'MIC', MICRAS: 'MIC', MICRON: 'MIC', MICRONES: 'MIC',
+  MILS: 'MIL', CMS: 'CM', CENTIMETRO: 'CM', CENTIMETROS: 'CM',
+  KGS: 'KG', KILO: 'KG', KILOS: 'KG', KILOGRAMO: 'KG', KILOGRAMOS: 'KG',
+  G: 'GR', GRS: 'GR', GMS: 'GR', GM: 'GR', GRAMO: 'GR', GRAMOS: 'GR',
+  LT: 'L', LTS: 'L', LITRO: 'L', LITROS: 'L', PULG: 'IN', PULGADA: 'IN', PULGADAS: 'IN',
+  BOL: 'BOLSA', BOLSAS: 'BOLSA', MILLARES: 'MILLAR', TERMOENC: 'TERMOENCOGIBLE',
+  NEGRA: 'NEGRO', ROJA: 'ROJO', BLANCA: 'BLANCO', AMARILLA: 'AMARILLO', MORADA: 'MORADO', ROSA: 'ROSADO', NARANJADO: 'NARANJA',
+};
+const PQ_VACIAS = ['X', 'DE', 'DEL', 'LA', 'EL', 'LOS', 'LAS', 'CON', 'PARA', 'Y', 'EN', 'POR'];
+const PQ_COLORES = ['TRANSPARENTE', 'NEGRO', 'ROJO', 'AZUL', 'VERDE', 'BLANCO', 'AMARILLO', 'NARANJA', 'GRIS', 'MARRON', 'ROSADO', 'MORADO', 'DORADO', 'PLATEADO', 'CELESTE', 'BEIGE'];
+const prodEqPerfil = (s) => {
+  const t = prodEqSinTildes(prodEqSinCodigo(s)).toUpperCase().replace(/×/g, 'X').replace(/(\d),(\d)/g, '$1.$2')
+    .replace(/(\d)\s*"/g, '$1 IN ').replace(/(\d)([A-Z])/g, '$1 $2').replace(/([A-Z])(\d)/g, '$1 $2').replace(/[^A-Z0-9.]+/g, ' ');
+  const crudos = t.split(' ').map((x) => x.replace(/^\.+|\.+$/g, '')).filter(Boolean);
+  const pal = [];
+  crudos.forEach((x) => {
+    if (/^\d/.test(x)) { pal.push(x); return; }
+    let w = x;
+    if (w.length > 1 && w.charAt(w.length - 1) === 'X') { const b = w.slice(0, -1); if (PQ_UNID.indexOf(PQ_SIN[b] || b) >= 0) w = b; } // «CMX» → «CM»
+    w = PQ_SIN[w] || w;
+    if (PQ_VACIAS.indexOf(w) >= 0) return;
+    pal.push(w);
+  });
+  const palabras = new Set(), numeros = new Set(), colores = new Set(), porUnidad = new Map();
+  for (let i = 0; i < pal.length; i++) {
+    const w = pal[i];
+    if (/^\d/.test(w)) {
+      const n = String(parseFloat(w));                 // «4.0» y «4» son el mismo número
+      if (n === 'NaN') continue;
+      numeros.add(n);
+      const sig = pal[i + 1];
+      if (sig && PQ_UNID.indexOf(sig) >= 0) { if (!porUnidad.has(sig)) porUnidad.set(sig, new Set()); porUnidad.get(sig).add(n); i++; }
+    } else if (PQ_UNID.indexOf(w) < 0 && w.length > 1) {
+      palabras.add(w);
+      if (PQ_COLORES.indexOf(w) >= 0) colores.add(w);
+    }
+  }
+  return { palabras, numeros, colores, porUnidad };
+};
+// Dos palabras cuentan como la misma si son iguales o casi (EMBALAR ≈ EMBALAJE): mismo comienzo de al menos 5 letras y ¾ de la más larga
+const prodEqIgual = (a, b) => {
+  if (a === b) return true;
+  if (a.length < 5 || b.length < 5) return false;
+  const n = Math.min(a.length, b.length);
+  let k = 0;
+  while (k < n && a.charAt(k) === b.charAt(k)) k++;
+  return k >= 5 && k >= Math.ceil(0.75 * Math.max(a.length, b.length));
+};
+const prodEqTiene = (conj, w) => { if (conj.has(w)) return true; let r = false; conj.forEach((x) => { if (!r && prodEqIgual(w, x)) r = true; }); return r; };
+// Puntaje 0–1: qué parte de lo escrito en el histórico explica el producto actual (las medidas pesan el triple);
+// si la misma unidad (cm, m, micras, kg) trae otra medida, o el color es otro, casi no cuenta.
+const prodEqPuntaje = (ph, pc) => {
+  let wH = 0, wI = 0, wU = 0;
+  ph.palabras.forEach((w) => { wH += 1; if (prodEqTiene(pc.palabras, w)) wI += 1; });
+  pc.palabras.forEach((w) => { if (!prodEqTiene(ph.palabras, w)) wU += 1; });
+  ph.numeros.forEach((n) => { wH += 3; if (pc.numeros.has(n)) wI += 3; });
+  pc.numeros.forEach((n) => { if (!ph.numeros.has(n)) wU += 3; });
+  if (!wH) return 0;
+  let p = 0.6 * (wI / wH) + 0.4 * (wI / (wH + wU));
+  let conflictos = 0;
+  ph.porUnidad.forEach((vals, u) => { const o = pc.porUnidad.get(u); if (o && !Array.from(vals).some((v) => o.has(v))) conflictos++; });
+  if (ph.colores.size && pc.colores.size && !Array.from(ph.colores).some((c) => pc.colores.has(c))) conflictos++;
+  if (conflictos) p *= Math.pow(0.35, conflictos);
+  return p;
+};
+// ¿Todo lo que trae el histórico (palabras y medidas) está en el producto actual?
+const prodEqCubre = (ph, pc) => {
+  let ok = true;
+  ph.palabras.forEach((w) => { if (!prodEqTiene(pc.palabras, w)) ok = false; });
+  ph.numeros.forEach((n) => { if (!pc.numeros.has(n)) ok = false; });
+  return ok;
+};
+// Los 3 productos actuales más parecidos; «segura» solo si el mejor lo explica todo, saca ventaja y el histórico trae al menos una medida
+const prodEqSugerir = (desc, lista, n) => {
+  const ph = prodEqPerfil(desc);
+  const pts = [];
+  (lista || []).forEach((c) => {
+    if (!c.perfil) c.perfil = prodEqPerfil(c.desc);
+    const p = prodEqPuntaje(ph, c.perfil);
+    if (p > 0.05) pts.push({ c, p });
+  });
+  pts.sort((a, b) => b.p - a.p);
+  const top = pts.slice(0, n || 3);
+  const mejor = top.length && top[0].p >= 0.4 ? top[0] : null;
+  const segura = !!mejor && mejor.p >= 0.62 && (mejor.p - (top[1] ? top[1].p : 0)) >= 0.1 && ph.numeros.size >= 1 && prodEqCubre(ph, mejor.c.perfil);
+  return { top, mejor, segura };
+};
+// Buscador del producto actual (código, nombre o categoría); primero los Productos Terminados y los más parecidos al histórico
+const prodEqBuscar = (cat, q, desc, n) => {
+  const ph = prodEqPerfil(desc);
+  const toks = prodEqSinTildes(q).toUpperCase().split(/\s+/).filter(Boolean);
+  const out = [];
+  cat.lista.forEach((c) => {
+    if (toks.length) {
+      const pajar = prodEqSinTildes(c.codigo + ' ' + c.desc + ' ' + c.categoria + ' ' + c.subcategoria).toUpperCase();
+      if (!toks.every((t) => pajar.indexOf(t) >= 0)) return;
+    }
+    if (!c.perfil) c.perfil = prodEqPerfil(c.desc);
+    out.push({ c, p: prodEqPuntaje(ph, c.perfil) });
+  });
+  out.sort((a, b) => ((b.c.pt ? 1 : 0) - (a.c.pt ? 1 : 0)) || (b.p - a.p) || a.c.desc.localeCompare(b.c.desc));
+  return out.slice(0, n || 8).map((x) => x.c);
+};
+
+// ── Lista de productos históricos (los que no están en el catálogo actual) con lo vendido de cada uno ──
+const prodEqCantidad = (it) => {
+  const wq = it && it.warehouseQtys && Object.keys(it.warehouseQtys).length > 0 ? it.warehouseQtys : null;
+  return wq ? Object.values(wq).reduce((s, q) => s + parseNum(q || 0), 0) : parseNum((it && it.cantidad) || 0);
+};
+const prodEqListar = (nes, facs, cat, lista) => {
+  const mapa = new Map((lista || []).filter((e) => e && e.clave && e.actual && typeof e.actual === 'object').map((e) => [e.clave, e]));
+  const grupos = new Map();
+  const tocar = (it, fuente, fecha) => {
+    if (!it || typeof it !== 'object') return;
+    if (it.fgId) return;                                                // productos hechos a pedido en producción: no son del catálogo ni del histórico
+    const desc = prodEqTxt(it.desc || it.descripcion).trim();
+    if (!desc) return;
+    const cod = prodEqCodigoDe(it.invCode);
+    if (cod && cat.porCodigo.has(cod.toUpperCase())) return;           // ya es un producto actual (su código está en el inventario)
+    const clave = prodEqClave(desc);
+    if (!clave) return;
+    const unif = mapa.get(clave) || null;
+    if (!unif && cat.claves.has(clave)) return;                        // su descripción es la de un producto actual
+    let g = grupos.get(clave);
+    if (!g) { g = { clave, desc, vars: new Map(), codigos: new Set(), ne: { lineas: 0, cantidad: 0, monto: 0 }, fac: { lineas: 0, cantidad: 0, monto: 0 }, desde: '', hasta: '', unif }; grupos.set(clave, g); }
+    g.vars.set(desc, (g.vars.get(desc) || 0) + 1);
+    if (cod) g.codigos.add(cod);
+    const co = prodEqCodigoDe(it.codigoOrigen);
+    if (co) g.codigos.add(co);
+    const cant = prodEqCantidad(it), precio = parseNum(it.precioUnit || 0);
+    const b = fuente === 'ne' ? g.ne : g.fac;
+    b.lineas += 1; b.cantidad += cant; b.monto += precio > 0 ? precio * cant : 0;
+    if (fecha) { if (!g.desde || fecha < g.desde) g.desde = fecha; if (!g.hasta || fecha > g.hasta) g.hasta = fecha; }
+  };
+  (nes || []).forEach((ne) => { if (!ne || ne.status === 'ANULADA' || !Array.isArray(ne.items)) return; ne.items.forEach((it) => tocar(it, 'ne', prodEqTxt(ne.fecha))); });
+  (facs || []).forEach((f) => { if (!f || f.esAnulacionFiscal || !Array.isArray(f.itemsFacturados)) return; f.itemsFacturados.forEach((it) => tocar(it, 'fac', prodEqTxt(f.fechaFactura || f.fecha))); });
+  const res = [...grupos.values()].map((g) => {
+    const vars = [...g.vars.entries()].sort((a, b) => b[1] - a[1]);
+    return Object.assign(g, { desc: vars[0][0], variantes: vars.map((v) => v[0]), codigos: [...g.codigos], monto: g.ne.monto + g.fac.monto });
+  });
+  // equivalencias guardadas cuyas líneas ya no existen: se siguen mostrando para poder quitarlas
+  mapa.forEach((e, clave) => {
+    if (grupos.has(clave)) return;
+    res.push({ clave, desc: prodEqTxt(e.desc), variantes: [prodEqTxt(e.desc)], codigos: e.invCodeHist ? [prodEqTxt(e.invCodeHist)] : [], ne: { lineas: 0, cantidad: 0, monto: 0 }, fac: { lineas: 0, cantidad: 0, monto: 0 }, desde: '', hasta: '', monto: 0, unif: e, sinLineas: true });
+  });
+  res.sort((a, b) => (b.monto - a.monto) || a.desc.localeCompare(b.desc));
+  return res;
+};
+
+// ── Aplicación en los reportes (solo lectura) ──
+// Contexto: equivalencias por clave + códigos del inventario. Con el mapa vacío no se calcula nada.
+const prodEqContexto = (lista, inventory, nes) => {
+  const mapa = new Map();
+  (Array.isArray(lista) ? lista : []).forEach((e) => { if (e && e.clave && e.actual && e.actual.invCode) mapa.set(e.clave, e); });
+  if (!mapa.size) return { mapa, porCodigo: new Map(), descRep: new Map() };
+  // Nombre con el que las notas de entrega actuales ya llaman a cada producto destino: así lo unificado cae en la MISMA fila de los reportes
+  const destinos = new Set();
+  mapa.forEach((e) => destinos.add(prodEqCodigoDe(e.actual.invCode).toUpperCase()));
+  const cuentas = new Map();
+  (Array.isArray(nes) ? nes : []).forEach((ne) => {
+    if (!ne || ne.status === 'ANULADA' || !Array.isArray(ne.items)) return;
+    ne.items.forEach((it) => {
+      if (!it || typeof it !== 'object') return;
+      const k = prodEqCodigoDe(it.invCode).toUpperCase();
+      if (!k || !destinos.has(k)) return;
+      const d = prodEqTxt(it.desc).trim();
+      if (!d) return;
+      let m = cuentas.get(k);
+      if (!m) { m = new Map(); cuentas.set(k, m); }
+      m.set(d, (m.get(d) || 0) + 1);
+    });
+  });
+  const descRep = new Map();
+  cuentas.forEach((m, k) => { let mejor = '', n = 0; m.forEach((c, d) => { if (c > n) { n = c; mejor = d; } }); if (mejor) descRep.set(k, mejor); });
+  return { mapa, porCodigo: prodEqCatalogo(inventory).porCodigo, descRep };
+};
+// A qué producto actual corresponde un artículo histórico (null si es un producto actual, si no hay equivalencia o si no hay datos)
+const prodEqDestino = (ctx, it) => {
+  if (!ctx || !ctx.mapa || !ctx.mapa.size || !it || typeof it !== 'object') return null;
+  if (it.fgId) return null;
+  const desc = prodEqTxt(it.desc || it.descripcion).trim();
+  if (!desc) return null;
+  const cod = prodEqCodigoDe(it.invCode);
+  if (cod && ctx.porCodigo.has(cod.toUpperCase())) return null;         // un producto actual nunca se cambia
+  const e = ctx.mapa.get(prodEqClave(desc));
+  if (!e) return null;
+  const kc = prodEqCodigoDe(e.actual.invCode).toUpperCase();
+  const c = ctx.porCodigo.get(kc);
+  const out = { invCode: c ? c.codigo : prodEqTxt(e.actual.invCode), desc: (ctx.descRep && ctx.descRep.get(kc)) || (c && c.desc) || prodEqTxt(e.actual.desc) };
+  return out.invCode && out.desc ? out : null;
+};
+const prodEqCopiaItem = (it, d) => Object.assign({}, it, { desc: d.desc, invCode: d.invCode },
+  { _prodHist: { desc: prodEqTxt(it.desc || it.descripcion), invCode: prodEqTxt(it.invCode) } });
+// Copia de las notas de entrega con los artículos históricos ya unificados. Si no hay equivalencias (o ninguna línea coincide) devuelve LA MISMA lista.
+const prodEqAplicarNEs = (nes, ctx) => {
+  if (!ctx || !ctx.mapa || !ctx.mapa.size || !Array.isArray(nes)) return nes;
+  let cambio = false;
+  const out = nes.map((ne) => {
+    if (!ne || !Array.isArray(ne.items) || !ne.items.length) return ne;
+    let tocado = false;
+    const items = ne.items.map((it) => { const d = prodEqDestino(ctx, it); if (!d) return it; tocado = true; return prodEqCopiaItem(it, d); });
+    if (!tocado) return ne;
+    cambio = true;
+    return Object.assign({}, ne, { items });
+  });
+  return cambio ? out : nes;
+};
+// Para reportes que NO deben tocar los datos de cálculo (costos): solo cambian lo que se muestra de la línea
+const prodEqVista = (ctx, it, codigo, desc) => {
+  const d = prodEqDestino(ctx, it);
+  if (!d) return { codigo, desc, hist: '', histCod: '' };
+  return { codigo: d.invCode, desc: d.desc, hist: prodEqTxt(it.desc || it.descripcion), histCod: prodEqTxt(it.invCode || it.codigoOrigen) };
+};
+const prodEqNombre = (ctx, it, fallback) => { const d = prodEqDestino(ctx, it); return d ? d.desc : fallback; };
+const prodEqTexto = (ctx, it) => { const d = prodEqDestino(ctx, it); return d ? d.invCode + ' ' + d.desc : ''; };
+
+// ── Pantalla de Configuración ──
+function PqFila({ g, cat, ocupado, onUnificar, onQuitar }) {
+  const pendiente = !g.unif;
+  const [q, setQ] = useState('');
+  const [abierto, setAbierto] = useState(false);
+  const [sel, setSel] = useState(null);
+  const sug = useMemo(() => (pendiente ? prodEqSugerir(g.desc, cat.base, 3) : null), [pendiente, g.desc, cat]);
+  const res = useMemo(() => (abierto ? prodEqBuscar(cat, q, g.desc, 8) : []), [abierto, q, g.desc, cat]);
+  const poco = useMemo(() => (sel ? prodEqPuntaje(prodEqPerfil(g.desc), sel.perfil || prodEqPerfil(sel.desc)) < 0.4 : false), [sel, g.desc]);
+  const enInv = g.unif ? cat.porCodigo.get(prodEqCodigoDe(g.unif.actual.invCode).toUpperCase()) : null;
+  const actDesc = (enInv && enInv.desc) || (g.unif ? prodEqTxt(g.unif.actual.desc) : '');
+  const actCod = enInv ? enInv.codigo : (g.unif ? prodEqTxt(g.unif.actual.invCode) : '');
+  return (
+    <div data-testid="pq-fila" data-clave={g.clave} className={'border rounded-2xl p-4 ' + (pendiente ? 'border-gray-200 bg-white' : 'border-green-200 bg-green-50')}>
+      <div className="min-w-0">
+        <div className="text-[9px] font-black text-gray-400 uppercase">Producto histórico</div>
+        <div className="text-xs font-black text-gray-800 break-words">{g.desc}</div>
+        {g.variantes.length > 1 && <div className="text-[9px] text-gray-400 font-bold mt-0.5 break-words">También escrito como: {g.variantes.filter((v) => v !== g.desc).slice(0, 3).join(' · ')}</div>}
+        <div className="text-[9px] text-gray-500 font-bold mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
+          {g.ne.lineas > 0 && <span>Notas de entrega: {g.ne.lineas} {g.ne.lineas === 1 ? 'línea' : 'líneas'} · {formatNum(g.ne.cantidad)} und · ${formatNum(g.ne.monto)}</span>}
+          {g.fac.lineas > 0 && <span>Facturas: {g.fac.lineas} {g.fac.lineas === 1 ? 'línea' : 'líneas'} · ${formatNum(g.fac.monto)}</span>}
+          {g.desde && <span>{prodEqFecha(g.desde)} → {prodEqFecha(g.hasta)}</span>}
+          {g.codigos.length > 0 && <span>Código que traía: {g.codigos.join(', ')}</span>}
+          {g.sinLineas && <span className="text-amber-600">Ya no hay ventas con este nombre</span>}
+        </div>
+      </div>
+      {pendiente ? (
+        <div className="mt-3 space-y-2">
+          {sug && sug.mejor && !sel && (
+            <button data-testid="pq-sugerido" onClick={() => setSel(sug.mejor.c)} className="text-left w-full bg-orange-50 border border-orange-200 text-orange-800 rounded-xl px-3 py-2 text-[10px] font-bold hover:bg-orange-100">
+              <span className="font-black uppercase">Usar sugerido{sug.segura ? '' : ' (dudoso, revísalo)'}:</span> {sug.mejor.c.codigo} — {sug.mejor.c.desc}
+            </button>
+          )}
+          <div className="relative">
+            <input data-testid="pq-buscar" value={q} onChange={(e) => { setQ(e.target.value); setAbierto(true); }} onFocus={() => setAbierto(true)} onBlur={() => setTimeout(() => setAbierto(false), 200)}
+              placeholder="Buscar el producto actual por código o nombre…" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+            {abierto && res.length > 0 && (
+              <div className="absolute z-30 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-56 overflow-y-auto">
+                {res.map((c) => (
+                  <button key={c.codigo} data-testid="pq-opcion" onMouseDown={() => { setSel(c); setQ(''); setAbierto(false); }} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-[10px] border-b last:border-0">
+                    <span className="font-black text-orange-600">{c.codigo}</span> <span className="font-bold text-gray-800">— {c.desc}</span>
+                    <span className="text-gray-400 font-bold"> · {c.categoria || 'Sin categoría'}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {sel && (
+            <div data-testid="pq-sel" className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[10px] font-bold text-green-800 min-w-0 break-words">Se unificará con: <span className="font-black">{sel.codigo} — {sel.desc}</span>{poco && <div data-testid="pq-poco" className="text-amber-700 font-black mt-0.5">Ojo: el nombre y las medidas se parecen poco. Revisa que sea el mismo producto.</div>}</div>
+              <div className="flex gap-2">
+                <button data-testid="pq-unificar" disabled={ocupado} onClick={() => onUnificar(g, sel).then((ok) => { if (ok) setSel(null); })} className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-green-700 disabled:opacity-50">Unificar</button>
+                <button onClick={() => setSel(null)} className="px-3 py-1.5 rounded-lg border border-gray-300 text-[10px] font-black uppercase text-gray-600 hover:bg-white">Cancelar</button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div data-testid="pq-actual" className="text-[10px] font-bold text-green-800 min-w-0 break-words">Cuenta como: <span className="font-black">{actCod} — {actDesc}</span>{!enInv && <span className="text-amber-600"> (ya no está en el inventario)</span>}</div>
+          <button data-testid="pq-quitar" disabled={ocupado} onClick={() => onQuitar(g)} className="px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-[10px] font-black uppercase hover:bg-red-50 disabled:opacity-50">Quitar unificación</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PqProductosHistoricos({ notasEntrega, invoices, inventory, equivalencias, onGuardar, usuario }) {
+  const [filtro, setFiltro] = useState('pendientes');
+  const [texto, setTexto] = useState('');
+  const [limite, setLimite] = useState(30);
+  const [msg, setMsg] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  const [local, setLocal] = useState(null);                 // lo recién guardado, hasta que llegue la lista actualizada de la base de datos
+  useEffect(() => { setLocal(null); }, [equivalencias]);
+  const lista = local || (Array.isArray(equivalencias) ? equivalencias : []);
+  const cat = useMemo(() => prodEqCatalogo(inventory), [inventory]);
+  const grupos = useMemo(() => prodEqListar(notasEntrega, invoices, cat, lista), [notasEntrega, invoices, cat, lista]);
+  const nPend = grupos.filter((g) => !g.unif).length, nUnif = grupos.length - nPend;
+  const tn = prodEqSinTildes(texto).toUpperCase().trim();
+  const filtrados = grupos.filter((g) => {
+    if (filtro === 'pendientes' && g.unif) return false;
+    if (filtro === 'unificados' && !g.unif) return false;
+    if (!tn) return true;
+    return prodEqSinTildes(g.variantes.join(' ') + ' ' + g.codigos.join(' ') + ' ' + (g.unif ? g.unif.actual.invCode + ' ' + g.unif.actual.desc : '')).toUpperCase().indexOf(tn) >= 0;
+  });
+  const guardar = async (nueva, ok) => {
+    setOcupado(true); setMsg(null);
+    try { await onGuardar(nueva); setLocal(nueva); setMsg({ tipo: 'ok', texto: ok }); return true; }
+    catch (e) { setMsg({ tipo: 'error', texto: 'No se pudo guardar: ' + ((e && e.message) || e) }); return false; }
+    finally { setOcupado(false); }
+  };
+  const unificar = (g, c) => guardar(
+    lista.filter((e) => e.clave !== g.clave).concat([{ clave: g.clave, desc: g.desc, invCodeHist: g.codigos[0] || '', actual: { invCode: c.codigo, desc: c.desc }, ts: Date.now(), user: usuario || '' }]),
+    'Listo: «' + g.desc + '» ahora cuenta como «' + c.desc + '».');
+  const quitar = (g) => guardar(lista.filter((e) => e.clave !== g.clave), 'Se quitó la unificación de «' + g.desc + '»: vuelve a contarse por separado.');
+  const pestana = (k, etq, n) => (
+    <button key={k} data-testid={'pq-filtro-' + k} onClick={() => { setFiltro(k); setLimite(30); }} className={'px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-colors ' + (filtro === k ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-100')}>{etq} ({n})</button>
+  );
+  return (
+    <div data-testid="pq-seccion" className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
+      <h2 className="text-xl font-black uppercase text-black mb-2 flex items-center gap-3 border-b pb-4"><Layers className="text-indigo-500"/> Productos históricos → producto actual</h2>
+      <p className="text-xs font-bold text-gray-500 mb-1">Las cargas de periodos anteriores trajeron productos con otro código o nombre que en realidad son productos que hoy tienes en el inventario. Aquí eliges a cuál corresponde cada uno y los reportes de productos (Top 10 de la Gráfica de Ventas, Productos Vendidos, Reporte General de Ventas y Costos, Dashboards) los suman como un solo producto.</p>
+      <p className="text-[10px] font-black text-indigo-600 mb-4">Solo cambia cómo se agrupa el producto al mostrarlo: no se modifica ninguna nota de entrega, factura, costo, inventario ni contabilidad, y puedes quitar la unificación cuando quieras.</p>
+      {cat.lista.length === 0 ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs font-bold text-amber-800">Todavía no hay productos en el inventario (o se están cargando). Cuando estén, aquí podrás unificar los productos históricos con ellos.</div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="flex gap-1 bg-gray-50 p-1 rounded-lg border border-gray-200">{pestana('pendientes', 'Pendientes', nPend)}{pestana('unificados', 'Unificados', nUnif)}{pestana('todos', 'Todos', grupos.length)}</div>
+            <input data-testid="pq-texto" value={texto} onChange={(e) => { setTexto(e.target.value); setLimite(30); }} placeholder="Buscar en la lista…" className="flex-1 min-w-[200px] border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-indigo-400"/>
+          </div>
+          {msg && <div data-testid="pq-aviso" role="status" className={'rounded-xl px-4 py-2 mb-3 text-[11px] font-black ' + (msg.tipo === 'ok' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-700')}>{msg.texto}</div>}
+          {filtrados.length === 0 ? (
+            <p data-testid="pq-vacio" className="text-center text-gray-400 text-xs py-8 uppercase font-black">{grupos.length === 0 ? 'No hay productos históricos: todos los productos vendidos ya están en el inventario actual' : (filtro === 'pendientes' && nPend === 0 && !tn) ? 'No quedan productos históricos pendientes por unificar' : 'Sin resultados con este filtro'}</p>
+          ) : (
+            <div className="space-y-3">
+              {filtrados.slice(0, limite).map((g) => <PqFila key={g.clave} g={g} cat={cat} ocupado={ocupado} onUnificar={unificar} onQuitar={quitar}/>)}
+              {filtrados.length > limite && <button data-testid="pq-mas" onClick={() => setLimite((n) => n + 30)} className="w-full py-2 rounded-xl border-2 border-gray-200 text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50">Mostrar más ({filtrados.length - limite} restantes)</button>}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 const getTodayDate = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -22221,6 +22620,7 @@ const _aaUnir = (...a) => a.filter(Boolean).join(' · ');
 const AA_IGNORAR = new Set(['auditoria_eventos', 'userActivity', 'activeSessions', 'notifications', 'papelera']);
 const _aaAjuste = (id) => {
   const s = String(id);
+  if (s === 'productosEquivalencias') return ['Configuración', 'Productos históricos', 'unificación de productos históricos con el producto actual'];
   if (/^(osaCounter|cuentasFavoritas)$/.test(s)) return null;                                  // contadores y preferencias de pantalla
   if (s === 'general') return ['Configuración', 'Ajustes del sistema', 'ajustes del sistema', /^(tasaDeprecUltima|correlativo.*)$/];
   if (s === 'comisionesCobranzaOverrides') return ['Ventas y Facturación', 'Comisiones', 'cobranza manual de comisiones'];
@@ -24194,7 +24594,9 @@ const prFrase = (s) => {
   return s.replace(/\b(iva|islr|ivss|faov|inces|rrhh|usd|bcv|seniat|c\.a\.|s\.a\.)\b/gi, (m) => m.toUpperCase());
 };
 
-// opts: { anio, mf (1-12), modo:'acum'|'mes', parseNum, codCostoMercancia }
+// opts: { anio, mf (1-12), modo:'acum'|'mes', parseNum, codCostoMercancia, vista:'cons'|'prod'|'merc' }
+// vista 'cons' (por defecto) = consolidado, como siempre. 'prod' / 'merc' = resultado de esa línea con los gastos operativos absorbidos
+// según su % de ingresos (ver prVistaLinea): el modelo devuelto tiene la misma forma y trae además `V` con los datos del reparto.
 const prModeloER = (asientos, plan, o = {}) => {
   const anio = Number(o.anio) || new Date().getFullYear();
   const mf = Math.min(12, Math.max(1, Number(o.mf) || 1));
@@ -24217,6 +24619,7 @@ const prModeloER = (asientos, plan, o = {}) => {
   const CODIGOS_VENTA_DESDE_5_1 = ['5.1.01.01.001', '5.1.01.02.001'].concat(codMerc ? [codMerc] : []);
   const CODIGOS_PLANTA_DESDE_5_3 = ['5.3.04.01.010'];
   const esCostoPlanta = (cod) => ((cod.startsWith('5.1') || cod.startsWith('5.2')) && !CODIGOS_VENTA_DESDE_5_1.includes(cod)) || CODIGOS_PLANTA_DESDE_5_3.includes(cod);
+  const esCostoVenta = (cod) => (cod.startsWith('5.3') && !CODIGOS_PLANTA_DESDE_5_3.includes(cod)) || CODIGOS_VENTA_DESDE_5_1.includes(cod);   // «Resultado Venta» de la pantalla
 
   // ── 1) acumular por cuenta y por punto de la serie (débito − crédito, en USD) ──
   const ctas = new Map();
@@ -24363,7 +24766,156 @@ const prModeloER = (asientos, plan, o = {}) => {
   const etq = n === 1 ? prMMeses[mf - 1] + ' ' + anio : prMMeses[mi - 1] + ' – ' + prMMeses[mf - 1] + ' ' + anio;
   const corta = n === 1 ? prMMesesC[mf - 1] + ' ' + anio : prMMesesC[mi - 1] + '–' + prMMesesC[mf - 1] + ' ' + anio;
   const vacio = !(Math.abs(T.ing) > 0.005 || Math.abs(T.cos) > 0.005 || Math.abs(T.gas) > 0.005);
-  return { vacio, per: { anio, mi, mf, n, modo, etq, corta, gran }, x, xn, nb, T, S, Q, L, C, G: { cats, total: prMSum(S.gas), generica }, F, E };
+  const M = { vacio, per: { anio, mi, mf, n, modo, etq, corta, gran }, x, xn, nb, T, S, Q, L, C, G: { cats, total: prMSum(S.gas), generica }, F, E, V: null };
+  const vista = o.vista === 'prod' || o.vista === 'merc' ? o.vista : 'cons';
+  if (vista === 'cons') return M;
+  return prVistaLinea({ ctas, pdcMap, nb, gran, mi, mf, n, M, LS, S, esCuentaDeCosto, esCostoPlanta, esCostoVenta, codMerc }, vista);
+};
+
+// ═══ Vista por línea (Producción / Mercancía) ═══
+// Mismas cuentas y reglas que los botones «Resultado Planta» y «Resultado Venta» del Estado de Resultados de la pantalla:
+//   ingresos: Producción = cuentas 4.x cuyo nombre dice «orden de producción»; Mercancía = 4.1 que no son órdenes de producción (el resto = otros ingresos);
+//   costos: los de cada línea por código (esCostoPlanta / esCostoVenta; no consultan el Grupo del Plan de Cuentas);
+//   gastos operativos: los del Resultado General (5.x / 6.x que el Plan no marca como costo) menos las cuentas que son costo de esa línea,
+//   REPARTIDOS según el % de ingresos de la línea sobre el total de ingresos del período (los otros ingresos no absorben gastos).
+// Devuelve un modelo con la misma forma que el consolidado: T/S/Q/L/C/G/F/E de la línea (gastos = los absorbidos) y `V` con los datos del reparto.
+// Vocabulario de cada línea (lo usan las láminas para nombrar cosas igual en todas partes)
+const prVoc = (k) => (k === 'prod'
+  ? { k: 'prod', linea: 'Producción', ing: 'ingresos por órdenes de producción', ingC: 'ingresos de producción', costo: 'costo de producción', res: 'Resultado de Producción', pantalla: 'Resultado Planta' }
+  : { k: 'merc', linea: 'Mercancía', ing: 'ingresos por venta de mercancía', ingC: 'ventas de mercancía', costo: 'costo de la mercancía vendida', res: 'Resultado de Mercancía', pantalla: 'Resultado Venta' });
+const prVistaLinea = (cx, vista) => {
+  const { ctas, pdcMap, nb, gran, mi, mf, n, M, LS, S, esCuentaDeCosto, esCostoPlanta, esCostoVenta, codMerc } = cx;
+  const prod = vista === 'prod';
+  const zeros = () => new Array(nb).fill(0);
+  const add = (dst, v, sg = 1) => { for (let i = 0; i < nb; i++) dst[i] += sg * v[i]; };
+  const ingL = prod ? LS.op : LS.merc, ingO = prod ? LS.merc : LS.op;
+  const totIng = prMSum(S.ing);
+  const fr = (v) => (totIng > 0 ? Math.max(0, Math.min(1, prMSum(v) / totIng)) : 0);
+  const pct = fr(ingL), pctOtra = fr(ingO), pctOtros = totIng > 0 ? Math.max(0, 1 - pct - pctOtra) : 0;
+  const esCostoL = prod ? esCostoPlanta : esCostoVenta, esCostoO = prod ? esCostoVenta : esCostoPlanta;
+
+  // costos de cada línea y gastos que no son costo de esa línea (por punto)
+  const costL = zeros(), costO = zeros(), poolL = zeros(), poolO = zeros();
+  const CS = { mp: zeros(), bd: zeros(), fle: zeros(), int: zeros(), rs: zeros() };
+  const gastosL = [], costosL = [];
+  ctas.forEach((c) => {
+    const cod = c.cod, ch = cod.charAt(0);
+    if (ch !== '5' && ch !== '6') return;
+    const nombre = c.nombre || '';
+    const cL = ch === '5' && esCostoL(cod), cO = ch === '5' && esCostoO(cod);
+    if (cL) {
+      add(costL, c.v); costosL.push(c);
+      const bd = /bonific/i.test(nombre) && /director/i.test(nombre), it = /inter[eé]s/i.test(nombre), fl = /flete/i.test(nombre);
+      if (bd) add(CS.bd, c.v); else if (it) add(CS.int, c.v); else if (fl) add(CS.fle, c.v);
+      else if (cod.startsWith('5.1') || cod.startsWith('5.2') || (codMerc && cod === codMerc)) add(CS.mp, c.v); else add(CS.rs, c.v);
+    }
+    if (cO) add(costO, c.v);
+    if (!esCuentaDeCosto(cod)) {
+      if (!cL) { add(poolL, c.v); gastosL.push(c); }
+      if (!cO) add(poolO, c.v);
+    }
+  });
+  const absL = poolL.map((v) => v * pct), absO = poolO.map((v) => v * pctOtra);
+
+  // series y totales de la línea (gastos = absorbidos)
+  const SS = { ing: ingL.slice(), cos: costL, gas: absL };
+  SS.ub = SS.ing.map((v, i) => v - SS.cos[i]); SS.un = SS.ub.map((v, i) => v - SS.gas[i]);
+  SS.mb = SS.ub.map((v, i) => prMDiv(v, SS.ing[i])); SS.mn = SS.un.map((v, i) => prMDiv(v, SS.ing[i]));
+  const T = { ing: prMSum(SS.ing), cos: prMSum(SS.cos), ub: prMSum(SS.ub), gas: prMSum(SS.gas), un: prMSum(SS.un) };
+  T.mb = prMDiv(T.ub, T.ing); T.mn = prMDiv(T.un, T.ing); T.prom = T.ing / nb;
+
+  // trimestres
+  const mesDe = (i) => (gran === 'mes' ? mi + i : mf);
+  const Q = [];
+  [[1, 3, '1T'], [4, 6, '2T'], [7, 9, '3T'], [10, 12, '4T']].forEach(([a, b, k]) => {
+    const idx = []; for (let i = 0; i < nb; i++) { const m = mesDe(i); if (m >= a && m <= b) idx.push(i); }
+    if (!idx.length) return;
+    const mesesQ = new Set(idx.map(mesDe));
+    const q = { k, meses: [Math.min(...mesesQ), Math.max(...mesesQ)], parcial: mesesQ.size < 3 };
+    ['ing', 'cos', 'ub', 'gas', 'un'].forEach((key) => { q[key] = prMSum(idx.map((i) => SS[key][i])); });
+    q.mb = prMDiv(q.ub, q.ing); q.mn = prMDiv(q.un, q.ing);
+    Q.push(q);
+  });
+
+  // las dos líneas (cada una con sus costos y su parte de gastos) + otros ingresos
+  const costP = prod ? costL : costO, costV = prod ? costO : costL;
+  const linea = (ing, cos) => ({ ing, cos, ub: ing - cos, mb: prMDiv(ing - cos, ing) });
+  const L = {
+    merc: linea(prMSum(LS.merc), prMSum(costV)), op: linea(prMSum(LS.op), prMSum(costP)), otros: M.L.otros,
+    S: { merc: LS.merc, op: LS.op, otros: LS.otros, ubMerc: LS.merc.map((v, i) => v - costV[i]), ubOp: LS.op.map((v, i) => v - costP[i]) },
+    otrosNombres: M.L.otrosNombres,
+  };
+
+  // costo de la línea por rubro
+  const rub = { mp: prMSum(CS.mp), bd: prMSum(CS.bd), fi: prMSum(CS.fle) + prMSum(CS.int), rs: prMSum(CS.rs) };
+  const C = {
+    rubros: [{ k: 'mp', n: 'Mercancía y producción', v: rub.mp }, { k: 'bd', n: 'Bonificación a directores', v: rub.bd }, { k: 'fi', n: 'Fletes e intereses', v: rub.fi }, { k: 'rs', n: 'Resto del costo', v: rub.rs }],
+    S: CS, fletes: prMSum(CS.fle), intereses: prMSum(CS.int),
+  };
+
+  // gastos absorbidos por categoría (mismo criterio de niveles del Plan de Cuentas que el consolidado)
+  const nivel = (c, lv) => { const p = pdcMap.get(c.cod); const t = p && p[lv]; return t ? prFrase(t) : 'Sin clasificar en el plan de cuentas'; };
+  const niveles = ['subGrupo', 'cuenta', 'grupo'];
+  const cuentaMap = (lv) => { const m = new Map(); gastosL.forEach((c) => { const k = nivel(c, lv); m.set(k, (m.get(k) || 0) + prMSum(c.v) * pct); }); return m; };
+  let elegido = null, mejor = null;
+  niveles.forEach((lv) => { const m = cuentaMap(lv); const k = [...m.values()].filter((v) => Math.abs(v) > 0.005).length; if (!elegido && k >= 3 && k <= 14) elegido = { lv, m }; if (!mejor || (k <= 14 && k > mejor.k)) mejor = { lv, m, k }; });
+  const usar = elegido || mejor || { lv: 'subGrupo', m: new Map() };
+  let cats = [...usar.m.entries()].map(([nm, v]) => ({ n: nm, v })).filter((c) => Math.abs(c.v) > 0.005).sort((a, b) => b.v - a.v);
+  if (cats.length > 8) { const resto = prMSum(cats.slice(7).map((c) => c.v)); cats = cats.slice(0, 7).concat([{ n: 'Otras categorías', v: resto }]); }
+  cats.forEach((c) => { c.fin = /financier/i.test(c.n); });
+  const catDe = (c) => nivel(c, usar.lv);
+
+  // carga financiera de la línea: gastos financieros absorbidos + intereses registrados en su costo
+  const esFin = (c) => /financier/i.test(catDe(c)) || /rebancariz|inter[eé]s|comisi[oó]n(es)?\s+banc|diferencia.*(cambio|compensaci)|moratori/i.test(c.nombre || '');
+  const gf = zeros(); gastosL.forEach((c) => { if (esFin(c)) add(gf, c.v, pct); });
+  const ic = CS.int.slice();
+  const FS = { gf, ic, tot: gf.map((v, i) => v + ic[i]) };
+  const cargaAcum = prMSum(FS.tot);
+  const todas = { rebanc: 0, int: 0 };
+  costosL.forEach((c) => { if (/rebancariz/i.test(c.nombre || '')) todas.rebanc += prMSum(c.v); if (/inter[eé]s/i.test(c.nombre || '')) todas.int += prMSum(c.v); });
+  gastosL.forEach((c) => { if (/rebancariz/i.test(c.nombre || '')) todas.rebanc += prMSum(c.v) * pct; if (/inter[eé]s/i.test(c.nombre || '')) todas.int += prMSum(c.v) * pct; });
+  const rebanc = Math.max(0, todas.rebanc), intTot = Math.max(0, todas.int);
+  const F = {
+    S: FS, acum: cargaAcum, pctIng: prMDiv(cargaAcum, T.ing), veces: T.un > 0 ? cargaAcum / T.un : null,
+    desg: [
+      { k: 'rebanc', n: 'Diferencias por rebancarización', v: rebanc },
+      { k: 'int', n: 'Intereses s/ préstamos empresariales', v: intTot },
+      { k: 'com', n: 'Comisiones bancarias y otros', v: Math.max(0, cargaAcum - rebanc - intTot) },
+    ],
+  };
+
+  // cuenta genérica grande («Otros egresos»…) dentro de los gastos absorbidos
+  let generica = null;
+  {
+    const tot = prMSum(absL);
+    const cand = gastosL.filter((c) => /otros?\s+(egresos|gastos)/i.test(c.nombre || '')).map((c) => ({ c, v: prMSum(c.v) * pct })).sort((a, b) => b.v - a.v)[0];
+    if (cand && cand.v >= 1000 && cand.v >= 0.05 * tot) {
+      const k = catDe(cand.c); const totCat = prMSum(gastosL.filter((c) => catDe(c) === k).map((c) => prMSum(c.v) * pct));
+      const ms = [...cand.c.meses].sort((a, b) => a - b);
+      generica = { n: prFrase(cand.c.nombre).replace(/^Otros egresos.*/i, 'Otros egresos'), v: cand.v, cat: k, pctCat: prMDiv(cand.v, totCat), mi: ms[0] || mf, mf: ms[ms.length - 1] || mf };
+    }
+  }
+
+  // punto de equilibrio: mes PROMEDIO del período; cada línea con su costo y los gastos que absorbe
+  const nm = n;
+  const eq = (ing, cos, gas) => { const r = { ingProm: ing / nm, cosProm: cos / nm, gasProm: gas / nm }; r.be = r.cosProm + r.gasProm; r.dif = r.ingProm - r.be; return r; };
+  const eqL = eq(prMSum(ingL), prMSum(costL), prMSum(absL)), eqO = eq(prMSum(ingO), prMSum(costO), prMSum(absO));
+  const E = { n: nm, peso: { prod: prod ? pct : pctOtra, merc: prod ? pctOtra : pct }, prod: prod ? eqL : eqO, merc: prod ? eqO : eqL, sel: vista };
+  E.tot = Object.assign({}, eqL); E.otrosIng = 0; E.resultado = eqL.dif;
+
+  // la otra línea (para comparar) y el cuadre con el consolidado
+  const ubO = prMSum(ingO) - prMSum(costO), unO = ubO - prMSum(absO), ingOt = prMSum(ingO);
+  const sinAbsorber = M.T.gas - prMSum(absL) - prMSum(absO), costosSinLinea = M.T.cos - prMSum(costL) - prMSum(costO);
+  const V = {
+    k: vista, nombre: prod ? 'Producción' : 'Mercancía', nombreLargo: prod ? 'Producción (planta)' : 'Venta de mercancía', t: prVoc(vista),
+    pct, pctOtra, pctOtros, ingTotal: totIng, ingLinea: T.ing, ingOtra: ingOt, ingOtros: M.L.otros.ing,
+    gastosPool: prMSum(poolL), gastosAbs: T.gas, poolS: poolL,
+    otra: { k: prod ? 'merc' : 'prod', nombre: prod ? 'Mercancía' : 'Producción', t: prVoc(prod ? 'merc' : 'prod'), ing: ingOt, cos: prMSum(costO), ub: ubO, gas: prMSum(absO), un: unO, mb: prMDiv(ubO, ingOt), mn: prMDiv(unO, ingOt) },
+    cons: { ing: M.T.ing, cos: M.T.cos, ub: M.T.ub, gas: M.T.gas, un: M.T.un },
+    rec: { otrosIng: M.L.otros.ing, gastosSinAbsorber: sinAbsorber, costosSinLinea },
+  };
+  const vacio = !(Math.abs(T.ing) > 0.005 || Math.abs(T.cos) > 0.005 || Math.abs(T.gas) > 0.005);
+  return { vacio, per: M.per, x: M.x, xn: M.xn, nb, T, S: SS, Q, L, C, G: { cats, total: prMSum(absL), generica }, F, E, V };
 };
 
 // Meses (año, mes) con movimiento de ingresos, costos o gastos: para llenar el selector de la presentación
@@ -24425,6 +24977,17 @@ const sa_unid = (M) => ((M.per && M.per.gran) === 'semana'
   : { s: 'mes', p: 'meses', del: 'del mes', porU: 'por mes', masBajo: 'el mes más bajo', delPer: 'del período' });
 const sa_cero = (v) => (Number.isFinite(v) ? v : 0);
 
+// ── Vista por línea (Producción / Mercancía): con M.V las láminas se leen como la presentación de esa línea; sin M.V quedan como en el consolidado ──
+const sa_V = (M) => (M && M.V) || null;
+// cómo se nombran los ingresos y el costo de la línea dentro de una frase o de un rótulo
+const sa_ingL = (V) => (V.k === 'prod'
+  ? { n: 'ingresos de producción', det: 'los ingresos de producción', de: 'ingreso de producción', costoC: 'Costo de producción', rot: 'producción' }
+  : { n: 'ventas de mercancía', det: 'las ventas de mercancía', de: 'venta de mercancía', costoC: 'Costo de mercancía', rot: 'mercancía' });
+// pie de página: «… · Estado de Resultados · Producción · Ene–Sep 2026 · …» (el marco de pr_core agrega «Consolidado» si el período tiene varios meses; con n = 1 no lo agrega)
+const sa_perPie = (M) => (M.V ? { ...M.per, n: 1, corta: M.V.nombre + PR_SEP + M.per.corta } : M.per);
+// % del reparto de gastos con 2 decimales (igual que el aviso del Estado de Resultados de la pantalla)
+const sa_p2 = (v) => fPct(v, 2);
+
 // LibreOffice (referencia del original) coloca el texto ≈0.06 em más abajo que el navegador; se compensa aquí para que las
 // posiciones coincidan. Si algún día <T> de pr_core lo compensa para todos, poner SA_DY = 0.
 const SA_DY = 0.06;
@@ -24442,6 +25005,16 @@ const sa_crec = (q, p) => {
 const sa_sub2 = (M) => {
   const T_ = M.T, n = M.per.n;
   const en = n > 1 ? prNumPalabra(n) + ' meses' : PR_MESES[(M.per.mi || 1) - 1];
+  const V = sa_V(M);
+  if (V) {
+    if (!(T_.ing > 0)) return V.nombre + ': sin ingresos en ' + en + '; el resultado neto fue de ' + fUSDM(T_.un);
+    const abs = Math.abs(T_.gas) >= 0.5 ? 'tras absorber ' + fUSDM(T_.gas) + ' de gastos, ' : '';
+    let finL;
+    if (Math.abs(T_.un) < 0.5) finL = 'el resultado neto es prácticamente cero';
+    else if (T_.un > 0) finL = 'la utilidad neta equivale al ' + fPct(T_.mn) + ' de sus ingresos';
+    else finL = 'la pérdida neta equivale al ' + fPct(-T_.mn) + ' de sus ingresos';
+    return V.nombre + ': ingresos de ' + fUSDM(T_.ing) + ' en ' + en + ' (' + sa_p2(V.pct) + ' del total); ' + abs + finL;
+  }
   let fin;
   if (!(T_.ing > 0)) fin = 'el resultado neto fue de ' + fUSDM(T_.un);
   else if (Math.abs(T_.un) < 0.5) fin = 'el resultado neto es prácticamente cero';
@@ -24451,8 +25024,10 @@ const sa_sub2 = (M) => {
 };
 // Mensaje 1 · ventas
 const sa_msg1 = (M) => {
-  const ing = M.S.ing, n = ing.length, xn = M.xn, u = sa_unid(M);
-  if (n < 2) return { t: 'Ventas del período', p: 'Los ingresos fueron de ' + fUSDmil(ing[0] || 0) + ' en ' + xn[0] + '.' };
+  const ing = M.S.ing, n = ing.length, xn = M.xn, u = sa_unid(M), V = sa_V(M), lb = V ? sa_ingL(V) : null;
+  const ventas = lb ? lb.n : 'ventas';      // «ventas» (consolidado) · «ingresos de producción» · «ventas de mercancía»
+  if (V && !(M.T.ing > 0)) return { t: 'Sin ' + lb.n + ' en el período', p: 'No hubo ' + lb.n + ' en ' + (M.per.n > 1 ? 'el período' : PR_MESES[(M.per.mi || 1) - 1]) + (M.T.cos > 0.5 ? '; el ' + V.t.costo + ' fue de ' + fUSDmil(M.T.cos) : '') + '.' };
+  if (n < 2) return { t: prCap(ventas) + ' del período', p: (lb ? prCap(lb.det) : 'Los ingresos') + ' fueron de ' + fUSDmil(ing[0] || 0) + ' en ' + xn[0] + '.' };
   const ip = sa_idxMax(ing), ini = ing[0], pico = ing[ip];
   let sub = 0;
   for (let i = 1; i <= ip; i++) if (ing[i] > ing[i - 1]) sub++;
@@ -24465,13 +25040,13 @@ const sa_msg1 = (M) => {
       else if (prom > 0 && (sa_maxArr(resto) - sa_minArr(resto)) / prom <= 0.10) cola = '; ' + sa_lista(xn.slice(ip + 1)) + ' se estabilizan cerca de ' + sa_usdRed(prom) + '.';
       else cola = '; el resto del período promedia ' + fUSDmil(prom) + ' ' + u.porU + '.';
     }
-    return { t: 'Ventas en alza hasta ' + xn[ip], p: 'De ' + fUSDmil(ini) + ' en ' + xn[0] + ' a ' + fUSDmil(pico) + ' en ' + xn[ip] + cola };
+    return { t: prCap(ventas) + ' en alza hasta ' + xn[ip], p: 'De ' + fUSDmil(ini) + ' en ' + xn[0] + ' a ' + fUSDmil(pico) + ' en ' + xn[ip] + cola };
   }
   if (ip === 0) {
     const ult = ing[n - 1];
-    return { t: 'Ventas a la baja desde ' + xn[0], p: 'De ' + fUSDmil(ini) + ' en ' + xn[0] + ' a ' + fUSDmil(ult) + ' en ' + xn[n - 1] + (ini > 0 && ult < ini ? ', una caída de ' + fPct0(1 - ult / ini) + '.' : '.') };
+    return { t: prCap(ventas) + ' a la baja desde ' + xn[0], p: 'De ' + fUSDmil(ini) + ' en ' + xn[0] + ' a ' + fUSDmil(ult) + ' en ' + xn[n - 1] + (ini > 0 && ult < ini ? ', una caída de ' + fPct0(1 - ult / ini) + '.' : '.') };
   }
-  return { t: 'Pico de ventas en ' + xn[ip], p: prCap(xn[ip]) + ' alcanzó ' + fUSDmil(pico) + ', el ' + fPct0(prDiv(pico, M.T.ing)) + ' de los ingresos del período; el promedio fue de ' + fUSDmil(M.T.prom) + ' ' + u.porU + '.' };
+  return { t: 'Pico de ' + ventas + ' en ' + xn[ip], p: prCap(xn[ip]) + ' alcanzó ' + fUSDmil(pico) + ', el ' + fPct0(prDiv(pico, M.T.ing)) + ' ' + (lb ? 'de ' + lb.det : 'de los ingresos') + ' del período; el promedio fue de ' + fUSDmil(M.T.prom) + ' ' + u.porU + '.' };
 };
 // Mensaje 2 · en qué trimestre (o mes / semana, si el período no abarca dos trimestres) se concentra la utilidad
 const sa_msg2 = (M) => {
@@ -24494,45 +25069,61 @@ const sa_msg2 = (M) => {
 };
 // Mensaje 3 · pérdidas
 const sa_msg3 = (M) => {
-  const S = M.S, n = S.un.length, xn = M.xn, u = sa_unid(M), L = n - 1;
+  const S = M.S, n = S.un.length, xn = M.xn, u = sa_unid(M), L = n - 1, V = sa_V(M);
   let w = S.un[L] < 0 ? L : sa_idxMin(S.un);
   if (!(S.un[w] < 0)) {
     if (n < 2) return { t: 'El período cierra con utilidad', p: 'La utilidad neta fue de ' + fUSDmil(S.un[0] || 0) + ', con un margen neto de ' + fPct(S.mn[0] || 0) + '.' };
     const b = sa_idxMin(S.un);
-    return { t: 'Todos los ' + u.p + ' cierran con utilidad', p: prCap(xn[b]) + ' fue ' + u.masBajo + ', con una utilidad neta de ' + fUSDmil(S.un[b]) + ' (margen de ' + fPct(S.mn[b]) + ').' };
+    if (V) {   // vista por línea: concordancia correcta («Todas las semanas») y sin afirmar «utilidad» si el punto más bajo es cero
+      const sem = u.s === 'semana', conUtilidad = S.un[b] > 0.005;
+      return { t: conUtilidad ? (sem ? 'Todas las semanas' : 'Todos los meses') + ' cierran con utilidad' : (sem ? 'Ninguna semana' : 'Ningún mes') + ' cierra en pérdida', p: prCap(xn[b]) + ' fue ' + u.masBajo + ', con una utilidad neta de ' + fUSDmil(S.un[b]) + ' (margen de ' + fPct(S.mn[b]) + ').' };
+    }
+    return { t: (u.s === 'semana' ? 'Todas las semanas' : 'Todos los ' + u.p) + ' cierran con utilidad', p: prCap(xn[b]) + ' fue ' + u.masBajo + ', con una utilidad neta de ' + fUSDmil(S.un[b]) + ' (margen de ' + fPct(S.mn[b]) + ').' };
   }
   const ing = S.ing[w], cos = S.cos[w], un = S.un[w];
   let causa;
-  if (ing > 0 && cos > ing) causa = 'El costo de ventas llegó a ' + fPct0(cos / ing) + ' de los ingresos y la pérdida neta ' + u.del + ' fue de ' + fUSDmil(-un) + '.';
+  if (ing > 0 && cos > ing) causa = 'El ' + (V ? V.t.costo : 'costo de ventas') + ' llegó a ' + fPct0(cos / ing) + ' de los ingresos y la pérdida neta ' + u.del + ' fue de ' + fUSDmil(-un) + '.';
   else if (!(ing > 0)) causa = 'No hubo ingresos y la pérdida neta ' + u.del + ' fue de ' + fUSDmil(-un) + '.';
-  else causa = 'Los gastos operativos (' + fUSDmil(S.gas[w]) + ') superaron la utilidad bruta (' + fUSDmil(S.ub[w]) + ') y la pérdida neta ' + u.del + ' fue de ' + fUSDmil(-un) + '.';
+  else causa = 'Los ' + (V ? 'gastos absorbidos' : 'gastos operativos') + ' (' + fUSDmil(S.gas[w]) + ') superaron la utilidad bruta (' + fUSDmil(S.ub[w]) + ') y la pérdida neta ' + u.del + ' fue de ' + fUSDmil(-un) + '.';
   return { t: prCap(xn[w]) + (w === L ? ' cierra en pérdida' : ' registra pérdida'), p: causa };
 };
 // Lámina 3 · subtítulo
 const sa_sub3 = (M) => {
-  const T_ = M.T;
+  const T_ = M.T, V = sa_V(M);
+  if (V) {
+    if (!(T_.ing > 0)) return 'Sin ingresos en el período: el ' + V.t.costo + ' suma ' + fUSDM(T_.cos) + ' y los gastos absorbidos ' + fUSDM(T_.gas) + ' (' + sa_p2(V.pct) + ' de los gastos operativos)';
+    return 'De cada US$ 100 de ' + sa_ingL(V).de + ', US$ ' + prNum(100 * T_.cos / T_.ing, 1) + ' se van en ' + V.t.costo + ' y US$ ' + prNum(100 * T_.gas / T_.ing, 1) + ' en gastos absorbidos (' + sa_p2(V.pct) + ' de los gastos operativos)';
+  }
   if (!(T_.ing > 0)) return 'Sin ingresos en el período: el costo de ventas suma ' + fUSDM(T_.cos) + ' y los gastos operativos ' + fUSDM(T_.gas);
   return 'De cada US$ 100 de ingreso, US$ ' + prNum(100 * T_.cos / T_.ing, 1) + ' se van en costo de ventas y US$ ' + prNum(100 * T_.gas / T_.ing, 1) + ' en gastos operativos';
 };
 // Lámina 4 · subtítulo
 const sa_sub4 = (M) => {
-  const ing = M.S.ing, n = ing.length, xn = M.xn, Q = M.Q || [], T_ = M.T;
+  const ing = M.S.ing, n = ing.length, xn = M.xn, Q = M.Q || [], T_ = M.T, V = sa_V(M), lb = V ? sa_ingL(V) : null;
   let primera = null, best = null;
   for (let i = 1; i < Q.length; i++) {
     const g = sa_crec(Q[i], Q[i - 1]);
     if (g !== null && (best === null || Math.abs(g) > Math.abs(best.g))) best = { i, g };
   }
   if (best) primera = 'El ' + Q[best.i].k + (best.g >= 0 ? ' creció ' : ' cayó ') + fPct(Math.abs(best.g)) + (Q[best.i].parcial || Q[best.i - 1].parcial ? ' en promedio mensual' : '') + ' frente al ' + Q[best.i - 1].k;
-  else if (n >= 2 && ing[0] > 0) primera = 'Los ingresos ' + (ing[n - 1] >= ing[0] ? 'crecieron ' : 'cayeron ') + fPct(Math.abs(ing[n - 1] / ing[0] - 1)) + ' de ' + xn[0] + ' a ' + xn[n - 1];
-  else primera = 'Los ingresos del período suman ' + fUSDM(T_.ing);
+  else if (n >= 2 && ing[0] > 0) primera = (lb ? prCap(lb.det) : 'Los ingresos') + ' ' + (ing[n - 1] >= ing[0] ? 'crecieron ' : 'cayeron ') + fPct(Math.abs(ing[n - 1] / ing[0] - 1)) + ' de ' + xn[0] + ' a ' + xn[n - 1];
+  else primera = (lb ? prCap(lb.det) : 'Los ingresos') + ' del período suman ' + fUSDM(T_.ing);
   if (n < 2 || !(T_.ing > 0)) return primera;
   const ip = sa_idxMax(ing);
-  return primera + '; ' + xn[ip] + ' fue el pico, con el ' + fPct(ing[ip] / T_.ing) + ' de las ventas del período';
+  return primera + '; ' + xn[ip] + ' fue el pico, con el ' + fPct(ing[ip] / T_.ing) + ' ' + (lb ? 'de ' + lb.det : 'de las ventas') + ' del período';
 };
 // Lámina 5 · subtítulo
 const sa_pc = (v) => (v > 0 && v < 0.005 ? 'menos del 1%' : fPct0(v));
+const sa_sub5V = (M) => {
+  const V = M.V;
+  if (!(V.ingTotal > 0)) return 'Sin ingresos en el período: no hay % con el que repartir los gastos operativos';
+  const otros = V.pctOtros > 0.00005 ? '; los otros ingresos (' + sa_p2(V.pctOtros) + ') no absorben gastos' : '';
+  if (!(V.ingLinea > 0)) return V.nombre + ' no tuvo ingresos en el período, por eso no absorbe gastos operativos; ' + V.otra.nombre + ' aporta el ' + sa_p2(V.pctOtra) + ' de los ingresos' + otros;
+  return V.nombre + ' aporta el ' + sa_p2(V.pct) + ' de los ingresos del período y por eso absorbe el ' + sa_p2(V.pct) + ' de los gastos operativos (' + fUSDM(V.gastosPool) + ' × ' + sa_p2(V.pct) + ' = ' + fUSDM(V.gastosAbs) + ')' + otros;
+};
 const sa_sub5 = (M) => {
   const L = M.L, T_ = M.T;
+  if (M.V) return sa_sub5V(M);
   if (!(T_.ing > 0)) return 'Sin ingresos en el período';
   const pm = prDiv(L.merc.ing, T_.ing), po = prDiv(L.op.ing, T_.ing);
   if (L.merc.ing > 0 && L.op.ing > 0) {
@@ -24544,7 +25135,18 @@ const sa_sub5 = (M) => {
   return 'Los ingresos del período provienen de otros conceptos';
 };
 // Lámina 6 · subtítulo
+// Lámina 6 en vista por línea: margen NETO de cada línea (con los gastos que absorbe); la elegida va primero
+const sa_sub6V = (M) => {
+  const V = M.V, T_ = M.T, O = V.otra;
+  const verbo = (m) => (m >= 0 ? 'deja ' : 'registra ');
+  const A = { n: V.nombre, ing: T_.ing, cos: T_.cos, gas: T_.gas, mn: T_.mn }, B = { n: O.nombre, ing: O.ing, cos: O.cos, gas: O.gas, mn: O.mn };
+  const frase = (x, larga) => (x.ing > 0
+    ? x.n + ' ' + verbo(x.mn) + fPct(x.mn) + (larga ? ' de margen neto' : '') + ' tras absorber ' + fUSDmil(x.gas) + ' de gastos'
+    : x.n + ' no tuvo ingresos' + (x.cos > 0.5 ? ' y acumula un costo de ' + fUSDmil(x.cos) : '') + (x.gas > 0.5 ? (x.cos > 0.5 ? ' y ' : ' pero ') + 'absorbe ' + fUSDmil(x.gas) + ' de gastos' : ''));
+  return frase(A, true) + '; ' + frase(B, false);
+};
 const sa_sub6 = (M) => {
+  if (M.V) return sa_sub6V(M);
   const { merc, op } = M.L, T_ = M.T;
   const verbo = (m) => (m >= 0 ? 'deja ' : 'registra ');
   if (!(merc.ing > 0)) {
@@ -24631,7 +25233,9 @@ const sa_ajustarEtiquetas = (cajas, pt0 = 11) => {
 
 // ───────────────────────────── Lámina 1 · portada ─────────────────────────────
 const Sl01 = ({ M, emp }) => {
-  const per = M.per;
+  const per = M.per, V = sa_V(M);
+  const dosLineas = per.n > 1 || !!V;                       // el título ocupa dos líneas (Consolidado, o «… de Producción» / «… de Mercancía»)
+  const nota = V ? 'Absorbe el ' + sa_p2(V.pct) + ' de los gastos operativos, según su participación en los ingresos' : '';
   const nombre = String((emp && emp.nombre) || '').trim();
   const rif = String((emp && emp.rif) || '').trim();
   const linea = [nombre, rif ? 'RIF ' + rif : '', 'Cifras en USD'].filter(Boolean).join(PR_SEP);
@@ -24641,8 +25245,9 @@ const Sl01 = ({ M, emp }) => {
       <Tl x={768} y={313.4} w={480} h={240} s={140} b al="center" an="middle" c={PR.negro} lh={1} nowrap>{String(per.anio)}</Tl>
       <Logo emp={emp} oscuro x={67.2} y={57.6} w={240} h={140.8} />
       <Tl x={67.2} y={252.5} w={662.4} h={28.8} s={12} b sp={3} an="middle" c={PR.naranja}>INFORME FINANCIERO</Tl>
-      <Tl x={67.2} y={296.3} w={662.4} h={148.8} s={40} b c={PR.blanco}>{'Estado de Resultados' + (per.n > 1 ? ' Consolidado' : '')}</Tl>
-      <Tl x={67.2} y={per.n > 1 ? 453.2 : 389.2} w={662.4} h={57.6} s={26} b c={PR.naranja}>{per.etq}</Tl>
+      <Tl x={67.2} y={296.3} w={662.4} h={148.8} s={40} b c={PR.blanco}>{V ? <>Estado de Resultados<br />de {V.nombre}</> : 'Estado de Resultados' + (per.n > 1 ? ' Consolidado' : '')}</Tl>
+      <Tl x={67.2} y={dosLineas ? 453.2 : 389.2} w={662.4} h={57.6} s={26} b c={PR.naranja}>{per.etq}</Tl>
+      {V ? <Tl x={67.2} y={518.4} w={662.4} h={72} s={16} c={PR.grisCl}>{nota}</Tl> : null}
       <Tl x={67.2} y={620.2} w={662.4} h={33.6} s={sa_pt(linea, 14, 1180, false, 9)} an="middle" c={PR.grisCl}>{linea}</Tl>
     </div>
   );
@@ -24650,16 +25255,20 @@ const Sl01 = ({ M, emp }) => {
 
 // ───────────────────────────── Lámina 2 · resumen ejecutivo ─────────────────────────────
 const Sl02 = ({ M, emp, num }) => {
-  const T_ = M.T, u = sa_unid(M);
+  const T_ = M.T, u = sa_unid(M), V = sa_V(M);
   const tarjetas = [
     { x: 57.6, rot: 'INGRESOS TOTALES', v: T_.ing, sub: fUSDmil(T_.prom) + ' ' + u.porU, bg: PR.tarjeta, cr: PR.grisCl, cn: PR.blanco },
     { x: 354.7, rot: 'UTILIDAD BRUTA', v: T_.ub, sub: 'Margen bruto: ' + fPct(T_.mb), bg: PR.tarjeta, cr: PR.grisCl, cn: PR.blanco },
     { x: 651.7, rot: 'GASTOS OPERATIVOS', v: T_.gas, sub: fPct(prDiv(T_.gas, T_.ing)) + ' de los ingresos', bg: PR.tarjeta, cr: PR.grisCl, cn: PR.blanco },
     { x: 948.8, rot: 'UTILIDAD NETA', v: T_.un, sub: 'Margen neto: ' + fPct(T_.mn), bg: PR.naranja, cr: PR.negro, cn: PR.negro },
   ];
+  if (V) {   // la línea: rótulos propios y, en gastos, el % de los gastos operativos que absorbe
+    tarjetas[0].rot = 'INGRESOS'; tarjetas[2].rot = 'GASTOS ABSORBIDOS'; tarjetas[3].rot = 'RESULTADO NETO';
+    tarjetas[2].sub = sa_p2(V.pct) + ' de los gastos';
+  }
   const msgs = [sa_msg1(M), sa_msg2(M), sa_msg3(M)];
   return (
-    <Slide tipo="dark" kicker="Resumen" titulo="Resumen ejecutivo" sub={sa_sub2(M)} num={num} emp={emp} per={M.per}>
+    <Slide tipo="dark" kicker={V ? 'Resumen · ' + V.nombre : 'Resumen'} titulo="Resumen ejecutivo" sub={sa_sub2(M)} num={num} emp={emp} per={sa_perPie(M)}>
       {tarjetas.map((c, i) => (
         <React.Fragment key={i}>
           <Box x={c.x} y={196.8} w={273.6} h={220.8} bg={c.bg} adj={0.052} />
@@ -24708,7 +25317,8 @@ const Ch03 = ({ M }) => {
     { c: PR.gris, a: T_.un, b: T_.ub, txt: T_.gas ? fMiles(-T_.gas) : '', tipo: 'cos' },
     { c: PR.naranja, a: 0, b: T_.un, txt: fMiles(T_.un), tipo: 'fin' },
   ];
-  const cats = ['Ingresos', 'Costo de ventas', 'Utilidad bruta', 'Gastos operativos', 'Utilidad neta'];
+  const V = sa_V(M);
+  const cats = V ? ['Ingresos', sa_ingL(V).costoC, 'Utilidad bruta', 'Gastos absorbidos', 'Resultado neto'] : ['Ingresos', 'Costo de ventas', 'Utilidad bruta', 'Gastos operativos', 'Utilidad neta'];
   const els = barras.map((b, i) => {
     const bx = x0 + pitch * i + (pitch - bw) / 2, cx = x0 + pitch * (i + 0.5);
     const r = sa_rect(bx, bx + bw, y(b.a), y(b.b));
@@ -24730,21 +25340,30 @@ const Ch03 = ({ M }) => {
   );
 };
 const Sl03 = ({ M, emp, num }) => {
-  const T_ = M.T;
+  const T_ = M.T, V = sa_V(M), sinIng = !!V && !(T_.ing > 0);
   const filas = [
-    { v: T_.cos, nom: 'Costo de ventas', y: 297.6, cb: PR.negro, cr: PR.gris },
-    { v: T_.gas, nom: 'Gastos operativos', y: 410.9, cb: PR.negro, cr: PR.gris },
-    { v: T_.un, nom: 'Utilidad neta', y: 524.2, cb: PR.naranjaOsc, cr: PR.naranja },
+    { v: T_.cos, nom: V ? sa_ingL(V).costoC : 'Costo de ventas', y: 297.6, cb: PR.negro, cr: PR.gris },
+    { v: T_.gas, nom: V ? 'Gastos absorbidos' : 'Gastos operativos', y: 410.9, cb: PR.negro, cr: PR.gris },
+    { v: T_.un, nom: V ? 'Resultado neto' : 'Utilidad neta', y: 524.2, cb: PR.naranjaOsc, cr: PR.naranja },
   ];
   return (
-    <Slide tipo="light" kicker="Resumen" titulo="De ingresos a utilidad neta" sub={sa_sub3(M)} num={num} emp={emp} per={M.per}>
-      <Tl x={57.6} y={192} w={672} h={30.7} s={14} b an="middle" c={PR.negro}>Del ingreso a la utilidad neta · US$ miles</Tl>
+    <Slide tipo="light" kicker={V ? 'Resumen · ' + V.nombre : 'Resumen'} titulo={V ? 'De ingresos a resultado neto' : 'De ingresos a utilidad neta'} sub={sa_sub3(M)} num={num} emp={emp} per={sa_perPie(M)}>
+      <Tl x={57.6} y={192} w={672} h={30.7} s={14} b an="middle" c={PR.negro}>{V ? 'Del ingreso al resultado neto de ' + V.nombre + ' · US$ miles' : 'Del ingreso a la utilidad neta · US$ miles'}</Tl>
       <Ch03 M={M} />
       <Box x={878.4} y={196.8} w={344} h={451.2} bg={PR.fondoCl} adj={0.033} />
-      <Tl x={907.2} y={223.7} w={286.4} h={62.4} s={16} b c={PR.negro}>Por cada US$ 100<br />de ingreso</Tl>
+      <Tl x={907.2} y={223.7} w={286.4} h={62.4} s={16} b c={PR.negro}>{sinIng ? <>Sin ingresos<br />en el período</> : <>Por cada US$ 100<br />de ingreso</>}</Tl>
       {filas.map((r, i) => {
         const por100 = T_.ing > 0 ? 100 * r.v / T_.ing : 0, frac = T_.ing > 0 ? Math.min(1, Math.max(0, r.v / T_.ing)) : 0;
         const ancho = Math.max(11.5, frac * 286.4);
+        if (sinIng) {      // sin ingresos no hay «por cada US$ 100»: se muestran las cifras del período, sin barras
+          const kp = kpiParts(r.v);
+          return (
+            <React.Fragment key={i}>
+              <Tl x={907.2} y={r.y} w={286.4} h={52.8} an="middle" b c={r.cb}><R s={16}>{kp.pre}</R><R s={30}>{kp.big}</R><R s={16}>{kp.post}</R></Tl>
+              <Tl x={907.2} y={r.y + 53.8} w={286.4} h={26.9} s={14} an="middle" c={PR.gris}>{r.nom}</Tl>
+            </React.Fragment>
+          );
+        }
         return (
           <React.Fragment key={i}>
             <Tl x={907.2} y={r.y} w={286.4} h={52.8} an="middle" b c={r.cb}><R s={16}>US$ </R><R s={30}>{prNum(por100, 1)}</R></Tl>
@@ -24780,6 +25399,14 @@ const Ch04 = ({ M }) => {
   const pt = sa_ajustarEtiquetas(cajas.map((c, i) => ({ ...c, y: c.y })), 11);
   const ptEt = Math.min(pt, sa_pt(cajas.reduce((a, c) => (c.t.length > a.length ? c.t : a), ''), 11, bw - 2, true, 8));
   const ly = Math.floor(y(M.T.prom)) + 0.5, hayLinea = n > 1;      // línea del promedio (3 px de grosor)
+  if (M.V && !(M.T.ing > 0)) {       // la línea no tuvo ingresos: solo el eje con un aviso (nada de barras en cero)
+    return (
+      <SaLienzo f={f}>
+        <SaEjeX x0={x0} x1={x1} ya={Math.round(y0)} th={1} n={n} labels={M.x} yl={pb + 23} />
+        <text x={(x0 + x1) / 2} y={(ptop + pb) / 2} textAnchor="middle" fontSize={fs(18)} fontWeight="700" fill={PR.gris}>{'Sin ' + sa_ingL(M.V).n + ' en el período'}</text>
+      </SaLienzo>
+    );
+  }
   const barras = ing.map((v, i) => {
     const cx = x0 + pitch * (i + 0.5);
     const r = sa_rect(cx - bw / 2, cx + bw / 2, y(v), y0);
@@ -24811,6 +25438,7 @@ const Ch04 = ({ M }) => {
 const sa_tarjetas4 = (M) => {
   const Q = M.Q || [], T_ = M.T, S = M.S, n = S.ing.length, u = sa_unid(M), xn = M.xn;
   const total = { tag: 'Total', tpt: 13, v: T_.ing, sub: n > 1 ? fUSDmil(T_.prom) + ' ' + u.porU : 'Total del período' };
+  if (M.V && !(T_.ing > 0)) return [{ tag: 'Total', tpt: 13, v: 0, sub: 'Sin ingresos en el período' }];   // línea sin ingresos: una sola tarjeta
   if (Q.length >= 3) return Q.map((q, i) => sa_cardQ(M, Q, i));
   if (Q.length === 2) return [sa_cardQ(M, Q, 0), sa_cardQ(M, Q, 1), total];
   if (u.s === 'mes' && n >= 2) {
@@ -24835,15 +25463,15 @@ const sa_cardQ = (M, Q, i) => {
   return { tag: q.k, tpt: 16, v: q.ing, sub };
 };
 const Sl04 = ({ M, emp, num }) => {
-  const u = sa_unid(M), n = M.S.ing.length;
+  const u = sa_unid(M), n = M.S.ing.length, V = sa_V(M), lb = V ? sa_ingL(V) : null;
   const tar = sa_tarjetas4(M), k = tar.length;
   const gap = 19.2, hc = k >= 3 ? (447.3 - gap * (k - 1)) / k : 136.3;
   const y0c = 196.8 + (447.3 - (hc * k + gap * (k - 1))) / 2;
   const prom = 'Promedio ' + (u.s === 'semana' ? 'semanal' : 'mensual') + ': ' + fMiles(M.T.prom);
   return (
-    <Slide tipo="light" kicker="Ingresos" titulo="Evolución de ingresos" sub={sa_sub4(M)} num={num} emp={emp} per={M.per}>
+    <Slide tipo="light" kicker={V ? 'Ingresos · ' + V.nombre : 'Ingresos'} titulo={V ? 'Evolución de ' + lb.n : 'Evolución de ingresos'} sub={sa_sub4(M)} num={num} emp={emp} per={sa_perPie(M)}>
       <Tl x={57.6} y={192} w={499.2} h={30.7} s={14} b an="middle" c={PR.negro}>{'Ingresos ' + (u.s === 'semana' ? 'semanales' : 'mensuales') + ' · US$ miles'}</Tl>
-      <SaLeyenda x={422.4} yc={207.85} items={n > 1 ? [{ c: PR.naranja, t: u.s === 'semana' ? 'Ingresos de la semana' : 'Ingresos del mes' }, { linea: true, t: prom }] : [{ c: PR.naranja, t: 'Ingresos del período' }]} />
+      <SaLeyenda x={422.4} yc={207.85} items={V && !(M.T.ing > 0) ? [] : n > 1 ? [{ c: PR.naranja, t: u.s === 'semana' ? 'Ingresos de la semana' : 'Ingresos del mes' }, { linea: true, t: prom }] : [{ c: PR.naranja, t: 'Ingresos del período' }]} />
       <Ch04 M={M} />
       {tar.map((c, i) => {
         const cy = y0c + i * (hc + gap), mid = cy + hc / 2;
@@ -24935,7 +25563,47 @@ const Ch05b = ({ M }) => {
     </SaLienzo>
   );
 };
+// Vista por línea: la lámina explica el REPARTO (cuánto de los ingresos es de cada fuente y, por eso, cuánto de los gastos operativos absorbe cada línea)
+const Sl05V = ({ M, emp, num }) => {
+  const V = M.V, L = M.L, O = V.otra;
+  const esProd = V.k === 'prod';
+  const mercEsLa = !esProd;      // la línea elegida es Mercancía
+  const selK = esProd ? 'op' : 'merc';
+  const filas = [
+    { l: SA_LINEAS[0], pct: mercEsLa ? V.pct : V.pctOtra, v: mercEsLa ? V.ingLinea : V.ingOtra, gas: mercEsLa ? V.gastosAbs : O.gas },
+    { l: SA_LINEAS[1], pct: esProd ? V.pct : V.pctOtra, v: esProd ? V.ingLinea : V.ingOtra, gas: esProd ? V.gastosAbs : O.gas },
+  ];
+  if ((L.otros.ing || 0) !== 0) filas.push({ l: SA_LINEAS[2], pct: V.pctOtros, v: V.ingOtros, gas: null });
+  filas.forEach((f) => { f.t2 = [sa_p2(f.pct), fUSDmil(f.v), f.gas === null ? 'no absorbe gastos' : 'gastos ' + fUSDmil(f.gas)].join(' · '); });
+  const pt2 = filas.reduce((m, f) => Math.min(m, sa_pt(f.t2, 14, 415, false, 10)), 14);      // el más chico de todos, para que las filas queden parejas
+  return (
+    <Slide tipo="light" kicker={'Ingresos · ' + V.nombre} titulo="Mezcla de ingresos y reparto de gastos" sub={sa_sub5V(M)} num={num} emp={emp} per={sa_perPie(M)}>
+      <Tl x={57.6} y={192} w={422.4} h={30.7} s={14} b an="middle" c={PR.negro}>{(M.per.n > 1 ? 'Ingresos acumulados: ' : 'Ingresos del mes: ') + fUSDM(V.ingTotal)}</Tl>
+      <Ch05a M={M} />
+      <Tl x={168} y={314.9} w={182.4} h={86.4} al="center" an="middle" lh={1.2}>
+        <div style={{ fontSize: '22pt', fontWeight: 700, color: PR.naranjaOsc }}>{sa_p2(V.pct)}</div>
+        <div style={{ fontSize: '12pt', color: PR.gris }}>{sa_ingL(V).rot}</div>
+      </Tl>
+      {filas.map((f, i) => {
+        const y = 499.2 + 49.9 * i, esSel = f.l.k === selK;
+        return (
+          <React.Fragment key={f.l.k}>
+            <Cir x={57.6} y={y + 8.6} w={19.2} bg={f.l.c} />
+            <Tl x={91.2} y={y} w={415} h={48} s={14}>
+              <div style={{ fontWeight: 700, color: esSel ? PR.naranjaOsc : PR.negro }}>{f.l.nom + (esSel ? ' · esta vista' : '')}</div>
+              <div style={{ color: PR.gris, fontSize: pt2 + 'pt' }}>{f.t2}</div>
+            </Tl>
+          </React.Fragment>
+        );
+      })}
+      <Tl x={513.6} y={192} w={480} h={30.7} s={14} b an="middle" c={PR.negro}>Ingresos por línea · US$ miles</Tl>
+      <SaLeyenda x={513.6} yc={240.45} items={SA_LINEAS.filter((l) => l.k !== 'otros' || (L.otros.ing || 0) !== 0).map((l) => ({ c: l.c, t: l.corta }))} />
+      <Ch05b M={M} />
+    </Slide>
+  );
+};
 const Sl05 = ({ M, emp, num }) => {
+  if (sa_V(M)) return <Sl05V M={M} emp={emp} num={num} />;
   const L = M.L, T_ = M.T, u = sa_unid(M);
   const lineas = SA_LINEAS.filter((l) => (L[l.k].ing || 0) !== 0 || l.k === 'merc');
   const may = SA_LINEAS.reduce((m, l) => ((L[l.k].ing || 0) > (L[m.k].ing || 0) ? l : m), SA_LINEAS[0]);
@@ -25007,7 +25675,50 @@ const Ch06 = ({ M }) => {
     </SaLienzo>
   );
 };
+const Sl06V = ({ M, emp, num }) => {
+  const V = M.V, T_ = M.T, O = V.otra, hayOp = sa_hayOp(M);
+  const dat = (x) => ({ ing: x.ing || 0, cos: x.cos || 0, ub: x.ub || 0, mb: x.mb || 0, gas: x.gas || 0, un: x.un || 0, mn: x.mn || 0 });
+  const kk = (k) => (k === 'prod' ? 'op' : 'merc');
+  const D = { [kk(V.k)]: dat(T_), [kk(O.k)]: dat(O) };       // M.T = la línea elegida (con sus gastos absorbidos); V.otra = la otra línea con la parte que le toca
+  const selK = kk(V.k);
+  const tarj = [
+    { k: 'merc', nom: 'Venta de mercancía', c: PR.naranja, y: 196.8, vacia: 'sin ventas en el período', costo: 'Costo de mercancía' },
+    { k: 'op', nom: 'Orden de producción', c: PR.carbon, y: 432, vacia: 'sin órdenes en el período', costo: 'Costo de producción' },
+  ];
+  const cand = ['merc', 'op'].filter((k) => D[k].ing > 0);
+  const mejor = cand.length ? cand.reduce((a, b) => (D[b].mn > D[a].mn ? b : a)) : '';
+  return (
+    <Slide tipo="light" kicker={'Ingresos · ' + V.nombre} titulo="Rentabilidad por línea" sub={sa_sub6(M)} num={num} emp={emp} per={sa_perPie(M)}>
+      {tarj.map((t) => {
+        const d = D[t.k], sinIng = !(d.ing > 0), nada = !d.ing && !d.cos && !d.ub && !d.gas, sel = t.k === selK;
+        const filas = [['Ingresos', d.ing, false], [t.costo, d.cos, false], [sinIng ? 'Utilidad bruta' : 'Utilidad bruta (' + fPct(d.mb) + ')', d.ub, true], ['Gastos absorbidos', d.gas, false], ['Resultado neto', d.un, true]];
+        return (
+          <React.Fragment key={t.k}>
+            <Box x={57.6} y={t.y} w={384} h={216} bg={PR.fondoCl} adj={0.053} border={sel ? PR.naranja : undefined} bw={2} />
+            <Cir x={86.4} y={t.y + 18} w={19.2} bg={t.c} />
+            <Tl x={117.1} y={t.y + 10.3} w={230} h={34.6} s={15} b an="middle" c={PR.negro}>{t.nom}</Tl>
+            {sel ? <Tl x={330} y={t.y + 10.3} w={96} h={34.6} s={9} b sp={1} al="right" an="middle" nowrap c={PR.naranjaOsc}>ESTA VISTA</Tl> : null}
+            <Tl x={86.4} y={t.y + 38} w={336} h={46} an="middle" nowrap dyPt={30}>
+              <R s={30} b c={sinIng ? PR.gris : t.k === mejor ? PR.naranjaOsc : PR.negro}>{sinIng ? '—' : fPct(d.mn)}</R>
+              <R s={14} c={PR.gris}>{'\u00A0\u00A0' + (sinIng ? (nada ? t.vacia : 'sin ingresos en el período') : 'margen neto')}</R>
+            </Tl>
+            {filas.map(([nom, v, neg], i) => (
+              <React.Fragment key={i}>
+                <Tl x={86.4} y={t.y + 89 + 23.5 * i} w={200} h={23} s={13} an="middle" c={PR.gris}>{nom}</Tl>
+                <Tl x={220.8} y={t.y + 89 + 23.5 * i} w={192} h={23} s={13} b={neg} al="right" an="middle" c={PR.negro}>{fUSDmil(v || 0)}</Tl>
+              </React.Fragment>
+            ))}
+          </React.Fragment>
+        );
+      })}
+      <Tl x={480} y={192} w={480} h={30.7} s={14} b an="middle" c={PR.negro}>Utilidad bruta por línea · US$ miles</Tl>
+      <SaLeyenda x={480} yc={240.45} items={[{ c: PR.naranja, t: 'Mercancía' }, ...(hayOp ? [{ c: PR.carbon, t: 'Orden de producción' }] : [])]} />
+      <Ch06 M={M} />
+    </Slide>
+  );
+};
 const Sl06 = ({ M, emp, num }) => {
+  if (sa_V(M)) return <Sl06V M={M} emp={emp} num={num} />;
   const L = M.L, hayOp = sa_hayOp(M);
   const tarj = [
     { k: 'merc', nom: 'Venta de mercancía', c: PR.naranja, y: 196.8, vacia: 'sin ventas en el período' },
@@ -25116,9 +25827,47 @@ const prB_art = (n) => {
   return 'la categoría «' + s + '»';
 };
 
+// ── Vista por línea (M.V; null o ausente en el consolidado): con el consolidado todas las frases salen exactamente igual que siempre ──
+const prB_V = (M) => (M && M.V ? M.V : null);
+// «costo de ventas» (consolidado) · «costo de producción» / «costo de la mercancía vendida» (vista por línea)
+const prB_cv = (V) => (V ? V.t.costo : 'costo de ventas');
+// «sin ingresos» (consolidado) · «sin ingresos de producción» / «sin ventas de mercancía»
+const prB_sin = (V) => (V ? 'sin ' + V.t.ingC : 'sin ingresos');
+// «de los ingresos» (consolidado) · «de los ingresos de producción» / «de las ventas de mercancía»
+const prB_delIng = (V) => (V ? (/^ventas/.test(V.t.ingC) ? 'de las ' : 'de los ') + V.t.ingC : 'de los ingresos');
+// % del reparto con dos decimales (igual que el aviso del Estado de Resultados de la pantalla)
+const prB_pc2 = (v) => fPct(v, 2);
+// sobretítulo: «Costos y márgenes» · «Costos y márgenes · Producción»
+const prB_kick = (txt, V) => (V ? txt + ' · ' + V.nombre : txt);
+// primer título (36 pt, negrita) que cabe en una línea; si ninguno cabe, el último
+const prB_tit = (c) => { for (let i = 0; i < c.length; i++) if (prB_tw(c[i], fs(36), true) <= 960) return c[i]; return c[c.length - 1]; };
+// primera frase que cabe en `max` px a `pt` pt (negrita opcional); si ninguna cabe, la última
+const prB_cabe = (c, pt, b, max) => { for (let i = 0; i < c.length; i++) if (prB_tw(c[i], fs(pt), b) <= max) return c[i]; return c[c.length - 1]; };
+// subtítulo (18 pt, 1164.8 px): primera frase que cabe en dos líneas como máximo; si ninguna cabe, la última
+const prB_elige2 = (c) => { for (let i = 0; i < c.length; i++) if (prB_lineas(c[i], fs(18), 1164.8 * 0.98, false) <= 2) return c[i]; return c[c.length - 1]; };
+// rótulo corto del costo de la línea para tablas angostas
+const prB_costoCorto = (V) => (V.k === 'prod' ? 'Costo de producción' : 'Costo de mercancía');
+// pie de página: en vista por línea no es «Consolidado» (mismo formato que las láminas 1–6): «Empresa · Estado de Resultados · Producción · Ene–Sep 2026 · Cifras en USD».
+// Sin M.V se devuelve M.per tal cual (el pie del consolidado no cambia).
+const prB_perPie = (M) => (M.V ? { ...M.per, n: 1, corta: [M.V.nombre, M.per.corta].filter(Boolean).join(PR_SEP) } : M.per);
+// puntos (meses o semanas) sin ingresos de la línea que, aun así, absorben gastos (el reparto usa el % del período completo); solo en vista por línea
+const prB_sinIngConGasto = (M) => { const r = []; if (!prB_V(M)) return r; (M.S.ing || []).forEach((v, i) => { if (!prB_pos(v) && prB_pos((M.S.gas || [])[i])) r.push(i); }); return r; };
+// «enero y febrero» · «enero, febrero y abril» · «las semanas 1 y 2»; si la lista no es manejable (larga o con etiquetas raras) queda la frase genérica «los meses sin …»
+const prB_puntos = (M, idx, V) => {
+  const sem = M.per.gran === 'semana';
+  const et = idx.map((i) => String(M.xn[i] === undefined || M.xn[i] === null ? '' : M.xn[i]));
+  const gen = { txt: (sem ? 'las semanas sin ' : 'los meses sin ') + V.t.ingC, lista: false };
+  if (et.some((e) => !e || (sem && !/^la semana\s+\S+$/i.test(e)))) return gen;
+  const nm = et.map((e) => (sem ? e.replace(/^la semana\s+/i, '') : e));
+  const lista = nm.length > 1 ? nm.slice(0, -1).join(', ') + ' y ' + nm[nm.length - 1] : nm[0];
+  const txt = sem ? (nm.length > 1 ? 'las semanas ' : 'la semana ') + lista : lista;
+  return txt.length <= 60 ? { txt, lista: true } : gen;
+};
+
 // ═════════════════════ Textos de cada lámina (funciones puras de M; con la presentación original dan sus mismas frases) ═════════════════════
 // Lámina 7
 const prB_tx7 = (M) => {
+  const V = prB_V(M), CV = prB_cv(V), DI = prB_delIng(V), CVs = V ? 'costo' : 'costo de ventas';   // CVs: en las tarjetas de la derecha basta «el costo» (el título ya dice cuál)
   const ing = M.T.ing, cos = M.T.cos, un = prB_un(M);
   const rub = {}; (M.C.rubros || []).forEach((r) => { rub[r.k] = r; });
   const val = (k) => (rub[k] ? Number(rub[k].v) || 0 : 0);
@@ -25127,19 +25876,30 @@ const prB_tx7 = (M) => {
   const sbd = (M.C.S && M.C.S.bd) || [];
   const iB = prB_first(sbd, prB_pos), nB = sbd.filter(prB_pos).length;
   const desde = iB > 0 ? 'desde ' + M.xn[iB] : nB >= M.nb ? 'en todo el período' : 'en ' + nB + ' de ' + M.nb + ' ' + un.pl;
-  const sub = ing > 0.005
-    ? prB_elige(['El costo de mercancía y producción equivale al ' + fPct(mp / ing) + ' de los ingresos; el resto del costo, al ' + fPct((cos - mp) / ing),
-      'Mercancía y producción: ' + fPct(mp / ing) + ' de los ingresos; el resto del costo, ' + fPct((cos - mp) / ing)])
-    : 'El costo de ventas del período suma ' + fUSDmil(cos) + ', sin ingresos en el período';
+  let sub;
+  if (!V) {
+    sub = ing > 0.005
+      ? prB_elige(['El costo de mercancía y producción equivale al ' + fPct(mp / ing) + ' de los ingresos; el resto del costo, al ' + fPct((cos - mp) / ing),
+        'Mercancía y producción: ' + fPct(mp / ing) + ' de los ingresos; el resto del costo, ' + fPct((cos - mp) / ing)])
+      : 'El costo de ventas del período suma ' + fUSDmil(cos) + ', sin ingresos en el período';
+  } else if (ing <= 0.005) {
+    sub = cos > 0.005 ? 'El ' + CV + ' del período suma ' + fUSDmil(cos) + ', ' + prB_sin(V) + ' en el período' : 'No se registró ' + CV + ' ni ' + V.t.ingC + ' en el período';
+  } else if (cos <= 0.005) {
+    sub = 'No se registró ' + CV + ' en el período; ' + V.t.ingC + ' suman ' + fUSDmil(ing);
+  } else {
+    const a = 'El ' + CV + ' equivale al ' + fPct(cos / ing) + ' ' + DI;
+    sub = prB_elige([a + ': mercancía y producción, ' + fPct(mp / ing) + '; resto del costo, ' + fPct((cos - mp) / ing), a + ' (mercancía y producción, ' + fPct(mp / ing) + ')', a]);
+  }
   const p = (a) => (cos > 0.005 ? a / cos : 0);
-  const t1 = ing > 0.005 ? 'del costo de ventas es mercancía y producción (' + fPct(mp / ing) + ' de los ingresos).' : 'del costo de ventas es mercancía y producción.';
-  const t2 = bd > 0.005 ? 'son bonificaciones a directores: ' + fUSDmil(bd) + ' registrados en costo ' + desde + '.' : 'no se registraron bonificaciones a directores en el costo de ventas del período.';
+  const t1 = ing > 0.005 ? 'del ' + CVs + ' es mercancía y producción (' + fPct(mp / ing) + ' de los ingresos).' : 'del ' + CVs + ' es mercancía y producción.';
+  const t2 = bd > 0.005 ? 'son bonificaciones a directores: ' + fUSDmil(bd) + ' registrados en costo ' + desde + '.' : 'no se registraron bonificaciones a directores en el ' + CVs + ' del período.';
   const t3 = fle > 0.005 && itr > 0.005 ? 'corresponde a fletes (' + fUSDmil(fle) + ') e intereses de préstamos (' + fUSDmil(itr) + ').'
-    : fle > 0.005 ? 'corresponde a fletes (' + fUSDmil(fle) + '); no hay intereses de préstamos en el costo de ventas.'
-      : itr > 0.005 ? 'corresponde a intereses de préstamos (' + fUSDmil(itr) + '); no hay fletes en el costo de ventas.'
-        : 'no se registraron fletes ni intereses de préstamos en el costo de ventas del período.';
+    : fle > 0.005 ? 'corresponde a fletes (' + fUSDmil(fle) + '); no hay intereses de préstamos en el ' + CVs + '.'
+      : itr > 0.005 ? 'corresponde a intereses de préstamos (' + fUSDmil(itr) + '); no hay fletes en el ' + CVs + '.'
+        : 'no se registraron fletes ni intereses de préstamos en el ' + CVs + ' del período.';
+  const tituloG = prCap(CV) + ' por rubro · US$ miles (total ' + fMiles(cos) + ')';
   return {
-    sub, titulo: 'Costo de ventas por rubro · US$ miles (total ' + fMiles(cos) + ')',
+    sub, titulo: V ? prB_cabe([tituloG, 'Costo por rubro · US$ miles (total ' + fMiles(cos) + ')'], 14, true, 715) : tituloG,
     stats: [{ big: fPct(p(mp)), t: t1 }, { big: fPct(p(bd)), t: t2 }, { big: fPct(p(fi)), t: t3 }],
     items: ['mp', 'bd', 'fi', 'rs'].map((k) => ({ k, n: rub[k] ? rub[k].n : k, v: val(k) })),
   };
@@ -25154,21 +25914,22 @@ const prB_ser8 = (M) => {
 };
 // Lámina 8
 const prB_tx8 = (M) => {
+  const V = prB_V(M), CV = prB_cv(V), SIN = prB_sin(V), CVs = V ? 'costo' : 'costo de ventas';
   const un = prB_un(M), xn = M.xn, S = M.C.S;
   const q = prB_ser8(M);
   const iF = prB_first(q.rt, prB_nn), iL = prB_last(q.rt, prB_nn);
   let sub;
-  if (iF < 0) sub = 'El costo de ventas del período suma ' + fUSDmil(M.T.cos) + ', sin ingresos en el período';
-  else if (iF === iL) sub = 'El costo de ventas de ' + xn[iF] + ' equivale al ' + fPct0(q.rt[iF]) + ' de los ingresos';
+  if (iF < 0) sub = 'El ' + CV + ' del período suma ' + fUSDmil(M.T.cos) + ', ' + SIN + ' en el período';
+  else if (iF === iL) sub = 'El ' + CV + ' de ' + xn[iF] + ' equivale al ' + fPct0(q.rt[iF]) + ' de los ingresos';
   else {
     const igual = fPct0(q.rt[iL]) === fPct0(q.rt[iF]);   // mismo valor mostrado al principio y al final
     const cola = igual ? ', igual que en ' + xn[iF] : ', frente a ' + fPct0(q.rt[iF]) + ' en ' + xn[iF];
-    sub = q.rt[iL] > 1 ? 'En ' + xn[iL] + ' el costo de ventas superó a los ingresos: ' + fPct0(q.rt[iL]) + cola
-      : 'En ' + xn[iL] + ' el costo de ventas equivale al ' + fPct0(q.rt[iL]) + ' de los ingresos' + cola;
+    sub = q.rt[iL] > 1 ? 'En ' + xn[iL] + ' el ' + CV + ' superó a los ingresos: ' + fPct0(q.rt[iL]) + cola
+      : 'En ' + xn[iL] + ' el ' + CV + ' equivale al ' + fPct0(q.rt[iL]) + ' de los ingresos' + cola;
   }
   // tarjeta 1 · mercancía y producción
   let c1; const vM = q.mp.filter(prB_nn);
-  if (iF < 0) c1 = 'Sin ingresos en el período para calcular la proporción.';
+  if (iF < 0) c1 = prCap(SIN) + ' en el período para calcular la proporción.';
   else if (iF === iL) c1 = fPct0(q.mp[iF]) + ' de los ingresos en ' + xn[iF] + '.';
   else {
     const mn = Math.min.apply(null, vM), mx = Math.max.apply(null, vM);
@@ -25178,7 +25939,7 @@ const prB_tx8 = (M) => {
   }
   // tarjeta 2 · bonificación a directores
   let c2; const iB = prB_first(S.bd, prB_pos);
-  if (iB < 0) c2 = 'Sin bonificaciones en el costo de ventas del período.';
+  if (iB < 0) c2 = 'Sin bonificaciones en el ' + CVs + ' del período.';
   else {
     let ip = -1; q.bd.forEach((v, i) => { if (v !== null && (ip < 0 || v > q.bd[ip])) ip = i; });
     const nPos = S.bd.filter(prB_pos).length;
@@ -25188,7 +25949,7 @@ const prB_tx8 = (M) => {
   }
   // tarjeta 3 · fletes e intereses
   let c3;
-  if (!prB_pos(prSuma(q.fiAbs))) c3 = 'Sin fletes ni intereses en el costo de ventas del período.';
+  if (!prB_pos(prSuma(q.fiAbs))) c3 = 'Sin fletes ni intereses en el ' + CVs + ' del período.';
   else if (iF < 0) c3 = 'Fletes e intereses suman ' + fUSDmil(prSuma(q.fiAbs)) + ' en el período.';
   else if (iF === iL) c3 = fPct(q.fi[iF]) + ' de los ingresos en ' + xn[iF] + '.';
   else {
@@ -25197,19 +25958,21 @@ const prB_tx8 = (M) => {
   }
   // nota: desde cuándo los intereses van al costo de ventas
   const kI = prB_first(S.int, prB_pos); let nota = '';
-  if (kI > 0) { const antes = prSuma(M.F.S.gf.slice(0, kI)) > 0.005; nota = 'Desde ' + xn[kI] + ' los intereses de préstamos se registran en costo de ventas' + (antes ? ' (antes, en gastos financieros)' : '') + '.'; }
-  else if (kI === 0) nota = 'Los intereses de préstamos se registran en costo de ventas.';
-  return { titulo: 'Costo de ventas ' + un.aa, sub, cards: [c1, c2, c3], nota };
+  const enCV = V ? 'el ' + CV : 'costo de ventas';
+  if (kI > 0) { const antes = prSuma(M.F.S.gf.slice(0, kI)) > 0.005; nota = 'Desde ' + xn[kI] + ' los intereses de préstamos se registran en ' + enCV + (antes ? ' (antes, en gastos financieros)' : '') + '.'; }
+  else if (kI === 0) nota = 'Los intereses de préstamos se registran en ' + enCV + '.';
+  return { titulo: V ? prB_tit([prCap(CV) + ' ' + un.aa, 'Costo de ' + V.t.linea.toLowerCase() + ' ' + un.aa, 'Costo ' + un.aa + ' · ' + V.nombre]) : 'Costo de ventas ' + un.aa, sub, cards: [c1, c2, c3], nota };
 };
 
 // Lámina 9
 const prB_tx9 = (M) => {
+  const V = prB_V(M), CV = prB_cv(V), SIN = prB_sin(V), enCV = V ? 'el ' + CV : 'costo de ventas';
   const xn = M.xn, ing = M.S.ing, S = M.C.S, mn = M.S.mn, mb = M.S.mb, un = prB_un(M);
   const ok = ing.map((v) => v > 0.005); const idx = []; ok.forEach((o, i) => { if (o) idx.push(i); });
-  const out = { titulo: 'Márgenes ' + un.aa, sub: '', c1: { big: '', t: '' }, c2: { big: '', t: '' }, c3: null };
+  const out = { titulo: V ? prB_tit(['Márgenes de ' + V.t.linea.toLowerCase() + ' ' + un.aa, 'Márgenes ' + un.aa + ' · ' + V.nombre]) : 'Márgenes ' + un.aa, sub: '', c1: { big: '', t: '' }, c2: { big: '', t: '' }, c3: null };
   if (!idx.length) {
-    out.sub = 'No hubo ingresos en el período: los márgenes no se pueden calcular';
-    out.c1 = { big: '—', t: 'sin ingresos en el período' }; out.c2 = { big: '—', t: 'sin ingresos en el período' };
+    out.sub = V ? 'No hubo ' + V.t.ingC + ' en el período: los márgenes no se pueden calcular' : 'No hubo ingresos en el período: los márgenes no se pueden calcular';
+    out.c1 = { big: '—', t: SIN + ' en el período' }; out.c2 = { big: '—', t: SIN + ' en el período' };
   } else {
     const iLast = idx[idx.length - 1];
     let iMax = idx[0], iMin = idx[0]; idx.forEach((i) => { if (mn[i] > mn[iMax]) iMax = i; if (mn[i] < mn[iMin]) iMin = i; });
@@ -25240,15 +26003,34 @@ const prB_tx9 = (M) => {
     const bdS = S.bd, inS = S.int;
     const hasBd = prB_pos(prSuma(bdS)), hasInt = prB_pos(prSuma(inS));
     if (!hasBd && !hasInt) {
-      out.c3 = { titulo: 'Margen bruto del período', big: fPct(M.T.mb), linea: 'sin bonificaciones a directores ni intereses en costo de ventas', nota: '' };
+      out.c3 = { titulo: 'Margen bruto del período', big: fPct(M.T.mb), linea: 'sin bonificaciones a directores ni intereses en ' + enCV, nota: '' };
     } else {
       const aj = M.S.ub.map((u, i) => (ok[i] ? (u + bdS[i] + inS[i]) / ing[i] : null));
       let kS = hasInt ? prB_first(inS, prB_pos) : prB_first(bdS, prB_pos);
       while (kS < iLast && !ok[kS]) kS++;
       if (kS >= iLast || kS < 0) kS = idx[0];
-      const nota = '* Sin ' + (hasBd && hasInt ? 'bonificaciones a directores ni intereses en costo de ventas' : hasBd ? 'bonificaciones a directores' : 'intereses en costo de ventas') + '.';
+      const nota = '* Sin ' + (hasBd && hasInt ? 'bonificaciones a directores ni intereses en ' + enCV : hasBd ? 'bonificaciones a directores' : 'intereses en ' + enCV) + '.';
       if (kS === iLast) out.c3 = { titulo: 'Margen bruto ajustado*', big: fPct(aj[iLast]), linea: 'en ' + xn[iLast], nota };
       else out.c3 = { titulo: 'Margen bruto ajustado*', big: fPct(aj[kS]) + ' → ' + fPct(aj[iLast]), linea: 'de ' + xn[kS] + ' a ' + xn[iLast], nota };
+    }
+  }
+  // vista por línea: el margen neto es el que queda tras los gastos que absorbe la línea; se aclara en el subtítulo si cabe (hasta dos líneas)
+  if (V && /margen neto/i.test(out.sub)) {
+    const largo = out.sub.replace(/margen neto/i, (m) => m + ' (tras gastos absorbidos)');
+    if (prB_lineas(largo, fs(18), 1164.8 * 0.98, false) <= 2) out.sub = largo;
+  }
+  // vista por línea: si hay puntos sin ingresos (sin margen) que igual absorben gastos, nota al pie de UNA línea (el reparto usa el % del período completo);
+  // el gráfico no cambia de tamaño y, si la nota no cabe en una línea a 9 pt como mínimo, se omite
+  out.nota = '';
+  if (V) {
+    const idx = prB_sinIngConGasto(M);
+    if (idx.length) {
+      const p = prB_puntos(M, idx, V);
+      const cand = [
+        'Sin margen en ' + p.txt + (p.lista ? ' (no hubo ' + V.t.ingC + ')' : '') + ', pero la línea absorbió gastos con el % del período completo.',
+        'Sin margen en ' + p.txt + ', pero con gastos absorbidos (% del período completo).',
+      ];
+      for (let i = 0; i < cand.length; i++) if (prB_lineas(cand[i], fs(9), 816 * 0.98, false) <= 1) { out.nota = cand[i]; break; }
     }
   }
   return out;
@@ -25282,12 +26064,22 @@ const prB_tx10 = (M) => {
     }
   }
   const par = Q.filter((q) => q.parcial);
-  const nota = par.length ? '* Trimestre parcial: ' + par.map((q) => q.k + ' (' + mesesQ(q) + ')').join('; ') + '.' : '';
-  return { sub, nota };
+  let nota = par.length ? '* Trimestre parcial: ' + par.map((q) => q.k + ' (' + mesesQ(q) + ')').join('; ') + '.' : '';
+  const V = prB_V(M); let notasX = [];
+  if (V) {
+    const pre = nota ? nota + ' ' : '', ab = 'Gastos absorbidos: ' + prB_pc2(V.pct);
+    // si hay puntos sin ingresos que igual absorben gastos (el % es el del período completo), versiones ampliadas de la nota: la lámina usa la primera que cabe
+    const idx = prB_sinIngConGasto(M), p = idx.length ? prB_puntos(M, idx, V) : null;
+    if (p) notasX = [pre + ab + ' de los gastos operativos del período, incluso en ' + p.txt + (p.lista ? ', sin ' + V.t.ingC : '') + '.',
+      pre + ab + ' de los gastos del período, incluso en ' + p.txt + (p.lista ? ' (sin ingresos)' : '') + '.'];
+    nota = pre + ab + ' de los gastos operativos del período.';
+  }
+  return { sub, nota, notasX };
 };
 
 // Lámina 11
 const prB_tx11 = (M) => {
+  const V = prB_V(M), CV = prB_cv(V), GO = V ? 'gastos absorbidos' : 'gastos operativos', GA = V ? 'gasto absorbido' : 'gasto operativo';
   const G = M.G, cats = G.cats || [], tot = G.total, un = prB_un(M), n = M.nb, xn = M.xn;
   const gas = M.S.gas, ic = M.F.S.ic;
   const fin = cats.find((c) => c.fin), top = cats[0];
@@ -25296,8 +26088,16 @@ const prB_tx11 = (M) => {
   const prom = (a, b) => prSuma(gas.slice(a, b + 1)) / Math.max(1, b - a + 1);
   const out = { sub: '', s1: null, s2: null, s3: null, nota: '' };
   if (!(tot > 0.005) || !top) {
-    out.sub = 'No hay gastos operativos registrados en el período';
-    out.s1 = { big: '—', t: 'sin gastos operativos en el período.' }; out.s2 = { big: '—', t: '' }; out.s3 = { big: '—', t: '' };
+    if (V) {
+      out.sub = V.gastosPool > 0.005 && !(V.pct > 0.00005)
+        ? prB_elige([prCap(prB_sin(V)) + ' en el período, ' + V.nombre + ' no absorbe gastos operativos (se reparten según el % de ingresos)', prCap(prB_sin(V)) + ' en el período, ' + V.nombre + ' no absorbe gastos operativos'])
+        : 'No hay gastos operativos por repartir a ' + V.nombre + ' en el período';
+      out.s1 = { big: '—', t: 'sin gastos absorbidos en el período.' };
+    } else {
+      out.sub = 'No hay gastos operativos registrados en el período';
+      out.s1 = { big: '—', t: 'sin gastos operativos en el período.' };
+    }
+    out.s2 = { big: '—', t: '' }; out.s3 = { big: '—', t: '' };
     return out;
   }
   // frase del subtítulo y tercera cifra: antes / después de que los intereses pasen a costo de ventas
@@ -25308,36 +26108,61 @@ const prB_tx11 = (M) => {
   }
   const cola = tramo ? ', que ' + tramo.verbo + ' ' + tramo.fb + ' ' + un.por + ' desde ' + xn[k] : ', que promedia ' + fUSDmil(tot / n) + ' ' + un.por;
   const pf = fPct0((fin || top).v / tot);
-  out.sub = fin
-    ? prB_elige(['Los gastos financieros son el ' + pf + ' del gasto operativo' + cola, 'Gastos financieros: el ' + pf + ' del gasto operativo' + cola])
-    : prB_elige(['La mayor partida es «' + top.n + '»: el ' + pf + ' del gasto operativo' + cola, '«' + top.n + '»: el ' + pf + ' del gasto operativo' + cola]);
-  out.s1 = fin ? { big: fPct(fin.v / tot), t: 'de los gastos operativos son financieros: ' + fUSDmil(fin.v) + '.' }
-    : { big: fPct(top.v / tot), t: 'del gasto operativo es «' + top.n + '»: ' + fUSDmil(top.v) + '.' };
+  if (V) {
+    // el subtítulo cuenta el reparto: cuánto de los gastos operativos del período absorbe la línea
+    const rp = V.nombre + ' absorbe el ' + prB_pc2(V.pct) + ' de los gastos operativos del período';
+    out.sub = prB_elige([rp + ' (' + fUSDmil(V.gastosAbs) + ' de ' + fUSDmil(V.gastosPool) + ')', rp + ': ' + fUSDmil(V.gastosAbs) + ' de ' + fUSDmil(V.gastosPool), rp]);
+  } else {
+    out.sub = fin
+      ? prB_elige(['Los gastos financieros son el ' + pf + ' del gasto operativo' + cola, 'Gastos financieros: el ' + pf + ' del gasto operativo' + cola])
+      : prB_elige(['La mayor partida es «' + top.n + '»: el ' + pf + ' del gasto operativo' + cola, '«' + top.n + '»: el ' + pf + ' del gasto operativo' + cola]);
+  }
+  out.s1 = fin ? { big: fPct(fin.v / tot), t: 'de los ' + GO + ' son financieros: ' + fUSDmil(fin.v) + '.' }
+    : { big: fPct(top.v / tot), t: 'del ' + GA + ' es «' + top.n + '»: ' + fUSDmil(top.v) + '.' };
   const g = G.generica;
   if (g) {
     const mA = PR_MESES[g.mi - 1], mB = PR_MESES[g.mf - 1];
     out.s2 = { big: fUSDmil(g.v), t: 'en «' + g.n + '» ' + (g.mi === g.mf ? 'durante ' + mA : 'de ' + mA + ' a ' + mB) + ': el ' + fPct0(g.pctCat) + ' de ' + prB_art(g.cat) + '.' };
   } else {
     const o = cats.find((c) => !c.fin);
-    out.s2 = o ? { big: fUSDmil(o.v), t: 'es «' + o.n + '», la mayor categoría no financiera: el ' + fPct0(o.v / tot) + ' del gasto operativo.' }
-      : { big: fUSDmil(tot), t: 'es el total de gastos operativos del período; todos son de naturaleza financiera.' };
+    out.s2 = o ? { big: fUSDmil(o.v), t: 'es «' + o.n + '», la mayor categoría no financiera: el ' + fPct0(o.v / tot) + ' del ' + GA + '.' }
+      : { big: fUSDmil(tot), t: 'es el total de ' + (V ? 'gastos absorbidos' : 'gastos operativos del período') + '; todos son de naturaleza financiera.' };
   }
   out.s3 = tramo
-    ? { big: tramo.fa + ' → ' + tramo.fb, t: 'promedio ' + un.adj + ' de ' + rango(0, k - 1) + ' frente a ' + rango(k, n - 1) + '; desde ' + xn[k] + ' los intereses pasan a costo de ventas.' }
-    : { big: fUSDmil(tot / n), t: 'promedio ' + un.adj + ' de gastos operativos en el período (' + n + ' ' + un.pl + ').' };
-  if (cats.some((c) => c.n === 'Otros gastos')) out.nota = 'Otros gastos: servicios, alquileres, honorarios, mantenimiento y partidas no deducibles.';
+    ? { big: tramo.fa + ' → ' + tramo.fb, t: 'promedio ' + un.adj + ' de ' + rango(0, k - 1) + ' frente a ' + rango(k, n - 1) + '; desde ' + xn[k] + ' los intereses pasan ' + (V ? 'al ' + CV : 'a costo de ventas') + '.' }
+    : { big: fUSDmil(tot / n), t: 'promedio ' + un.adj + ' de ' + GO + ' en el período (' + n + ' ' + un.pl + ').' };
+  const otrosG = cats.some((c) => c.n === 'Otros gastos') ? 'Otros gastos: servicios, alquileres, honorarios, mantenimiento y partidas no deducibles.' : '';
+  if (V) {
+    const rep = 'Cada barra es la parte que absorbe ' + V.nombre + ' (' + prB_pc2(V.pct) + ' de cada categoría)' + (V.pctOtros >= 0.00005 ? '; los otros ingresos (' + prB_pc2(V.pctOtros) + ') no absorben gastos' : '') + '.';
+    out.nota = otrosG ? rep + ' ' + otrosG : rep;
+  } else if (otrosG) out.nota = otrosG;
   return out;
 };
 
 // Lámina 12
 const prB_tx12 = (M) => {
-  const F = M.F; let sub;
-  if (!(F.acum > 0.005)) sub = 'No se registraron gastos financieros ni intereses en el costo de ventas en el período';
+  const V = prB_V(M), F = M.F; let sub;
+  if (!(F.acum > 0.005)) sub = V ? 'No se registraron gastos financieros absorbidos ni intereses en el ' + prB_cv(V) + ' en el período' : 'No se registraron gastos financieros ni intereses en el costo de ventas en el período';
   else if (F.veces !== null && F.veces !== undefined) sub = F.veces >= 1 ? 'La carga financiera suma ' + fUSDmil(F.acum) + ': ' + prNum(F.veces, 1) + ' veces la utilidad neta del período'
     : 'La carga financiera suma ' + fUSDmil(F.acum) + ': el ' + fPct0(F.veces) + ' de la utilidad neta del período';
   else if (M.T.ing > 0.005) sub = 'La carga financiera suma ' + fUSDmil(F.acum) + ', el ' + fPct(F.pctIng) + ' de los ingresos, en un período ' + (M.T.un < -0.005 ? 'con pérdida neta' : 'sin utilidad neta');
   else sub = 'La carga financiera suma ' + fUSDmil(F.acum) + ', en un período sin ingresos';
-  return { sub };
+  // vista por línea: se nombra la línea (si cabe en una línea; si no, queda la frase de siempre)
+  if (V && F.acum > 0.005) sub = prB_elige([sub.replace('La carga financiera', 'La carga financiera de ' + V.t.linea.toLowerCase()), sub]);
+  // vista por línea: si hay puntos sin ingresos que igual absorben gastos financieros (barras sin ventas detrás), nota al pie de UNA línea; si no cabe a 9 pt como mínimo, se omite
+  let nota = '';
+  if (V) {
+    const idx = []; M.S.ing.forEach((v, i) => { if (!prB_pos(v) && prB_pos(F.S.tot[i])) idx.push(i); });
+    if (idx.length) {
+      const p = prB_puntos(M, idx, V);
+      const cand = [
+        'En ' + p.txt + (p.lista ? ' no hubo ' + V.t.ingC + ', pero' : ',') + ' la línea absorbió gastos financieros con el % del período completo.',
+        'En ' + p.txt + ': gastos financieros absorbidos con el % del período completo.',
+      ];
+      for (let i = 0; i < cand.length; i++) if (prB_lineas(cand[i], fs(9), 796.8 * 0.98, false) <= 1) { nota = cand[i]; break; }
+    }
+  }
+  return { sub, nota };
 };
 const PRB_TX = { 7: prB_tx7, 8: prB_tx8, 9: prB_tx9, 10: prB_tx10, 11: prB_tx11, 12: prB_tx12 };
 const PRB_UTIL = { tw: prB_tw };
@@ -25581,10 +26406,10 @@ const Ch07 = ({ t }) => {
   return <PrBBarrasH x={57.6} y={235.2} w={739.2} h={412.8} gap={45} items={t.items.map((it) => ({ n: it.n, v: it.v, c: col[it.k] }))} />;
 };
 const S07 = ({ M, emp, num }) => {
-  const t = prB_tx7(M);
+  const t = prB_tx7(M), V = prB_V(M);
   const ys = [[201.6, 265.0], [350.4, 413.8], [499.2, 562.6]];
   return (
-    <Slide tipo="light" kicker="Costos y márgenes" titulo="Costo de ventas" sub={t.sub} num={num} emp={emp} per={M.per}>
+    <Slide tipo="light" kicker={prB_kick('Costos y márgenes', V)} titulo={V ? prB_tit([prCap(V.t.costo)]) : 'Costo de ventas'} sub={t.sub} num={num} emp={emp} per={prB_perPie(M)}>
       <T x={57.6} y={192.0} w={720} h={30.7} s={14} b an="middle">{t.titulo}</T>
       <Ch07 t={t} />
       {t.stats.map((s, i) => (
@@ -25601,8 +26426,8 @@ const S07 = ({ M, emp, num }) => {
 
 // ═════════════════════ LÁMINA 8 · Costo de ventas mes a mes ═════════════════════
 const Ch08 = ({ M }) => {
-  const q = prB_ser8(M), z = (v) => (prB_nn(v) ? Math.max(0, v) : 0);
-  if (q.rt.every((v) => !prB_nn(v))) return <T x={57.6} y={380} w={816} h={60} s={14} c={PR.gris} al="center" an="middle">Sin ingresos en el período: el costo de ventas no se puede expresar como porcentaje de los ingresos.</T>;
+  const q = prB_ser8(M), z = (v) => (prB_nn(v) ? Math.max(0, v) : 0), V = prB_V(M);
+  if (q.rt.every((v) => !prB_nn(v))) return <T x={57.6} y={380} w={816} h={60} s={14} c={PR.gris} al="center" an="middle">{prCap(prB_sin(V)) + ' en el período: el ' + prB_cv(V) + ' no se puede expresar como porcentaje de los ingresos.'}</T>;
   const mx = Math.max.apply(null, q.rt.map(z).concat([1]));
   const vmax = Math.max(1.1, Math.round(mx * 1.17 * 50) / 50);
   const ok = (a) => a.map(z);
@@ -25616,7 +26441,7 @@ const Ch08 = ({ M }) => {
   );
 };
 const S08 = ({ M, emp, num }) => {
-  const t = prB_tx8(M); const nom = {}; (M.C.rubros || []).forEach((r) => { nom[r.k] = r.n; });
+  const t = prB_tx8(M), V = prB_V(M); const nom = {}; (M.C.rubros || []).forEach((r) => { nom[r.k] = r.n; });
   const card = (i, y0, titulo) => (
     <React.Fragment key={i}>
       <Box x={902.4} y={y0} w={320} h={115.2} bg={PR.fondoCl} adj={0.1} />
@@ -25625,8 +26450,8 @@ const S08 = ({ M, emp, num }) => {
     </React.Fragment>
   );
   return (
-    <Slide tipo="light" kicker="Costos y márgenes" titulo={t.titulo} sub={t.sub} num={num} emp={emp} per={M.per}>
-      <T x={57.6} y={192.0} w={768} h={30.7} s={14} b an="middle">Costo de ventas como % de los ingresos</T>
+    <Slide tipo="light" kicker={prB_kick('Costos y márgenes', V)} titulo={t.titulo} sub={t.sub} num={num} emp={emp} per={prB_perPie(M)}>
+      <T x={57.6} y={192.0} w={768} h={30.7} s={14} b an="middle">{V ? prB_cabe([prCap(V.t.costo) + ' como % de los ingresos', 'Costo como % de los ingresos'], 14, true, 430) : 'Costo de ventas como % de los ingresos'}</T>
       {M.S.ing.some((v) => v > 0.005) ? (
         <>
           <Svg x={499.2} y={205.7} w={30.7} h={4.4}><line x1={0} y1={2.2} x2={30.7} y2={2.2} stroke={PR.gris} strokeWidth={2.33} strokeDasharray="9.3 7" /></Svg>
@@ -25649,14 +26474,14 @@ const S08 = ({ M, emp, num }) => {
 // ═════════════════════ LÁMINA 9 · Márgenes mes a mes ═════════════════════
 const Ch09 = ({ M }) => {
   const ok = M.S.ing.map((v) => v > 0.005);
-  if (!ok.some(Boolean)) return <T x={57.6} y={400} w={816} h={60} s={14} c={PR.gris} al="center" an="middle">Sin ingresos en el período: no hay márgenes que mostrar.</T>;
+  if (!ok.some(Boolean)) return <T x={57.6} y={400} w={816} h={60} s={14} c={PR.gris} al="center" an="middle">{prCap(prB_sin(prB_V(M))) + ' en el período: no hay márgenes que mostrar.'}</T>;
   return (
     <PrBLineas x={57.6} y={235.2} w={816} h={412.8} cats={M.x}
       ser={[{ v: M.S.mb.map((v, i) => (ok[i] ? v : null)), c: PR.carbon, lc: PR.carbon, pos: 't' }, { v: M.S.mn.map((v, i) => (ok[i] ? v : null)), c: PR.naranja, lc: PR.naranjaOsc, pos: 'b' }]} />
   );
 };
 const S09 = ({ M, emp, num }) => {
-  const t = prB_tx9(M);
+  const t = prB_tx9(M), V = prB_V(M);
   const clara = (y0, big, txt, cb) => (
     <React.Fragment key={y0}>
       <Box x={902.4} y={y0} w={320} h={124.8} bg={PR.fondoCl} adj={0.092} />
@@ -25666,13 +26491,14 @@ const S09 = ({ M, emp, num }) => {
   );
   const c3 = t.c3;
   return (
-    <Slide tipo="light" kicker="Costos y márgenes" titulo={t.titulo} sub={t.sub} num={num} emp={emp} per={M.per}>
+    <Slide tipo="light" kicker={prB_kick('Costos y márgenes', V)} titulo={t.titulo} sub={t.sub} num={num} emp={emp} per={prB_perPie(M)}>
       <T x={57.6} y={192.0} w={480} h={30.7} s={14} b an="middle">Margen bruto y margen neto · % de ingresos</T>
       <Cir x={566.4} y={199.7} w={16.3} bg={PR.carbon} />
       <T x={592.3} y={193.9} w={106.7} h={27.8} s={12} c={PR.gris} an="middle" nowrap>Margen bruto</T>
       <Cir x={729.7} y={199.7} w={16.3} bg={PR.naranja} />
       <T x={755.6} y={193.9} w={101.3} h={27.8} s={12} c={PR.gris} an="middle" nowrap>Margen neto</T>
       <Ch09 M={M} />
+      {t.nota ? <PrBTxt x={57.6} y={650} w={816} h={18} s={10.5} maxL={1} min={9} i c={PR.gris}>{t.nota}</PrBTxt> : null}
       {clara(196.8, t.c1.big, t.c1.t, PR.naranjaOsc)}
       {clara(336.0, t.c2.big, t.c2.t, PR.negro)}
       {c3 ? (
@@ -25692,7 +26518,7 @@ const S09 = ({ M, emp, num }) => {
 
 // ═════════════════════ LÁMINA 10 · Resultado por trimestre ═════════════════════
 const S10 = ({ M, emp, num }) => {
-  const t = prB_tx10(M), Q = M.Q || [], nQ = Q.length, TT = M.T;
+  const t = prB_tx10(M), Q = M.Q || [], nQ = Q.length, TT = M.T, V = prB_V(M);
   const lbl = (q) => q.k + (q.parcial ? '*' : '');
   const conIng = (q) => q.ing > 0.005;
   const fila = (nombre, f, o = {}) => ({
@@ -25703,8 +26529,8 @@ const S10 = ({ M, emp, num }) => {
   });
   const rows = [
     { cells: [{ t: 'US$', al: 'l', b: true, c: PR.blanco, bg: PR.negro }].concat(Q.map((q) => ({ t: lbl(q), al: 'r', b: true, c: PR.blanco, bg: PR.negro })), [{ t: 'Acumulado', al: 'r', b: true, c: PR.blanco, bg: PR.negro }]) },
-    fila('Ingresos', (q) => q.ing), fila('Costo de ventas', (q) => q.cos), fila('Utilidad bruta', (q) => q.ub, { b: true, neg: true }),
-    fila('Margen bruto', (q) => q.mb, { i: true, pct: true }), fila('Gastos operativos', (q) => q.gas), fila('Utilidad neta', (q) => q.un, { b: true, neg: true }),
+    fila('Ingresos', (q) => q.ing), fila(V ? prB_costoCorto(V) : 'Costo de ventas', (q) => q.cos), fila('Utilidad bruta', (q) => q.ub, { b: true, neg: true }),
+    fila('Margen bruto', (q) => q.mb, { i: true, pct: true }), fila(V ? 'Gastos absorbidos' : 'Gastos operativos', (q) => q.gas), fila('Utilidad neta', (q) => q.un, { b: true, neg: true }),
     fila('Margen neto', (q) => q.mn, { i: true, pct: true }),
   ];
   // columnas como en el original; si las cifras no caben (importes muy grandes) se ensanchan, y si el gráfico queda muy angosto se baja la letra
@@ -25720,28 +26546,35 @@ const S10 = ({ M, emp, num }) => {
   }
   const tw = cols.reduce((a, b) => a + b, 0), tx = 1222.4 - tw, rowH = 52.8;
   const cx = 57.6, cw = tx - 43.2 - cx;
+  const notaTxt = (t.notasX || []).filter((c) => prB_lineas(c, fs(9), tw * 0.98, false) <= 2)[0] || t.nota;   // la nota ampliada solo si cabe en dos líneas a 9 pt o más
   return (
-    <Slide tipo="light" kicker="Costos y márgenes" titulo="Resultado por trimestre" sub={t.sub} num={num} emp={emp} per={M.per}>
+    <Slide tipo="light" kicker={prB_kick('Costos y márgenes', V)} titulo={V ? prB_tit(['Resultado de ' + V.t.linea.toLowerCase() + ' por trimestre', 'Resultado por trimestre']) : 'Resultado por trimestre'} sub={t.sub} num={num} emp={emp} per={prB_perPie(M)}>
       <T x={57.6} y={192.0} w={Math.max(cw, 300)} h={30.7} s={14} b an="middle">Utilidad neta por trimestre · US$ miles</T>
       <PrBColNeg x={cx} y={235.2} w={cw} h={412.8} cats={Q.map(lbl)} vals={Q.map((q) => q.un)} />
       <PrBTabla x={tx} y={201.6} cols={cols} rowH={rowH} rows={rows} pt={pt} />
-      {t.nota ? <PrBTxt x={tx} y={201.6 + rowH * 8 + 8} w={tw} h={24} s={11} maxL={1} min={8} i c={PR.gris}>{t.nota}</PrBTxt> : null}
+      {notaTxt ? (V
+        ? <PrBTxt x={tx} y={201.6 + rowH * 8 + 6} w={tw} h={34} s={10.5} maxL={2} min={8} i c={PR.gris}>{notaTxt}</PrBTxt>
+        : <PrBTxt x={tx} y={201.6 + rowH * 8 + 8} w={tw} h={24} s={11} maxL={1} min={8} i c={PR.gris}>{notaTxt}</PrBTxt>) : null}
     </Slide>
   );
 };
 
 // ═════════════════════ LÁMINA 11 · Gastos operativos ═════════════════════
-const Ch11 = ({ M }) => (
-  <PrBBarrasH x={57.6} y={235.2} w={787.2} h={398.4} gap={40} mt={7.8} mb={6.6} axDy={-1} catPt={(M.G.cats || []).length > 10 ? 11 : 13} items={(M.G.cats || []).map((c) => ({ n: c.n, v: c.v, c: c.fin ? PR.naranja : PR.carbon }))} />
-);
+const Ch11 = ({ M }) => ((M.G.cats || []).length === 0 && prB_V(M)
+  ? <T x={57.6} y={400} w={787.2} h={60} s={14} c={PR.gris} al="center" an="middle">Sin gastos operativos absorbidos en el período.</T>
+  : (
+    <PrBBarrasH x={57.6} y={235.2} w={787.2} h={398.4} gap={40} mt={7.8} mb={6.6} axDy={-1} catPt={(M.G.cats || []).length > 10 ? 11 : 13} items={(M.G.cats || []).map((c) => ({ n: c.n, v: c.v, c: c.fin ? PR.naranja : PR.carbon }))} />
+  ));
 const S11 = ({ M, emp, num }) => {
-  const t = prB_tx11(M), G = M.G;
+  const t = prB_tx11(M), G = M.G, V = prB_V(M);
   const bloques = [[196.8, 256.3, t.s1, 32, PR.naranjaOsc], [350.4, 409.9, t.s2, 32, PR.negro], [504.0, 563.5, t.s3, 22, PR.negro]];
   return (
-    <Slide tipo="light" kicker="Gastos" titulo="Gastos operativos" sub={t.sub} num={num} emp={emp} per={M.per}>
-      <T x={57.6} y={192.0} w={768} h={30.7} s={14} b an="middle">{'Gastos operativos por categoría · US$ miles (total ' + fMiles(G.total) + ')'}</T>
+    <Slide tipo="light" kicker={prB_kick('Gastos', V)} titulo={V ? 'Gastos operativos absorbidos' : 'Gastos operativos'} sub={t.sub} num={num} emp={emp} per={prB_perPie(M)}>
+      <T x={57.6} y={192.0} w={768} h={30.7} s={14} b an="middle">{V ? prB_cabe(['Gastos operativos absorbidos por categoría · US$ miles (total ' + fMiles(G.total) + ')', 'Gastos absorbidos por categoría · US$ miles (total ' + fMiles(G.total) + ')'], 14, true, 760) : 'Gastos operativos por categoría · US$ miles (total ' + fMiles(G.total) + ')'}</T>
       <Ch11 M={M} />
-      {t.nota ? <T x={57.6} y={635.5} w={787.2} h={26.9} s={11} i c={PR.gris} an="middle">{t.nota}</T> : null}
+      {t.nota ? (V
+        ? <PrBTxt x={57.6} y={633.5} w={787.2} h={34} s={10.5} maxL={2} min={8} i c={PR.gris}>{t.nota}</PrBTxt>
+        : <T x={57.6} y={635.5} w={787.2} h={26.9} s={11} i c={PR.gris} an="middle">{t.nota}</T>) : null}
       {bloques.map((b, i) => (
         <React.Fragment key={i}>
           <PrBUna x={873.6} y={b[0]} w={348.8} h={55.7} s={b[3]} min={16} b an="middle" c={b[4]}>{b[2].big}</PrBUna>
@@ -25764,18 +26597,23 @@ const Ch12 = ({ M }) => {
   );
 };
 const S12 = ({ M, emp, num }) => {
-  const t = prB_tx12(M), F = M.F, kp = kpiParts(F.acum), conInt = prB_pos(prSuma(F.S.ic));
+  const t = prB_tx12(M), F = M.F, kp = kpiParts(F.acum), conInt = prB_pos(prSuma(F.S.ic)), V = prB_V(M);
+  // leyendas: en la vista por línea los gastos financieros son los que absorbe la línea; la segunda leyenda se corre según el ancho de la primera
+  const ley1 = V ? 'Gastos financieros absorbidos' : 'Gastos financieros', ley1w = V ? Math.ceil(prB_tw(ley1, fs(12), false)) + 8 : 144;
+  const ley2 = V ? 'Intereses registrados en el ' + prB_cv(V) : 'Intereses registrados en costo de ventas', ley2w = V ? Math.ceil(prB_tw(ley2, fs(12), false)) + 8 : 299.7;
+  const ley2x = V ? 57.6 + 25.9 + ley1w + 30.8 : 258.3;
   const desg = (F.desg || []).slice(0, 3);
   return (
-    <Slide tipo="light" kicker="Gastos" titulo="Carga financiera" sub={t.sub} num={num} emp={emp} per={M.per}>
+    <Slide tipo="light" kicker={prB_kick('Gastos', V)} titulo={V ? prB_tit(['Carga financiera de ' + V.t.linea.toLowerCase(), 'Carga financiera']) : 'Carga financiera'} sub={t.sub} num={num} emp={emp} per={prB_perPie(M)}>
       <T x={57.6} y={192.0} w={768} h={30.7} s={14} b an="middle">{'Carga financiera ' + prB_un(M).adj + ' · US$ miles'}</T>
-      <PrBLey x={57.6} y={224.6} c={PR.naranja} tw={144}>Gastos financieros</PrBLey>
-      {conInt ? <PrBLey x={258.3} y={224.6} c={PR.carbon} tw={299.7}>Intereses registrados en costo de ventas</PrBLey> : null}
+      <PrBLey x={57.6} y={224.6} c={PR.naranja} tw={ley1w}>{ley1}</PrBLey>
+      {conInt ? <PrBLey x={ley2x} y={224.6} c={PR.carbon} tw={ley2w}>{ley2}</PrBLey> : null}
       <Ch12 M={M} />
+      {t.nota ? <PrBTxt x={57.6} y={650} w={796.8} h={18} s={10.5} maxL={1} min={9} i c={PR.gris}>{t.nota}</PrBTxt> : null}
       <Box x={873.6} y={196.8} w={348.8} h={451.2} bg={PR.negro} adj={0.033} />
       <T x={902.4} y={223.7} w={291.2} h={28.8} s={12} b an="middle" c={PR.grisCl} sp={2}>CARGA ACUMULADA</T>
       <T x={902.4} y={256.3} w={291.2} h={72} an="middle" b c={PR.naranja} s={16} nowrap><R s={16}>{kp.pre}</R><R s={38}>{kp.big}</R><R s={16}>{kp.post}</R></T>
-      <T x={902.4} y={331.2} w={291.2} h={28.8} s={14} an="middle" c={PR.blanco}>{M.T.ing > 0.005 ? fPct(F.pctIng) + ' de los ingresos' : 'sin ingresos en el período'}</T>
+      <T x={902.4} y={331.2} w={291.2} h={28.8} s={14} an="middle" c={PR.blanco}>{M.T.ing > 0.005 ? fPct(F.pctIng) + ' de los ingresos' : V ? prB_sin(V) : 'sin ingresos en el período'}</T>
       <PrBHr x={902.4} y={379.2} w={291.2} c={PR.gris} bw={1} />
       {desg.map((d, i) => (
         <React.Fragment key={i}>
@@ -25806,6 +26644,8 @@ const sc_uni = (per) => (per.gran === 'semana' ? { pl: 'semanas', al: 'a la sema
 const sc_ini = (a) => (a || []).findIndex((v) => v > 0.005);                                                         // primer punto con movimiento (−1 si no hay)
 const sc_sev = (v, a, b) => Math.min(1, Math.max(0, (v - a) / (b - a)));                                              // 0..1
 const sc_prom = (a) => a.reduce((s, v) => s + v, 0) / (a.length || 1);
+// Pie de página: en las vistas por línea no dice «Consolidado» y lleva el nombre de la línea (con M.V ausente deja `M.per` tal cual)
+const sc_perPie = (M) => (M.V ? { ...M.per, n: 1, corta: M.V.nombre + PR_SEP + M.per.corta } : M.per);
 
 // Ancho aproximado de un texto en Arial (métrica de Helvetica, 1000 unidades por em) para saber si cabe en su cuadro
 const SC_AR = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015,
@@ -25920,6 +26760,7 @@ const S13_Tarjeta = ({ y, titulo, l, oscura, activa }) => {
   );
 };
 const S13_Lamina = ({ M, emp, num }) => {
+  if (M.V) return <S13V_Lamina M={M} emp={emp} num={num} />;
   const E = M.E, per = M.per;
   const datos = [{ n: 'Producción', be: E.prod.be, hoy: E.prod.ingProm }, { n: 'Mercancía', be: E.merc.be, hoy: E.merc.ingProm }, { n: 'Total', be: E.tot.be, hoy: E.tot.ingProm }];
   return (
@@ -25940,6 +26781,7 @@ const S13_Lamina = ({ M, emp, num }) => {
 // ═════════════════════════════ 14 · CÓMO SE CALCULA EL EQUILIBRIO ═════════════════════════════
 // Textos de la lámina (con el modelo de la presentación original salen idénticos a los suyos)
 const s14_textos = (M) => {
+  if (M.V) return s14v_textos(M);
   const E = M.E, per = M.per, p = E.peso, n = E.n || per.n || 1;
   let sub, rep;
   if (p.prod > 0.0005 && p.merc > 0.0005) {
@@ -25984,6 +26826,7 @@ const s14_textos = (M) => {
   };
 };
 const S14_Lamina = ({ M, emp, num }) => {
+  if (M.V) return <S14V_Lamina M={M} emp={emp} num={num} />;
   const E = M.E, per = M.per, tx = s14_textos(M);
   const trio = (k) => [E.prod[k], E.merc[k], E.tot[k]];
   const neg = (v) => Math.round(v) < 0;
@@ -26030,6 +26873,7 @@ const S14_Lamina = ({ M, emp, num }) => {
 // Candidatos con puntaje: los seis de mayor puntaje se muestran en el orden canónico `o`. Los seis primeros (o = 1…6) son los focos
 // de la presentación original y siempre le ganan a los complementarios (o = 7…13), que solo entran si faltan focos.
 const s15_focos = (M) => {
+  if (M.V) return s15v_focos(M);
   const out = [], per = M.per, nb = M.nb, S = M.S, T0 = M.T, uni = sc_uni(per), xn = (i) => M.xn[i], ing = T0.ing;
   const nom = (s, m) => sc_corto(s, m);
   // 1 · el costo de ventas pesa cada vez más sobre los ingresos
@@ -26084,7 +26928,7 @@ const s15_focos = (M) => {
       const cifra = (v) => (v >= 10000 ? 'US$ ' + prNum(v / 1000, 0) + ' mil' : fUSDmil(v)), med = (a) => a.reduce((s, i) => s + S.ing[i], 0) / a.length;
       let f;
       if (desp.length) { const m = med(desp), cerca = desp.every((i) => Math.abs(S.ing[i] - m) <= 0.15 * Math.abs(m)); f = prCap(sc_lista(desp.map(xn))) + ' ' + (cerca ? (desp.length > 1 ? 'rondan' : 'ronda') : 'promedian') + ' ' + cifra(m) + ' ' + uni.al + '.'; }
-      else f = 'Los ' + uni.pl + ' anteriores promedian ' + cifra(med(ant)) + ' ' + uni.al + '.';
+      else f = (uni.pl === 'semanas' ? 'Las' : 'Los') + ' ' + uni.pl + ' anteriores promedian ' + cifra(med(ant)) + ' ' + uni.al + '.';
       out.push({ o: 5, p: 60 + 40 * sc_sev(ratio, 1.4, 2.4), t: 'Dependencia de picos de venta', g: fPct(mx / ing), c: '  de los ingresos en ' + xn(pk), x: f + ' Reducir la dependencia de picos.' });
     }
   }
@@ -26108,7 +26952,7 @@ const s15_focos = (M) => {
   }
   if (nb >= 3) {
     const prev = sc_prom(S.ing.slice(0, nb - 1)), last = S.ing[nb - 1];
-    if (prev > 0.005 && last < 0.8 * prev) out.push({ o: 9, p: 25 + 20 * sc_sev(0.8 - last / prev, 0, 0.4), t: 'Ingresos a la baja', g: fPct0(last / prev - 1), c: '  ' + xn(nb - 1) + ' vs. promedio previo', x: 'Ingresos de ' + fUSDmil(last) + ' frente a ' + fUSDmil(prev) + ' de promedio en los ' + uni.pl + ' anteriores. Reforzar ventas.' });
+    if (prev > 0.005 && last < 0.8 * prev) out.push({ o: 9, p: 25 + 20 * sc_sev(0.8 - last / prev, 0, 0.4), t: 'Ingresos a la baja', g: fPct0(last / prev - 1), c: '  ' + xn(nb - 1) + ' vs. promedio previo', x: 'Ingresos de ' + fUSDmil(last) + ' frente a ' + fUSDmil(prev) + ' de promedio en ' + (uni.pl === 'semanas' ? 'las' : 'los') + ' ' + uni.pl + ' anteriores. Reforzar ventas.' });
   }
   {
     const cat = ((M.G && M.G.cats) || []).find((k) => !k.fin && k.v > 0.005 && !/^Otras categor/i.test(k.n) && !/^Sin clasificar/i.test(k.n));
@@ -26131,6 +26975,7 @@ const s15_focos = (M) => {
   });
 };
 const S15_Lamina = ({ M, emp, num }) => {
+  if (M.V) return <S15V_Lamina M={M} emp={emp} num={num} />;
   const per = M.per, f = s15_focos(M), k = f.length;
   const sub = k ? prCap(prNumPalabra(k)) + (k === 1 ? ' foco' : ' focos') + ' para proteger el margen ' + (per.mf < 12 ? 'en el cierre del año' : 'en el próximo año') : 'Sin focos de atención en el período';
   return (
@@ -26176,6 +27021,7 @@ const S16_Lamina = ({ emp }) => (
 
 // ═════════════════════════════ 17 · ANEXO · DETALLE MENSUAL ═════════════════════════════
 const S17_Lamina = ({ M, emp, num }) => {
+  if (M.V) return <S17V_Lamina M={M} emp={emp} num={num} />;
   const per = M.per, nb = M.nb, S = M.S, Tt = M.T;
   const cw = (1164.8 - 206.4 - 134.4) / nb, cols = [206.4, ...new Array(nb).fill(cw), 134.4];
   const amt = (v) => fInt(v), pct = (v) => fPct(v);
@@ -26213,6 +27059,7 @@ const S17_Lamina = ({ M, emp, num }) => {
 
 // ═════════════════════════════ 18 · ANEXO · NOTAS Y CRITERIOS ═════════════════════════════
 const s18_notas = (M) => {
+  if (M.V) return s18v_notas(M);
   const per = M.per, uni = M.per.gran === 'semana' ? 'semanas' : 'meses';
   const it = [];
   const b0 = sc_ini(M.C.S.bd), i0 = sc_ini(M.C.S.int);
@@ -26235,9 +27082,441 @@ const s18_notas = (M) => {
   ];
 };
 const S18_Lamina = ({ M, emp, num }) => {
+  if (M.V) return <S18V_Lamina M={M} emp={emp} num={num} />;
   const notas = s18_notas(M);
   return (
     <Slide tipo="light" kicker="Anexos" titulo="Anexo · Notas y criterios" sub="Fuente de los datos y criterios aplicados en el análisis" num={num} emp={emp} per={M.per}>
+      {notas.map((n, i) => {
+        const col = i < 4 ? 0 : 1, r = i % 4, x = col ? 667.5 : 57.6, y = 193 + 107.5 * r;
+        return (
+          <React.Fragment key={i}>
+            <Cir x={x} y={y} w={36.5} bg={PR.naranja} />
+            <T x={x} y={y} w={36.5} h={36.5} s={13} b al="center" an="middle">{i + 1}</T>
+            <T x={x + 55.7} y={y + 4.8} w={499.2} h={28.8} s={14} b an="middle">{n.t}</T>
+            <T x={x + 55.7} y={y + 40} w={499.2} h={n.largo ? 80 : 63.4} s={12} lh={1.26} c={PR.gris}>{n.largo ? sc_recorta(n.x, 499.2, 12, 4) : sc_recorta(n.x, 499.2, 12, 3)}</T>
+          </React.Fragment>
+        );
+      })}
+    </Slide>
+  );
+};
+
+// ═════════════════════════════ VISTAS POR LÍNEA (M.V ≠ null): Producción / Mercancía ═════════════════════════════
+// En la vista por línea `M` trae el resultado de ESA línea con los gastos operativos absorbidos según su % de ingresos (SPEC_VISTAS.md).
+// Con M.V null/undefined (consolidado) nada de esto se usa: las láminas 13–18 salen exactamente como siempre.
+const scv_kick = (M, base) => (M.V ? base + ' · ' + M.V.nombre : base);                       // «Punto de equilibrio · Producción»
+const scv_pc = (v) => fPct(v, 2);                                                              // % de reparto con 2 decimales (igual que la pantalla del Estado de Resultados)
+const scv_pt = (txt, ptMax, ancho, b, ptMin = 9) => { let pt = ptMax; while (pt > ptMin && sc_ancho(txt, pt, b) > ancho) pt -= 0.5; return pt; };   // tamaño de letra que cabe en `ancho`
+const scv_dos = (cands, ancho, pt) => cands.find((t) => sc_lineas(t, ancho, pt) <= 2) || cands[cands.length - 1];                              // primera frase que cabe en 2 líneas
+const scv_prodSel = (V) => V.k === 'prod';
+const scv_sinAct = (k) => (k === 'prod' ? 'No hubo órdenes de producción en el período' : 'No hubo ventas de mercancía en el período');
+
+// ───────── 13 · punto de equilibrio mensual, vista por línea ─────────
+// «Producción queda US$ 6.0 mil por debajo de su equilibrio al mes: necesita US$ 48.0 mil (costo + gastos absorbidos) y registra US$ 41.9 mil»
+const s13v_sub = (M) => {
+  const V = M.V, a = M.E[V.k], L = V.nombre, mil = fUSDmil;
+  if (!s13_activa(a)) return 'Sin ingresos ni costos de ' + L.toLowerCase() + ' para calcular el equilibrio';
+  const conGas = a.gasProm > 0.005;
+  const desg = conGas ? ' (costo + gastos absorbidos)' : ' (solo costo)';
+  if (a.ingProm < 0.005) {
+    const full = conGas ? L + ' no tuvo ingresos: su equilibrio es de ' + mil(a.be) + ' al mes' + desg : L + ' no tuvo ingresos: su equilibrio es solo costo (' + mil(a.be) + ' al mes) y no absorbe gastos operativos';
+    return scv_dos([full, L + ' no tuvo ingresos: su equilibrio es de ' + mil(a.be) + ' al mes'], 1164.8, 18);
+  }
+  const head = a.dif > 0.5 ? L + ' supera su equilibrio por ' + mil(a.dif) + ' al mes' : a.dif < -0.5 ? L + ' queda ' + mil(-a.dif) + ' por debajo de su equilibrio al mes' : L + ' está en su equilibrio';
+  const full = a.dif > 0.5 || a.dif < -0.5 ? head + ': necesita ' + mil(a.be) + desg + ' y registra ' + mil(a.ingProm) : head + ': necesita y registra ' + mil(a.be) + ' al mes' + desg;
+  return scv_dos([full, head], 1164.8, 18);
+};
+// Gráfico de columnas agrupadas (equilibrio vs. hoy) con 2 categorías (Producción, Mercancía); la de la vista va en negrita
+const Ch13BarrasV = ({ datos }) => {
+  const hi = s13_techo(Math.max(0, ...datos.map((d) => Math.max(d.be, d.hoy))));
+  const k = 343.2 / hi, alt = (v) => Math.max(0, v) * k;
+  const BASE = 610, slot = 765 / datos.length, bw = 128, off = (slot - 2 * bw) / 2, px = (v) => Math.round(v);
+  return (
+    <Svg x={0} y={0} w={1280} h={720} style={{ pointerEvents: 'none' }}>
+      <g shapeRendering="crispEdges">
+        <rect x={73} y={609} width={765} height={1} fill={PR.grisCl} />
+        {[0, ...datos.map((d, i) => i + 1)].map((i) => <rect key={i} x={px(73 + slot * i)} y={610} width={1} height={5} fill={PR.grisCl} />)}
+        {datos.map((d, i) => [d.be, d.hoy].map((v, j) => <rect key={i + '_' + j} x={px(73 + slot * i + off + bw * j)} y={BASE - alt(v)} width={bw} height={alt(v)} fill={j ? PR.carbon : PR.naranja} />))}
+      </g>
+      {datos.map((d, i) => [d.be, d.hoy].map((v, j) => (
+        <text key={'l' + i + '_' + j} x={px(73 + slot * i + off + bw * j) + bw / 2} y={BASE - alt(v) - 7.4} textAnchor="middle" fontSize={fs(12)} fontWeight="700" fill={PR.carbon}>{fMiles(v)}</text>
+      )))}
+      {datos.map((d, i) => <text key={'c' + i} x={73 + slot * i + slot / 2} y={636.4} textAnchor="middle" fontSize={fs(14)} fontWeight={d.sel ? '700' : '400'} fill={d.sel ? PR.negro : PR.gris}>{d.n}</text>)}
+    </Svg>
+  );
+};
+// Tarjeta de una línea (más alta que la del consolidado): equilibrio, de qué se compone, qué % de los gastos absorbe, promedio de hoy y lo que sobra o falta
+const S13V_Tarjeta = ({ y, titulo, k, l, pct, oscura, activa }) => {
+  const sob = l.dif > 0.5, fal = l.dif < -0.5;
+  const estado = sob ? 'Sobran US$ ' + fMiles(l.dif) + ' mil' : fal ? 'Faltan US$ ' + fMiles(-l.dif) + ' mil' : 'En equilibrio';
+  const cEst = oscura ? (fal ? PR.durazno : PR.blanco) : fal ? PR.naranjaOsc : PR.negro;
+  const cTit = oscura ? PR.blanco : PR.negro, cBig = oscura ? PR.naranja : PR.negro, cHoy = oscura ? PR.grisCl : PR.gris;
+  const t1 = l.gasProm > 0.005 ? 'Costo ' + fUSDmil(l.cosProm) + ' + gastos ' + fUSDmil(l.gasProm) : 'Solo costo: ' + fUSDmil(l.cosProm);
+  const t2 = 'Absorbe el ' + scv_pc(pct) + ' de los gastos operativos';
+  const ptp = Math.min(scv_pt(t1, 12, 291.2), scv_pt(t2, 12, 291.2));     // las dos líneas pequeñas con el mismo tamaño
+  return (
+    <>
+      <Box x={883.2} y={y} w={339.2} h={220.8} bg={oscura ? PR.negro : PR.fondoCl} adj={0.06} />
+      <T x={910.1} y={y + 14} w={291.2} h={28.8} s={15} b an="middle" c={cTit}>{titulo}</T>
+      {activa ? (
+        <>
+          <T x={910.1} y={y + 48} w={291.2} h={48} b an="middle" nowrap c={cBig}><R s={14}>US$ </R><R s={26}>{fMiles(l.be)}</R><R s={14}> mil</R></T>
+          <T x={910.1} y={y + 102} w={291.2} h={23} s={ptp} an="middle" nowrap c={cHoy}>{t1}</T>
+          <T x={910.1} y={y + 126} w={291.2} h={23} s={ptp} an="middle" nowrap c={cHoy}>{t2}</T>
+          <T x={910.1} y={y + 156} w={291.2} h={23} s={14} an="middle" c={cHoy}>{'Hoy: US$ ' + fMiles(l.ingProm) + ' mil'}</T>
+          <T x={910.1} y={y + 182} w={291.2} h={23} s={14} b an="middle" c={cEst}>{estado}</T>
+        </>
+      ) : (
+        <>
+          <T x={910.1} y={y + 48} w={291.2} h={48} s={26} b an="middle" nowrap c={cBig}>Sin actividad</T>
+          <T x={910.1} y={y + 102} w={291.2} h={46} s={14} c={cHoy}>{scv_sinAct(k)}</T>
+        </>
+      )}
+    </>
+  );
+};
+const S13V_Lamina = ({ M, emp, num }) => {
+  const E = M.E, V = M.V, per = M.per, ps = scv_prodSel(V);
+  const datos = [{ n: 'Producción', be: E.prod.be, hoy: E.prod.ingProm, sel: ps }, { n: 'Mercancía', be: E.merc.be, hoy: E.merc.ingProm, sel: !ps }];
+  const tit = (k) => (V.k === k ? (k === 'prod' ? 'Producción (planta)' : 'Mercancía') : (k === 'prod' ? 'Producción' : 'Mercancía') + ' · referencia');
+  return (
+    <Slide tipo="light" kicker={scv_kick(M, 'Punto de equilibrio')} titulo="Punto de equilibrio mensual" sub={s13v_sub(M)} num={num} emp={emp} per={sc_perPie(M)}>
+      <T x={57.6} y={192} w={768} h={30.7} s={14} b an="middle">{'Punto de equilibrio vs. ' + (per.n > 1 ? 'promedio actual' : 'ingresos del mes') + ' · US$ miles por mes'}</T>
+      <Cir x={57.6} y={230.4} w={16.3} bg={PR.naranja} />
+      <T x={83.5} y={224.6} w={295} h={27.8} s={12} c={PR.gris} an="middle" nowrap>Equilibrio (costos + gastos absorbidos)</T>
+      <Cir x={398} y={230.4} w={16.3} bg={PR.carbon} />
+      <T x={423.9} y={224.6} w={255.2} h={27.8} s={12} c={PR.gris} an="middle" nowrap>{per.n > 1 ? 'Hoy (promedio ' + sc_rangoCorto(per) + ')' : 'Hoy (' + PR_MESES[per.mf - 1] + ')'}</T>
+      <Ch13BarrasV datos={datos} />
+      <S13V_Tarjeta y={196.8} titulo={tit('prod')} k="prod" l={E.prod} pct={ps ? V.pct : V.pctOtra} oscura={ps} activa={s13_activa(E.prod)} />
+      <S13V_Tarjeta y={427.2} titulo={tit('merc')} k="merc" l={E.merc} pct={ps ? V.pctOtra : V.pct} oscura={!ps} activa={s13_activa(E.merc)} />
+    </Slide>
+  );
+};
+
+// ───────── 14 · cómo se calcula el equilibrio, vista por línea ─────────
+const s14v_textos = (M) => {
+  const V = M.V, E = M.E, per = M.per, n = E.n || per.n || 1, L = V.nombre, ps = scv_prodSel(V);
+  const pP = ps ? V.pct : V.pctOtra, pM = ps ? V.pctOtra : V.pct;
+  const sub = V.ingLinea > 0.005
+    ? L + ' absorbe el ' + scv_pc(V.pct) + ' de los gastos operativos (' + fUSDmil(V.gastosAbs) + ' de ' + fUSDmil(V.gastosPool) + ')'
+    : L + ' no tuvo ingresos en el período: no absorbe gastos operativos y su equilibrio es solo el costo';
+  // paso 1: período promediado y puntos sin ingresos de la línea
+  const sinS = []; (M.S.ing || []).forEach((v, i) => { if (Math.abs(v) < 0.005) sinS.push(i); });
+  const ingL = V.t.ingC;
+  let p1;
+  if (per.n > 1) {
+    p1 = 'Ingresos, costos y gastos absorbidos de ' + sc_rangoA(per) + ', entre ' + n + '.';
+    const tot = M.S.ing.length;
+    if (sinS.length) {
+      if (sinS.length < tot) p1 += ' ' + (sinS.length > 4 ? sinS.length + ' de los ' + tot + ' meses sin ' + ingL + '.' : prCap(sc_lista(sinS.map((i) => M.xn[i]))) + ' sin ' + ingL + '.');
+      else p1 += ' Sin ' + ingL + ' en el período.';
+    }
+  } else {
+    p1 = 'Ingresos, costos y gastos absorbidos de ' + PR_MESES[per.mf - 1] + '.';
+    if (V.ingLinea < 0.005) p1 += ' Sin ' + ingL + ' en el mes.';
+  }
+  // paso 2: cómo se reparten los gastos
+  const part = [];
+  if (pP > 0.00005) part.push('Producción ' + scv_pc(pP));
+  if (pM > 0.00005) part.push('Mercancía ' + scv_pc(pM));
+  const baseP = per.n > 1 ? 'del período' : 'del mes';                          // el % es el de TODO el período (acumulado) o el del mes
+  let rep = part.length ? 'Según el % de ingresos ' + baseP + ': ' + sc_lista(part) + '.' : 'Sin ingresos en las líneas no hay base para repartir los gastos operativos.';
+  if (part.length && V.pctOtros > 0.00005) rep += ' Los otros ingresos (' + scv_pc(V.pctOtros) + ') no absorben.';
+  // nota al pie
+  const otN = ((M.L && M.L.otrosNombres) || []).map((x) => String(x).charAt(0).toLowerCase() + String(x).slice(1)).filter((x) => !/^otros\s+ingresos?$/i.test(x));
+  let nota = otN.length ? 'Otros ingresos: ' + sc_lista(otN) + '; no absorben gastos y no se miden en esta vista.' : 'Otros ingresos: los que no son ventas (cuentas fuera de 4.1); no absorben gastos y no se miden en esta vista.';
+  nota += ' El resultado del mes de ' + L + ' equivale a su ' + (M.T.un < 0 ? 'pérdida' : 'utilidad') + ' del período de ' + fUSDmil(Math.abs(M.T.un)) + (n > 1 ? ' entre ' + n : '') + '.';
+  nota += ' Las sumas pueden diferir en US$ 1 por redondeo.';
+  return {
+    sub,
+    pasos: [
+      { t: per.n > 1 ? 'Promedio de ' + n + ' meses' : 'Mes de ' + PR_MESES[per.mf - 1], x: sc_recorta(p1, 328.6, 13, 4) },
+      { t: 'Gastos absorbidos', x: sc_recorta(rep, 328.6, 13, 3) },
+      { t: 'Equilibrio', x: 'Costo + gastos absorbidos del ' + (per.n > 1 ? 'mes promedio' : 'mes') + ': lo mínimo que hay que ' + (ps ? 'producir' : 'vender') + ' al mes para no quedar en pérdida.' },
+    ],
+    nota,
+  };
+};
+const S14V_Lamina = ({ M, emp, num }) => {
+  const E = M.E, V = M.V, per = M.per, n = E.n || per.n || 1, tx = s14v_textos(M), ps = scv_prodSel(V);
+  const pP = ps ? V.pct : V.pctOtra, pM = ps ? V.pctOtra : V.pct;
+  const neg = (v) => Math.round(v) < 0;
+  const H = { bg: PR.negro, c: PR.blanco, b: true }, HS = { bg: PR.naranja, c: PR.negro, b: true };
+  const cel = (t, k, o = {}) => ({ t, al: k ? 'r' : 'l', ...o });
+  const GU = { t: '—', guion: true };
+  const fila = (etq, vals, o = {}) => ({
+    celdas: [cel(etq, 0, { b: o.b, i: o.i, c: o.c, bg: o.bg }), ...vals.map((v, k) => {
+      const esSel = (k === 0 && ps) || (k === 1 && !ps);
+      const mal = o.dif && !v.guion && neg(v.num);
+      return cel(v.t, k + 1, { b: v.guion ? false : (o.b ?? esSel), i: o.i, c: mal ? PR.naranjaOsc : v.guion ? PR.gris2 : o.c, bg: mal ? PR.melon : o.bg });
+    })],
+  });
+  const val = (v) => ({ t: fInt(v), num: v });
+  const pc = (v) => ({ t: scv_pc(v), num: v });
+  const filas = [
+    { sinLinea: true, celdas: [cel('US$ por mes', 0, H), cel('Producción', 1, ps ? HS : H), cel('Mercancía', 2, ps ? H : HS), cel('Otros ingresos', 3, H)] },
+    fila('Ingresos', [val(E.prod.ingProm), val(E.merc.ingProm), val(M.L.otros.ing / n)]),
+    fila('% de los ingresos', [pc(pP), pc(pM), pc(V.pctOtros)], { i: true, c: PR.gris, b: false }),
+    fila('Costos', [val(E.prod.cosProm), val(E.merc.cosProm), GU]),
+    fila('Gastos absorbidos', [val(E.prod.gasProm), val(E.merc.gasProm), GU]),
+    fila('Punto de equilibrio', [val(E.prod.be), val(E.merc.be), GU], { b: true, bg: PR.fondoCl }),
+    fila('Sobra / falta', [val(E.prod.dif), val(E.merc.dif), GU], { b: true, dif: true }),
+  ];
+  return (
+    <Slide tipo="light" kicker={scv_kick(M, 'Punto de equilibrio')} titulo="Cómo se calcula el equilibrio" sub={tx.sub} num={num} emp={emp} per={sc_perPie(M)}>
+      <Sc_Tabla x={57.6} y={196.8} cols={[276, 144, 153.6, 165.6]} rowH={56} filas={filas} padL={11.52} padR={11.52} pt={14} />
+      {tx.pasos.map((p, i) => {
+        const y0 = 196.8 + 139.2 * i;
+        return (
+          <React.Fragment key={i}>
+            <Cir x={830.4} y={y0} w={44.2} bg={PR.naranja} />
+            <T x={830.4} y={y0 + 1} w={44.2} h={44.2} s={16} b al="center" an="middle">{i + 1}</T>
+            <T x={893.8} y={y0 - 1.9} w={328.6} h={48} s={15} b an="middle">{p.t}</T>
+            <T x={893.8} y={y0 + 50} w={328.6} h={81.6} s={13} lh={1.26} c={PR.gris}>{p.x}</T>
+          </React.Fragment>
+        );
+      })}
+      <T x={57.6} y={616} w={1164.8} h={43.2} s={11} i c={PR.gris}>{tx.nota}</T>
+    </Slide>
+  );
+};
+
+// ───────── 15 · puntos de atención, vista por línea ─────────
+// Mismos candidatos y misma regla de selección que el consolidado (los seis primeros ganan a los complementarios), pero sobre la línea:
+// ingresos y costo de la línea, gastos ABSORBIDOS, margen bruto de la línea. Dos complementarios propios de la vista por línea (14 y 15).
+const s15v_focos = (M) => {
+  const V = M.V, out = [], per = M.per, nb = M.nb, S = M.S, T0 = M.T, uni = sc_uni(per), xn = (i) => M.xn[i], ing = T0.ing, art = per.gran === 'semana' ? ['Las', 'las'] : ['Los', 'los'];   // «las semanas» / «los meses»
+  const ps = scv_prodSel(V), L = V.nombre, O = V.otra.nombre;
+  const nom = (s, m) => sc_corto(s, m);
+  const cCorto = ps ? 'costo de producción' : 'costo de mercancía';        // títulos y frases cortas
+  const mercL = M.L.merc, opL = M.L.op;
+  // 1 · el costo de la línea pesa cada vez más sobre sus ingresos
+  {
+    const ix = []; S.ing.forEach((v, i) => { if (v > 0.005) ix.push(i); });
+    if (ix.length >= 2) {
+      const i0 = ix[0], i1 = ix[ix.length - 1], r0 = S.cos[i0] / S.ing[i0], r1 = S.cos[i1] / S.ing[i1];
+      if (r1 - r0 >= 0.05) out.push({ o: 1, p: 60 + 40 * sc_sev(r1 - r0, 0.05, 0.3), t: 'Margen del ' + cCorto, g: fPct0(r0) + ' → ' + fPct0(r1), c: '  costo sobre ingresos', x: 'De ' + xn(i0) + ' a ' + xn(i1) + '. Revisar precios y ' + cCorto + '.' });
+    }
+  }
+  // 2 · bonificaciones a directores dentro del costo de la línea
+  {
+    const bd = ((M.C.rubros || []).find((r) => r.k === 'bd') || {}).v || 0;
+    if (bd > 0.005 && ing > 0.005 && bd / ing >= 0.01) {
+      const i0 = sc_ini(M.C.S.bd);
+      out.push({ o: 2, p: 60 + 40 * sc_sev(bd / ing, 0.01, 0.1), t: 'Bonificaciones a directores', g: fUSDmil(bd), c: i0 > 0 ? '  desde ' + xn(i0) : '  en todo el período', x: 'En el ' + (ps ? 'costo de producción' : 'costo de la mercancía') + ': ' + fPct(bd / ing) + ' de los ingresos. Alinear monto y periodicidad al resultado.' });
+    }
+  }
+  // 3 · carga financiera de la línea frente a sus ingresos y a su resultado
+  {
+    const F = M.F;
+    if (F.acum > 0.005 && F.pctIng >= 0.03) {
+      const reb = (F.desg || []).find((d) => d.k === 'rebanc'), may = (F.desg || []).reduce((m, d) => Math.max(m, d.v), 0);
+      const rebMain = !!reb && reb.v > 0.005 && reb.v >= may;
+      const th = Math.max(1, Math.floor(nb / 3)), gf = F.S.gf;
+      const bajando = nb >= 3 && sc_prom(gf.slice(0, th)) > 0.005 && sc_prom(gf.slice(nb - th)) <= 0.7 * sc_prom(gf.slice(0, th));
+      const cola = rebMain ? (bajando ? 'Optimizar la deuda y sostener la baja de rebancarización.' : 'Optimizar la deuda y reducir la rebancarización.') : (bajando ? 'Optimizar la deuda y sostener la baja de los gastos financieros.' : 'Optimizar la deuda y renegociar sus condiciones.');
+      const v = F.veces;
+      out.push({ o: 3, p: 60 + 40 * sc_sev(F.pctIng, 0.03, 0.12), t: 'Carga financiera', g: fUSDmil(F.acum), c: '  ' + fPct(F.pctIng) + ' de los ingresos', x: (v != null && v > 0 ? prNum(v, v >= 100 ? 0 : 1) + ' veces la utilidad de la línea.' : 'Con pérdida en la línea, agrava el resultado.') + ' ' + cola });
+    }
+  }
+  // 4 · margen bruto bajo o pérdida bruta de la línea (en Producción son las órdenes de producción; en Mercancía, la venta de mercancía)
+  {
+    const lin = ps ? opL : mercL, ub = ps ? M.L.S.ubOp : M.L.S.ubMerc, otra = ps ? mercL : opL;
+    if (lin.ing > 0.005) {
+      const perd = []; ub.forEach((v, i) => { if (v < -0.005) perd.push(i); });
+      const fin = []; for (let i = nb - 1; i >= 0 && ub[i] < -0.005; i--) fin.unshift(i);
+      if (perd.length || lin.mb < 0.15) {
+        const ms = fin.length ? fin : perd, mbO = otra.ing > 0.005 ? otra.mb : null;
+        const cola = ps ? 'Definir volumen mínimo y precio por orden.' : 'Revisar precios y costo de la mercancía.';
+        const x = perd.length
+          ? 'Con pérdida bruta en ' + (ms.length > 4 ? ms.length + ' de ' + nb + ' ' + uni.pl : sc_lista(ms.map(xn))) + '. ' + cola
+          : 'Margen bajo' + (mbO != null && mbO > lin.mb ? ' frente al ' + fPct(mbO) + ' de ' + (ps ? 'mercancía' : 'producción') : '') + '. ' + cola;
+        out.push({ o: 4, p: 60 + 40 * Math.max(perd.length ? 0.6 : 0, sc_sev(0.15 - lin.mb, 0, 0.15)), t: ps ? 'Órdenes de producción' : 'Venta de mercancía', g: fPct(lin.mb), c: '  margen bruto', x });
+      }
+    }
+  }
+  // 5 · ingresos de la línea concentrados en un pico
+  if (nb >= 3 && ing > 0.005) {
+    const mx = Math.max(...S.ing), pk = S.ing.indexOf(mx), ratio = mx / (ing / nb);
+    if (ratio >= 1.6) {
+      const desp = [], ant = []; for (let i = pk + 1; i < nb; i++) desp.push(i); for (let i = 0; i < pk; i++) ant.push(i);
+      const cifra = (v) => (v >= 10000 ? 'US$ ' + prNum(v / 1000, 0) + ' mil' : fUSDmil(v)), med = (a) => a.reduce((s, i) => s + S.ing[i], 0) / a.length;
+      let f;
+      if (desp.length) { const m = med(desp), cerca = desp.every((i) => Math.abs(S.ing[i] - m) <= 0.15 * Math.abs(m)); f = prCap(sc_lista(desp.map(xn))) + ' ' + (cerca ? (desp.length > 1 ? 'rondan' : 'ronda') : 'promedian') + ' ' + cifra(m) + ' ' + uni.al + '.'; }
+      else f = art[0] + ' ' + uni.pl + ' anteriores promedian ' + cifra(med(ant)) + ' ' + uni.al + '.';
+      out.push({ o: 5, p: 60 + 40 * sc_sev(ratio, 1.4, 2.4), t: 'Dependencia de picos de venta', g: fPct(mx / ing), c: '  de los ingresos en ' + xn(pk), x: f + ' Reducir la dependencia de picos.' });
+    }
+  }
+  // 6 · cuenta genérica grande dentro de los gastos absorbidos (calidad de la información)
+  {
+    const g = M.G && M.G.generica;
+    if (g && g.v > 0.005) {
+      const cam = sc_ini(M.C.S.bd) > 0 || sc_ini(M.C.S.int) > 0;
+      out.push({ o: 6, p: 60 + 40 * sc_sev(g.v / (M.G.total || 1), 0.05, 0.15), t: 'Calidad de la información', g: fUSDmil(g.v), c: '  absorbidos en «' + nom(g.n, 24) + '»', x: 'Cuenta genérica' + (cam ? '; además, hay partidas que cambian de rubro entre meses' : '') + '. Estandarizar.' });
+    }
+  }
+  // 7 · complementarios (solo entran si faltan focos principales)
+  {
+    const perd = []; S.un.forEach((v, i) => { if (v < -0.5) perd.push(i); });
+    if (T0.un < -0.5) out.push({ o: 7, p: 50 + 5 * sc_sev(-T0.mn, 0, 0.1), t: 'Resultado de la línea', g: fUSDmil(T0.un), c: '  pérdida del período', x: ing > 0.005 ? 'Margen neto de ' + fPct(T0.mn) + ' sobre ingresos. Revisar costos y gastos absorbidos para volver a utilidad.' : L + ' no tuvo ingresos en el período y acumula ' + fUSDmil(T0.cos) + ' de costo.' });
+    else if (perd.length) {
+      // el % del período se aplica a los gastos de cada punto: una línea absorbe gastos aunque ese mes no haya tenido ingresos
+      const sinI = perd.filter((i) => S.ing[i] < 0.005 && S.gas[i] > 0.005).length, cuando = perd.length > 4 ? perd.length + ' de ' + nb + ' ' + uni.pl : sc_lista(perd.map(xn));
+      const x = 'Pérdida neta en ' + cuando + (sinI === 0 ? '. Identificar qué partidas la explican.' : sinI === perd.length ? ': sin ingresos de la línea, pero con gastos absorbidos.' : '; ' + (sinI === 1 ? (per.gran === 'semana' ? 'una' : 'uno') : sinI) + ' sin ingresos pero con gastos absorbidos.');
+      out.push({ o: 7, p: 20 + 25 * sc_sev(perd.length / nb, 0, 0.5), t: 'Resultado de la línea', g: perd.length + ' de ' + nb, c: '  ' + uni.pl + ' con pérdida neta', x });
+    }
+  }
+  if (T0.gas > 0.005) {
+    const r = T0.ub > 0.005 ? T0.gas / T0.ub : Infinity;
+    if (r >= 0.7) out.push({ o: 8, p: 25 + 25 * (isFinite(r) ? sc_sev(r, 0.7, 1.3) : 1), t: 'Gastos absorbidos', g: isFinite(r) ? fPct0(r) : fUSDmil(T0.gas), c: isFinite(r) ? '  de la utilidad bruta' : '  de gastos absorbidos', x: isFinite(r) ? 'Suman ' + fUSDmil(T0.gas) + ' en el período. Vigilar su peso frente al margen bruto.' : 'La utilidad bruta no los cubre. Reducir gastos o mejorar el margen bruto.' });
+  }
+  if (nb >= 3) {
+    const prev = sc_prom(S.ing.slice(0, nb - 1)), last = S.ing[nb - 1];
+    if (prev > 0.005 && last < 0.8 * prev) out.push({ o: 9, p: 25 + 20 * sc_sev(0.8 - last / prev, 0, 0.4), t: 'Ingresos a la baja', g: fPct0(last / prev - 1), c: '  ' + xn(nb - 1) + ' vs. promedio previo', x: 'Ingresos de ' + fUSDmil(last) + ' frente a ' + fUSDmil(prev) + ' de promedio en ' + art[1] + ' ' + uni.pl + ' anteriores. Reforzar ventas.' });
+  }
+  {
+    const cat = ((M.G && M.G.cats) || []).find((k) => !k.fin && k.v > 0.005 && !/^Otras categor/i.test(k.n) && !/^Sin clasificar/i.test(k.n));
+    if (cat && M.G.total > 0.005) out.push({ o: 10, p: 15, t: 'Gasto principal', g: fUSDmil(cat.v), c: '  ' + fPct0(cat.v / M.G.total) + ' de los gastos absorbidos', x: 'Mayor categoría de gasto absorbido: ' + nom(cat.n, 40) + '. Revisar si es recurrente y necesario.' });
+  }
+  if (T0.gas > 0.005) {
+    const x = T0.ub >= T0.gas ? 'La utilidad bruta cubre los gastos absorbidos y deja ' + fUSDmil(T0.ub - T0.gas) + ' de margen.' : 'La utilidad bruta no alcanza a cubrir los gastos absorbidos: faltan ' + fUSDmil(T0.gas - T0.ub) + '.';
+    out.push({ o: 11, p: 14, t: 'Cobertura de gastos', g: T0.ub > 0.005 ? prNum(T0.ub / T0.gas, Math.abs(T0.ub / T0.gas - 1) < 0.05 ? 2 : 1) + ' veces' : fUSDmil(T0.ub), c: T0.ub > 0.005 ? '  utilidad bruta sobre gastos' : '  de utilidad bruta', x });
+  }
+  if (ing > 0.005) {
+    out.push({ o: 12, p: 13, t: 'Margen bruto', g: fPct(T0.mb), c: '  sobre ingresos', x: 'Costo de ' + (ps ? 'producción' : 'la mercancía vendida') + ' de ' + fUSDM(T0.cos) + ' sobre ingresos de ' + fUSDM(ing) + '. Cuidar precios y costos.' });
+    out.push({ o: 13, p: 12, t: 'Margen neto', g: fPct(T0.mn), c: '  sobre ingresos', x: T0.un >= 0 ? 'Utilidad neta de ' + fUSDmil(T0.un) + ' en el período, ya con los gastos absorbidos; cuidar que el margen no se erosione.' : 'Pérdida neta de ' + fUSDmil(-T0.un) + ' en el período, ya con los gastos absorbidos; recuperar el margen es la prioridad.' });
+  }
+  // 14 · cuánto del gasto operativo carga la línea (propio de la vista por línea)
+  if (ing > 0.005 && V.gastosAbs > 0.005) {
+    out.push({ o: 14, p: 20, t: 'Gastos absorbidos por la línea', g: fPct(V.gastosAbs / ing), c: '  de los ingresos de ' + L.toLowerCase(), x: 'Absorbe el ' + scv_pc(V.pct) + ' de los gastos operativos (' + fUSDmil(V.gastosAbs) + ' de ' + fUSDmil(V.gastosPool) + ').' });
+  } else if (!(ing > 0.005) && V.gastosPool > 0.005) {
+    out.push({ o: 14, p: 20, t: 'Gastos absorbidos por la línea', g: fUSDmil(0), c: '  sin ingresos en el período', x: 'Sin ingresos la línea no absorbe gastos operativos: se reparten según el peso de los ingresos de cada línea.' });
+  }
+  // 15 · la otra línea como referencia (propio de la vista por línea)
+  if (V.otra.ing > 0.005) {
+    const o = V.otra;
+    out.push({ o: 15, p: 19, t: 'Resultado de ' + O, g: fUSDmil(o.un), c: '  tras absorber ' + fUSDmil(o.gas), x: 'Referencia: ' + O + (o.un >= 0 ? ' deja un margen neto de ' : ' cierra con un margen neto de ') + fPct(o.mn) + ' sobre ingresos de ' + fUSDM(o.ing) + '.' });
+  }
+  const sel = out.slice().sort((a, b) => b.p - a.p || a.o - b.o).slice(0, 6).sort((a, b) => a.o - b.o);
+  return sel.map((f) => {
+    let c = f.c; while (sc_ancho(f.g, 22, true) + sc_ancho(c, 13) > 436 && c.length > 8) c = c.slice(0, -2).trimEnd() + '…';
+    return { ...f, c, x: sc_recorta(f.x, 439.7, 13, 2) };
+  });
+};
+const S15V_Lamina = ({ M, emp, num }) => {
+  const per = M.per, V = M.V, f = s15v_focos(M), k = f.length;
+  const sub = k ? prCap(prNumPalabra(k)) + (k === 1 ? ' foco' : ' focos') + ' de ' + V.nombre + ' para proteger el margen ' + (per.mf < 12 ? 'en el cierre del año' : 'en el próximo año') : 'Sin focos de atención de ' + V.nombre + ' en el período';
+  return (
+    <Slide tipo="dark" kicker={scv_kick(M, 'Conclusiones')} titulo="Puntos de atención" sub={sub} num={num} emp={emp} per={sc_perPie(M)}>
+      {f.map((o, i) => {
+        const x = i % 2 ? 667.5 : 57.6, y = [196.8, 352.3, 507.8][Math.floor(i / 2)];
+        return (
+          <React.Fragment key={i}>
+            <Box x={x} y={y} w={554.9} h={144} bg={PR.tarjeta} adj={0.08} />
+            <Cir x={x + 24} y={y + 28.8} w={49.9} bg={PR.naranja} />
+            <T x={x + 24} y={y + 30.8} w={49.9} h={49.9} s={18} b al="center" an="middle">{i + 1}</T>
+            <T x={x + 96} y={y + 15.4} w={439.7} h={30.7} s={16} b an="middle" c={PR.blanco}>{o.t}</T>
+            <T x={x + 96} y={y + 48} w={439.7} h={38.4} an="middle" nowrap><R s={22} b c={PR.naranja}>{o.g}</R><R s={13} c={PR.grisCl} style={{ whiteSpace: 'pre' }}>{o.c}</R></T>
+            <T x={x + 96} y={y + 90.3} w={439.7} h={46.1} s={13} c={PR.grisCl}>{o.x}</T>
+          </React.Fragment>
+        );
+      })}
+    </Slide>
+  );
+};
+
+// ───────── 17 · anexo detalle mensual, vista por línea ─────────
+const S17V_Lamina = ({ M, emp, num }) => {
+  const per = M.per, nb = M.nb, S = M.S, Tt = M.T, V = M.V;
+  const cw = (1164.8 - 206.4 - 134.4) / nb, cols = [206.4, ...new Array(nb).fill(cw), 134.4];
+  const amt = (v) => fInt(v), pct = (v) => fPct(v);
+  const negA = (v) => Math.round(v) < 0, negP = (v) => Number((v * 100).toFixed(1)) < 0;
+  const def = [
+    { e: 'Ingresos', s: S.ing, t: Tt.ing, f: amt },
+    { e: V.k === 'prod' ? 'Costo de producción' : 'Costo de la mercancía', s: S.cos, t: Tt.cos, f: amt },
+    { e: 'Utilidad bruta', s: S.ub, t: Tt.ub, f: amt, res: negA, b: true, bg: PR.fondoCl },
+    { e: 'Margen bruto', s: S.mb, t: Tt.mb, f: pct, res: negP, i: true },
+    { e: 'Gastos repartibles', s: V.poolS, t: V.gastosPool, f: amt, i: true },
+    { e: 'Gastos absorbidos', s: S.gas, t: Tt.gas, f: amt },
+    { e: 'Resultado de la línea', s: S.un, t: Tt.un, f: amt, res: negA, b: true, bg: PR.fondoCl },
+    { e: 'Margen neto', s: S.mn, t: Tt.mn, f: pct, res: negP, i: true },
+  ];
+  let pt = nb <= 4 ? 14 : nb <= 6 ? 13 : 12;
+  const textos = def.flatMap((d) => d.s.map(d.f));
+  const maxTxt = Math.max(...textos.map((t) => sc_ancho(t, 1, true)), 0.001);
+  while (pt > 8 && maxTxt * pt > cw - 15.36 - 3) pt -= 0.5;
+  const maxEt = Math.max(...def.map((d) => sc_ancho(d.e, 1, !!d.b)), 0.001);
+  while (pt > 8 && maxEt * pt > 206.4 - 15.36 - 3) pt -= 0.5;
+  const mal = (d, v) => !!d.res && d.res(v);
+  const celda = (d, v, esTotal) => ({ t: d.f(v), al: 'r', b: d.b || esTotal, i: d.i, c: mal(d, v) ? PR.naranjaOsc : d.i ? PR.gris : PR.negro, bg: mal(d, v) ? PR.melon : d.bg });
+  const H = { bg: PR.negro, c: PR.blanco, b: true };
+  const filas = [
+    { sinLinea: true, celdas: [{ t: 'US$', al: 'l', ...H }, ...M.x.map((x) => ({ t: x, al: 'r', ...H })), { t: 'Total', al: 'r', ...H }] },
+    ...def.map((d) => ({ celdas: [{ t: d.e, al: 'l', b: d.b, i: d.i, c: d.i ? PR.gris : PR.negro, bg: d.bg }, ...d.s.map((v) => celda(d, v, false)), celda(d, d.t, true)] })),
+  ];
+  const hayNeg = def.some((d) => d.res && (d.s.some((v) => d.res(v)) || d.res(d.t)));
+  const un1 = per.gran === 'semana' ? 'semana' : 'mes', unP = per.gran === 'semana' ? 'semanas' : 'meses';
+  const sinI = S.ing.filter((v, i) => Math.abs(v) < 0.005 && S.gas[i] > 0.005).length;
+  const nota = 'Gastos absorbidos = gastos repartibles de cada ' + un1 + ' × ' + scv_pc(V.pct) + ' (peso de ' + V.nombre + ' en los ingresos ' + (per.n > 1 ? 'de todo el período' : 'del mes') + '). ' + (sinI ? 'Los ' + unP + ' sin ingresos igual absorben gastos. ' : '') + (hayNeg ? 'Celdas sombreadas: resultados negativos. ' : '') + 'Las sumas pueden diferir en US$ 1 por redondeo.';
+  return (
+    <Slide tipo="light" kicker={scv_kick(M, 'Anexos')} titulo="Anexo · Detalle mensual" sub={'Resultado de ' + V.nombre + ' resumido, ' + sc_rango(per) + ' (US$)'} num={num} emp={emp} per={sc_perPie(M)}>
+      <Sc_Tabla x={57.6} y={196.8} cols={cols} rowH={44.2} filas={filas} padL={7.68} padR={7.68} pt={pt} />
+      <T x={57.6} y={612} w={1164.8} h={43.2} s={11} i c={PR.gris}>{nota}</T>
+    </Slide>
+  );
+};
+
+// ───────── 18 · anexo notas y criterios, vista por línea ─────────
+// «Utilidad neta consolidada US$ 55,233 = Producción US$ −54,352 + Mercancía US$ 102,874 + otros ingresos US$ 8,651 − gastos sin absorber US$ 1,940»
+// (solo los términos que no son cero; con los valores sin redondear suma exacto: cons.un = T.un + otra.un + otros ingresos − gastos sin absorber − costos sin línea)
+const scv_concilia = (M, compacta) => {
+  const V = M.V, us = (v) => (compacta ? '' : 'US$ ') + fInt(v), ps = scv_prodSel(V);
+  const uP = ps ? M.T.un : V.otra.un, uM = ps ? V.otra.un : M.T.un;
+  const term = (lab, v) => (Math.abs(v) < 0.5 ? '' : (v < 0 ? ' − ' : ' + ') + lab + ' ' + (compacta ? '' : 'US$ ') + fInt(Math.abs(v)));
+  return 'Utilidad neta consolidada ' + (compacta ? '(US$) ' : '') + us(V.cons.un) + ' = Producción ' + us(uP) + ' + Mercancía ' + us(uM)
+    + term('otros ingresos', V.rec.otrosIng) + term('gastos sin absorber', -V.rec.gastosSinAbsorber) + term('costos sin línea', -V.rec.costosSinLinea) + '.';
+};
+const s18v_notas = (M) => {
+  const V = M.V, per = M.per, uni = per.gran === 'semana' ? 'semanas' : 'meses', ps = scv_prodSel(V);
+  const it = [];
+  const b0 = sc_ini(M.C.S.bd), i0 = sc_ini(M.C.S.int);
+  if (b0 >= 0) it.push({ t: 'las bonificaciones a directores', i: b0 });
+  if (i0 >= 0) it.push({ t: 'los intereses de préstamos', i: i0 });
+  const comp = !it.length
+    ? 'En el período no hay bonificaciones a directores ni intereses de préstamos en el costo: el margen bruto es comparable entre ' + uni + '.'
+    : it.every((o) => o.i === 0)
+      ? prCap(sc_lista(it.map((o) => o.t))) + ' se registran en el costo durante todo el período: el margen bruto es comparable entre ' + uni + '.'
+      : prCap(it.map((o) => 'desde ' + M.xn[o.i] + ' ' + o.t).join(' y ')) + ' se registran en el costo: el margen bruto no es comparable entre ' + uni + '. El margen neto no cambia.';
+  const pP = ps ? V.pct : V.pctOtra, pM = ps ? V.pctOtra : V.pct;
+  const part = [];
+  if (pP > 0.00005) part.push('Producción ' + scv_pc(pP));
+  if (pM > 0.00005) part.push('Mercancía ' + scv_pc(pM));
+  if (V.pctOtros > 0.00005) part.push('otros ingresos ' + scv_pc(V.pctOtros) + ' (no absorben gastos)');
+  const reparto = part.length
+    ? 'Los gastos operativos repartibles (' + fUSDmil(V.gastosPool) + ') se distribuyen según el % de ingresos de cada línea sobre el total: ' + sc_lista(part) + '. ' + V.nombre + ' absorbe ' + fUSDmil(V.gastosAbs) + '.'
+    : 'Sin ingresos en el período los gastos operativos repartibles (' + fUSDmil(V.gastosPool) + ') no se reparten a ninguna línea.';
+  // base del %: en el acumulado es el de todo el período y se aplica a los gastos de cada mes; en un solo mes, el de ese mes
+  const base = !part.length ? 'Sin ingresos en el período no hay % que aplicar: los gastos repartibles no se asignan a ninguna línea.'
+    : per.n > 1 ? 'El % de cada línea es el de todo el período (' + sc_rangoA(per) + ') y se aplica a los gastos de cada mes: una línea puede absorber gastos en meses en que no tuvo ingresos.'
+      : 'El % es el de ' + PR_MESES[per.mf - 1] + ' y se aplica a los gastos de cada ' + (per.gran === 'semana' ? 'semana' : 'mes') + '.';
+  const concilia = sc_lineas(scv_concilia(M), 499.2, 12) <= 4 ? scv_concilia(M) : scv_concilia(M, true);
+  return [
+    { t: 'Fuente', x: 'Asientos contables del sistema (' + sc_rango(per) + '), agrupados por ' + (per.gran === 'semana' ? 'semana' : 'mes') + ' y por cuenta del plan de cuentas.' },
+    { t: 'Moneda y redondeo', x: 'Dólares estadounidenses (USD). Márgenes sobre los ingresos de la línea. Las sumas pueden diferir en US$ 1 por redondeo.' },
+    { t: 'Clasificación de cuentas', x: ps
+      ? 'Ingresos: cuentas con «orden de producción» en el nombre. Costo: cuentas 5.1 y 5.2 y el costo operacional, salvo las de costo de venta de mercancía.'
+      : 'Ingresos: cuentas 4.1 que no son órdenes de producción. Costo: cuentas 5.3 (menos el costo operacional) y las de costo de venta de mercancía de 5.1.' },
+    { t: 'Reparto de gastos operativos', x: reparto, largo: true },
+    { t: 'Base del porcentaje', x: base },
+    { t: 'Carga financiera y margen ajustado', x: 'Carga financiera: gastos financieros absorbidos más intereses de préstamos del costo. Margen bruto ajustado: excluye esos intereses y las bonificaciones a directores.' },
+    { t: 'Comparabilidad', x: comp },
+    { t: 'Conciliación con el consolidado', x: concilia, largo: true },
+  ];
+};
+const S18V_Lamina = ({ M, emp, num }) => {
+  const V = M.V, notas = s18v_notas(M);
+  return (
+    <Slide tipo="light" kicker={scv_kick(M, 'Anexos')} titulo="Anexo · Notas y criterios" sub={'Fuente de los datos y criterios del resultado de ' + V.nombre + ' (gastos operativos absorbidos al ' + scv_pc(V.pct) + ')'} num={num} emp={emp} per={sc_perPie(M)}>
       {notas.map((n, i) => {
         const col = i < 4 ? 0 : 1, r = i % 4, x = col ? 667.5 : 57.6, y = 193 + 107.5 * r;
         return (
@@ -26269,7 +27548,9 @@ const SLIDES = { ...SLIDES_A, ...SLIDES_B, ...SLIDES_C };
 
 const PRV_W = 1280, PRV_H = 720;
 const PRV_TITULOS = { 1: 'Portada', 2: 'Resumen ejecutivo', 3: 'De ingresos a utilidad neta', 4: 'Evolución de ingresos', 5: 'Mezcla de ingresos', 6: 'Rentabilidad por línea', 7: 'Costo de ventas', 8: 'Costo de ventas mes a mes', 9: 'Márgenes mes a mes', 10: 'Resultado por trimestre', 11: 'Gastos operativos', 12: 'Carga financiera', 13: 'Punto de equilibrio mensual', 14: 'Cómo se calcula el equilibrio', 15: 'Puntos de atención', 16: 'Gracias', 17: 'Anexo · Detalle mensual', 18: 'Anexo · Notas y criterios' };
-const prvTitulo = (n, gran) => { const t = PRV_TITULOS[n] || ('Lámina ' + n); return gran === 'semana' ? t.replace('mes a mes', 'semana a semana').replace('Detalle mensual', 'Detalle semanal') : t; };
+// En las vistas por línea (Producción / Mercancía) cambian los nombres de las láminas que ahora tratan otro tema
+const PRV_TITULOS_LINEA = { 3: 'De ingresos a resultado de la línea', 5: 'Reparto de ingresos y de gastos', 11: 'Gastos operativos absorbidos', 18: 'Anexo · Notas, criterios y conciliación' };
+const prvTitulo = (n, gran, linea) => { const t = (linea && PRV_TITULOS_LINEA[n]) || PRV_TITULOS[n] || ('Lámina ' + n); return gran === 'semana' ? t.replace('mes a mes', 'semana a semana').replace('Detalle mensual', 'Detalle semanal') : t; };
 const prvEsc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const prvNombreArchivo = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
 
@@ -26341,6 +27622,7 @@ const PresentacionER = ({ asientos, plan, settings, parseNum, codCostoMercancia,
   const [anio, setAnio] = useState(inicial.anio);
   const [mes, setMes] = useState(inicial.mes);
   const [modo, setModo] = useState('acum');
+  const [vista, setVista] = useState('cons');       // 'cons' consolidado · 'prod' Producción · 'merc' Mercancía
   const [idx, setIdx] = useState(0);
   const [presentando, setPresentando] = useState(false);
   const [ctl, setCtl] = useState(true);
@@ -26356,10 +27638,11 @@ const PresentacionER = ({ asientos, plan, settings, parseNum, codCostoMercancia,
 
   // ── modelo de cálculo (función pura) ──
   const calc = useMemo(() => {
-    try { return { M: prModeloER(asientos, plan, { anio, mf: mes, modo, parseNum, codCostoMercancia }) }; }
+    try { return { M: prModeloER(asientos, plan, { anio, mf: mes, modo, parseNum, codCostoMercancia, vista }) }; }
     catch (e) { return { error: e }; }
-  }, [asientos, plan, anio, mes, modo, parseNum, codCostoMercancia]);
+  }, [asientos, plan, anio, mes, modo, parseNum, codCostoMercancia, vista]);
   const M = calc.M;
+  const V = (M && M.V) || null;                     // datos del reparto cuando la vista es por línea
   const orden = useMemo(() => (M && !M.vacio ? Object.keys(SLIDES).map(Number).sort((a, b) => a - b).filter((n) => SLIDES[n] && !(n === 10 && M.Q.length < 2)) : []), [M]);
   const total = orden.length;
   const pos = Math.min(idx, Math.max(0, total - 1));
@@ -26440,7 +27723,7 @@ const PresentacionER = ({ asientos, plan, settings, parseNum, codCostoMercancia,
         const imgs = Array.from(cont.querySelectorAll('img')).filter((im) => !im.complete);
         if (imgs.length) await Promise.race([Promise.all(imgs.map((im) => new Promise((r) => { im.addEventListener('load', r); im.addEventListener('error', r); }))), new Promise((r) => setTimeout(r, 4000))]);
         const paginas = Array.from(cont.children).map((c) => c.innerHTML);
-        const ok = await prvImprimir(paginas, prvNombreArchivo('Estado de Resultados ' + M.per.corta + ' ' + emp.nombre));
+        const ok = await prvImprimir(paginas, prvNombreArchivo('Estado de Resultados ' + (V ? V.nombre + ' ' : '') + M.per.corta + ' ' + emp.nombre));
         if (vivo && !ok) setAviso('No se pudo abrir la impresión. Revisa que el navegador permita imprimir desde esta página.');
       } catch (e) { if (vivo) setAviso('No se pudo preparar el PDF: ' + (e && e.message ? e.message : e)); }
       if (vivo) setImprimiendo(false);
@@ -26487,11 +27770,21 @@ const PresentacionER = ({ asientos, plan, settings, parseNum, codCostoMercancia,
           ))}
         </div>
       </div>
+      <div>
+        <div style={prvLbl}>Vista</div>
+        <div style={{ display: 'inline-flex', border: '1px solid #3A3A3A', borderRadius: 8, overflow: 'hidden' }} role="group" aria-label="Vista" data-testid="pr-vista"
+          title="Consolidado: toda la empresa. Producción y Mercancía: el resultado de cada línea, con los gastos operativos repartidos según su % de ingresos (igual que «Resultado Planta» y «Resultado Venta» del Estado de Resultados).">
+          {[['cons', 'Consolidado'], ['prod', 'Producción'], ['merc', 'Mercancía']].map(([v, t]) => (
+            <button key={v} type="button" data-testid={'pr-vista-' + v} onClick={() => setVista(v)} aria-pressed={vista === v} disabled={sinDatos}
+              style={{ height: 34, padding: '0 14px', border: 0, background: vista === v ? PR.naranja : 'transparent', color: vista === v ? PR.negro : '#fff', fontFamily: FONT, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{t}</button>
+          ))}
+        </div>
+      </div>
       <div style={{ flex: '1 1 270px', minWidth: 0, paddingBottom: 2 }}>
         {M && !sinDatos ? <>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{etq}{M.per.n > 1 ? <span style={{ color: PR.gris2, fontWeight: 400 }}> · {M.per.n} meses</span> : null}</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{etq}{M.per.n > 1 ? <span style={{ color: PR.gris2, fontWeight: 400 }}> · {M.per.n} meses</span> : null}{V ? <span style={{ color: PR.naranja }} data-testid="pr-vista-nombre"> · {V.t.res}</span> : null}</div>
           <div style={{ fontSize: 11, color: PR.gris2 }}>
-            {parcial ? 'Mes en curso: las cifras son parciales. ' : ''}{nota ? nota + '. ' : ''}{gran === 'semana' ? 'Series por semana del mes.' : ''}
+            {V ? 'Es el ' + fPct(V.pct) + ' de los ingresos del período y absorbe ese mismo % de los gastos operativos. ' : ''}{parcial ? 'Mes en curso: las cifras son parciales. ' : ''}{nota ? nota + '. ' : ''}{gran === 'semana' ? 'Series por semana del mes.' : ''}
           </div>
         </> : null}
       </div>
@@ -26516,12 +27809,14 @@ const PresentacionER = ({ asientos, plan, settings, parseNum, codCostoMercancia,
   let contenido;
   if (calc.error) contenido = vacioMsg('No se pudo calcular la presentación', 'Ocurrió un error al leer los datos contables: ' + (calc.error && calc.error.message ? calc.error.message : calc.error));
   else if (sinDatos) contenido = vacioMsg('Todavía no hay movimientos contables', 'Cuando existan ingresos, costos o gastos registrados, aquí aparecerá la presentación por mes.');
-  else if (M.vacio) contenido = vacioMsg('Sin movimientos en ' + etq, 'No hay ingresos, costos ni gastos registrados en ese período. Elige otro mes en el selector.');
+  else if (M.vacio) contenido = V
+    ? vacioMsg('Sin movimientos de ' + V.nombre + ' en ' + etq, 'La línea no tiene ingresos, costos ni gastos absorbidos en ese período. Elige otro mes o vuelve a la vista Consolidado.')
+    : vacioMsg('Sin movimientos en ' + etq, 'No hay ingresos, costos ni gastos registrados en ese período. Elige otro mes en el selector.');
   else if (!C) contenido = vacioMsg('Sin láminas disponibles', 'No se encontraron láminas para mostrar.');
   else contenido = (
     <div style={{ width: PRV_W * k, height: PRV_H * k, position: 'relative', flex: '0 0 auto', background: PR.blanco, boxShadow: presentando ? 'none' : '0 12px 48px rgba(0,0,0,.55)', overflow: 'hidden' }} data-pr-stage="1">
       <div style={{ position: 'absolute', left: 0, top: 0, width: PRV_W, height: PRV_H, transform: 'scale(' + k + ')', transformOrigin: '0 0' }}>
-        <PrvBoundary k={nActual + '|' + etq + '|' + modo} fallback={(e) => (
+        <PrvBoundary k={nActual + '|' + etq + '|' + modo + '|' + vista} fallback={(e) => (
           <div style={{ width: PRV_W, height: PRV_H, background: PR.negro, color: '#fff', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 80, fontSize: 24 }}>
             No se pudo dibujar esta lámina. {e && e.message ? e.message : ''}
           </div>)}>
@@ -26536,7 +27831,7 @@ const PresentacionER = ({ asientos, plan, settings, parseNum, codCostoMercancia,
       {orden.map((n, i) => {
         const act = i === pos, Cn = SLIDES[n];
         return (
-          <button key={n} type="button" data-pr-act={act ? '1' : '0'} onClick={() => ir(i)} title={prvTitulo(n, gran)} aria-label={'Lámina ' + (i + 1) + ': ' + prvTitulo(n, gran)} aria-current={act ? 'true' : undefined}
+          <button key={n} type="button" data-pr-act={act ? '1' : '0'} onClick={() => ir(i)} title={prvTitulo(n, gran, V)} aria-label={'Lámina ' + (i + 1) + ': ' + prvTitulo(n, gran, V)} aria-current={act ? 'true' : undefined}
             style={{ display: 'flex', alignItems: 'flex-start', gap: 6, background: 'transparent', border: 0, padding: 0, cursor: 'pointer', textAlign: 'left', fontFamily: FONT }}>
             <span style={{ flex: '0 0 20px', fontSize: 11, fontWeight: 700, color: act ? PR.naranja : PR.gris2, paddingTop: 2, textAlign: 'right' }}>{i + 1}</span>
             <span style={{ display: 'block', borderRadius: 4, overflow: 'hidden', outline: act ? '2px solid ' + PR.naranja : '1px solid #333', outlineOffset: act ? 1 : 0 }}>
@@ -26552,7 +27847,7 @@ const PresentacionER = ({ asientos, plan, settings, parseNum, codCostoMercancia,
     <div style={{ flex: '0 0 auto', background: PR.carbon, borderTop: '1px solid #2E2E2E', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center' }}>
       <button type="button" onClick={() => ir(pos - 1)} disabled={pos <= 0} style={{ ...prvBtn(false, true), opacity: pos <= 0 ? 0.4 : 1 }} aria-label="Lámina anterior">‹ Anterior</button>
       <div style={{ fontSize: 13, color: '#fff', minWidth: 0, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        <b>{pos + 1}</b><span style={{ color: PR.gris2 }}> / {total}</span><span style={{ color: PR.gris2 }}> · </span>{prvTitulo(nActual, gran)}
+        <b>{pos + 1}</b><span style={{ color: PR.gris2 }}> / {total}</span><span style={{ color: PR.gris2 }}> · </span>{prvTitulo(nActual, gran, V)}{V ? <span style={{ color: PR.gris2 }}> · {V.nombre}</span> : null}
       </div>
       <button type="button" onClick={() => ir(pos + 1)} disabled={pos >= total - 1} style={{ ...prvBtn(false, true), opacity: pos >= total - 1 ? 0.4 : 1 }} aria-label="Lámina siguiente">Siguiente ›</button>
     </div>
@@ -37016,6 +38311,19 @@ function App() {
   const [requirements, setRequirements] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [notasEntrega, setNotasEntrega] = useState([]);
+  // ── Productos históricos → producto actual: solo para reportes de análisis por producto (no se usa en costos, comisiones, inventario ni contabilidad) ──
+  const [prodEquiv, setProdEquiv] = useState([]);
+  useEffect(()=>{
+    if(!fbUser) return;
+    const u=onSnapshot(getDocRef('settings','productosEquivalencias'), d=>{
+      const nx = d.exists() && Array.isArray(d.data()?.equivalencias) ? d.data().equivalencias : [];
+      setProdEquiv(prev => (nx.length===0 && prev.length===0) ? prev : nx);
+    });
+    return ()=>u();
+  },[fbUser]);
+  const prodEqCtx = useMemo(()=>prodEqContexto(prodEquiv, inventory, notasEntrega),[prodEquiv, inventory, notasEntrega]);
+  const notasEntregaRep = useMemo(()=>prodEqAplicarNEs(notasEntrega, prodEqCtx),[notasEntrega, prodEqCtx]);
+  const prodEqGuardar = (lista) => setDoc(getDocRef('settings','productosEquivalencias'),{equivalencias:lista, updatedAt:Date.now(), user:appUser?.name||''},{merge:true});
   const [importandoHist, setImportandoHist] = useState(false);
   const [papeleraItems, setPapeleraItems] = useState([]);
   const [anulVerId, setAnulVerId] = useState(null);
@@ -47514,7 +48822,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
         {ventasView === 'productos_vendidos' && (() => {
           // Productos vendidos desde notasEntrega — un row por almacén por item
           const soldItems = [];
-          (notasEntrega||[]).forEach(ne => {
+          (notasEntregaRep||[]).forEach(ne => {
             if(ne.status==='ANULADA') return;
             const neTotal = parseNum(ne.total||0);
             const neBase  = parseNum(ne.montoBase||ne.total||0);
@@ -47552,6 +48860,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     fecha: ne.fecha||'',
                     cliente: ne.clientName||ne.clientRif||'—',
                     producto: it.desc||it.invCode||it.fgId||'—',
+                    productoHist: it._prodHist?(it._prodHist.desc||it._prodHist.invCode||''):'',
                     medida: it.unit||it.unidad||'und',
                     cantidad, costoUnd: costoUnit,
                     totalCosto: cantidad*costoUnit,
@@ -47574,6 +48883,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   fecha: ne.fecha||'',
                   cliente: ne.clientName||ne.clientRif||'—',
                   producto: it.desc||it.invCode||it.fgId||'—',
+                  productoHist: it._prodHist?(it._prodHist.desc||it._prodHist.invCode||''):'',
                   medida: it.unit||it.unidad||'und',
                   cantidad, costoUnd: costoUnit,
                   totalCosto: cantidad*costoUnit,
@@ -47616,7 +48926,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           )).sort()];
           const pvFiltered = sorted.filter(s =>
             (!pvFiltCliente||pvFiltCliente==='TODOS'||s.cliente.toUpperCase().includes(pvFiltCliente.toUpperCase())) &&
-            (!pvFiltProducto||pvFiltProducto==='TODOS'||s.producto.toUpperCase().includes(pvFiltProducto.toUpperCase())) &&
+            (!pvFiltProducto||pvFiltProducto==='TODOS'||(s.producto+' '+(s.productoHist||'')).toUpperCase().includes(pvFiltProducto.toUpperCase())) &&
             (pvAlmacenFilter==='TODOS'||s.almacen===pvAlmacenFilter) &&
             (pvCategoriaFilter==='TODAS'||s.categoria===pvCategoriaFilter) &&
             (pvOpFilterVendidos==='todos'||(pvOpFilterVendidos==='con'?(s.opId&&s.opId!=='—'):(!s.opId||s.opId==='—'))) &&
@@ -47701,7 +49011,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     const periodo = pvFilter&&pvFilter!=='general'?pvFilter:'General';
                     const fmtOp = (op)=>op&&op!=='—'?('#'+String(op).replace('OP-','').padStart(5,'0')):'—';
                     const thead=['Factura','Nro. Fiscal','OP Relacionada','Fecha','Vendedor','Cliente','Producto','Medida','Cantidad','Costo Unit. USD','Costo Total USD'];
-                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',(s.opId&&s.opId!=='—')?fmtOp(s.opId):(s.tipoVenta?opaEtiqueta(s.tipoVenta):'—'),s.fecha,s.vendedor||'—',s.cliente,s.producto,s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
+                    const tbody=pvFiltered.map(s=>[s.factura,s.nroFiscal||'—',(s.opId&&s.opId!=='—')?fmtOp(s.opId):(s.tipoVenta?opaEtiqueta(s.tipoVenta):'—'),s.fecha,s.vendedor||'—',s.cliente,s.producto+(s.productoHist?' (histórico: '+s.productoHist+')':''),s.medida,formatNum(s.cantidad),formatNum(s.costoUnd),formatNum(s.cantidad*s.costoUnd)]);
                     const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=8?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');
                     const totCant=pvFiltered.reduce((a,r)=>a+r.cantidad,0);
                     const totCosto=pvFiltered.reduce((a,r)=>a+r.cantidad*r.costoUnd,0);
@@ -47751,7 +49061,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <td className="py-3 px-4 border-r text-center font-bold text-gray-600">{s.fecha}</td>
                         <td className="py-3 px-4 border-r text-center font-black text-blue-700 text-[10px] uppercase">{s.vendedor||'—'}</td>
                         <td className="py-3 px-4 border-r font-black text-[10px]">{s.cliente}</td>
-                        <td className="py-3 px-4 border-r font-bold text-[10px]">{s.producto}</td>
+                        <td className="py-3 px-4 border-r font-bold text-[10px]">{s.producto}{s.productoHist&&<div className="text-[8px] font-bold text-gray-400 normal-case">histórico: {s.productoHist}</div>}</td>
                         <td className="py-3 px-4 border-r text-center"><span className="bg-blue-100 text-blue-700 font-black text-[9px] px-2 py-0.5 rounded">{s.medida}</span></td>
                         <td className="py-3 px-4 border-r text-right font-black">{formatNum(s.cantidad)}</td>
                         <td className="py-3 px-4 border-r text-right font-bold text-gray-600">${formatNum(s.costoUnd)}</td>
@@ -48581,7 +49891,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
             const _tieneSinOp=_fracOpInv!==null?_fracOpInv<0.9999:!_tieneOp;
             if(pvFiltOp==='con' && !_tieneOp) return false;
             if(pvFiltOp==='sin' && !_tieneSinOp) return false;
-            if(pvFiltProd){ const q=pvFiltProd.toUpperCase(); if(!(inv.itemsFacturados||[]).some(it=>((it.desc||'')+' '+(it.invCode||'')+' '+(it.fgId||'')).toUpperCase().includes(q))) return false; }
+            if(pvFiltProd){ const q=pvFiltProd.toUpperCase(); if(!(inv.itemsFacturados||[]).some(it=>((it.desc||'')+' '+(it.invCode||'')+' '+(it.fgId||'')+' '+prodEqTexto(prodEqCtx,it)).toUpperCase().includes(q))) return false; }
             return true;
           }).sort((a,b)=>((b.fechaFactura||b.fecha||'')).localeCompare(a.fechaFactura||a.fecha||''));
           const rows = [];
@@ -48725,18 +50035,19 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   if(fgDoc) costo=it.esTermo?parseNum(fgDoc.costoUnitario||0):parseNum(fgDoc.costoUnitarioMillar||0);
                 }
                 if(!costoTotal) costoTotal=costo*qty;
+                const _pqV=prodEqVista(prodEqCtx,it,codigo,it.desc||it.fgId||'—'); // producto histórico unificado: solo para mostrar
                 rows.push({fecha:inv.fechaFactura||inv.fecha,fechaNota:inv.fecha,doc:inv.documento,neDoc:(()=>{
                   if(inv.neOrigen){const _neDirecta=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_neDirecta)return _neDirecta.documento||_neDirecta.id;}
                   const _candidatas=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
                   return _candidatas[0]?.documento||_candidatas[0]?.id||inv.neOrigen||'—';
-                })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:opaFmtOpLinea(it,inv),_opaMarcada:(inv.itemsFacturados||[]).some(opaTraeTipo),_opaEsOp:opaEsLineaOp(it,inv),cliente:inv.clientName||inv.client||'—',codigo,producto:it.desc||it.fgId||'—',qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0),_hist:!!inv.origenImport});
+                })(),nroFiscal:inv.nroFiscal||'',vendedor:inv.vendedor||'',op:opaFmtOpLinea(it,inv),_opaMarcada:(inv.itemsFacturados||[]).some(opaTraeTipo),_opaEsOp:opaEsLineaOp(it,inv),cliente:inv.clientName||inv.client||'—',codigo:_pqV.codigo,producto:_pqV.desc,productoHist:_pqV.hist,codigoHist:_pqV.histCod,qty,precio:precioVenta,total,costo,costoTotal,tasa:parseNum(inv.tasa||inv.tasaBCV||0),_hist:!!inv.origenImport});
               });
             }
           });
           // OP por artículo: fracción de la factura que corresponde al filtro Con OP / Sin OP activo (1 = toda; las facturas anteriores, sin marca por artículo, no se parten)
           const _fracFiltOp = (inv) => { const fr=opaFraccionOpFactura(inv); if(fr===null||pvFiltOp==='todos') return 1; return pvFiltOp==='con'?fr:1-fr; };
           // ── Filtrar filas sin Nro. Fiscal ──
-          const rowsFiscal = rows.filter(r => r.nroFiscal && r.nroFiscal !== '—' && (!pvFiltProd || ((r.producto||'')+' '+(r.codigo||'')).toUpperCase().includes(pvFiltProd.toUpperCase())) && (pvFiltOp==='todos' || !r._opaMarcada || (pvFiltOp==='con'?r._opaEsOp:!r._opaEsOp)));
+          const rowsFiscal = rows.filter(r => r.nroFiscal && r.nroFiscal !== '—' && (!pvFiltProd || ((r.producto||'')+' '+(r.codigo||'')+' '+(r.productoHist||'')+' '+(r.codigoHist||'')).toUpperCase().includes(pvFiltProd.toUpperCase())) && (pvFiltOp==='todos' || !r._opaMarcada || (pvFiltOp==='con'?r._opaEsOp:!r._opaEsOp)));
           
           // ── Agregar NC/ND al reporte ──
           const ncndRows = (notasVentaCD||[]).filter(nc=>{
@@ -48841,7 +50152,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     ))}
                   </div>
                   <span className="text-[9px] font-black text-gray-400">{allRows.length} reg.</span>
-                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=allRows.map(r=>{const util=r.total-r.costoTotal;const pct=(r.total>0||(r._hist&&r.total<0))?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto,formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
+                  <button onClick={()=>{const periodo=pvFilter&&pvFilter!=='general'?pvFilter:'General';const thead=['Fecha','Documento','NE Origen','Nro. Fiscal','OP Relacionada','Vendedor','Cliente','Código','Descripción','Cant.','Precio USD','Total USD','Costo U.','Total Costo','Utilidad','%','Tasa'];const tbody=allRows.map(r=>{const util=r.total-r.costoTotal;const pct=(r.total>0||(r._hist&&r.total<0))?Math.round((util/r.total)*100):0;return[r.fecha,r.doc,r.neDoc||'—',r.nroFiscal||'—',r.op||'—',r.vendedor||'—',r.cliente,r.codigo,r.producto+(r.productoHist?' (histórico: '+r.productoHist+')':''),formatNum(r.qty),formatNum(r.precio),formatNum(r.total),formatNum(r.costo),formatNum(r.costoTotal),formatNum(util),pct+'%',r.tasa>0?formatTasa(r.tasa):'—'];});const rowsHtml=tbody.map((row,i)=>`<tr>${row.map((c,ci)=>`<td style="padding:4px 7px;border:1px solid #ccc;font-size:10px;${ci>=9&&ci<=14?'text-align:right;':''}${i%2===1?'background:#f9fafb;':''}">${c}</td>`).join('')}</tr>`).join('');const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>body{font-family:Arial;}table{border-collapse:collapse;width:100%;}th{background:#000;color:#fff;font-size:9px;text-transform:uppercase;padding:5px 7px;border:1px solid #000;}td{border:1px solid #ccc;font-size:10px;padding:4px 7px;}</style></head><body><div style="text-align:center;margin-bottom:12px;border-bottom:3px solid #f97316;padding-bottom:10px;"><h2 style="margin:2px 0;font-size:14px;font-weight:900;">SERVICIOS JIRET G&amp;B, C.A.</h2><p style="margin:1px 0;font-size:11px;font-weight:bold;">RIF: J-412309374</p><h3 style="margin:4px 0;font-size:13px;color:#f97316;font-weight:900;">REPORTE GENERAL DE VENTAS Y COSTOS</h3><p style="font-size:10px;">Período: ${periodo} | Generado: ${getTodayDate()}</p></div><table><thead><tr>${thead.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody><tfoot><tr><td colspan="9" style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;">TOTALES</td>${['',formatNum(totalVentas),'',formatNum(totalCosto),formatNum(totalUtil),pctUtil+'%',''].map(c=>`<td style="background:#000;color:#fff;font-weight:900;padding:5px 7px;border:1px solid #000;text-align:right;">${c}</td>`).join('')}</tr></tfoot></table></body></html>`;const blob=new Blob([html],{type:'application/vnd.ms-excel'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`Reporte_Ventas_${periodo}_${getTodayDate()}.xls`;a.click();}} className="bg-green-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Download size={12}/> Excel</button>
                   <button onClick={()=>handleExportPDF('Reporte_Ventas_Costos', true)} className="bg-black text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase flex items-center gap-1"><Printer size={12}/> Imprimir</button>
                 </div>
               </div>
@@ -48912,8 +50223,8 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         <td className="py-1 px-1.5 font-black text-orange-600 whitespace-nowrap">{r.op||'—'}</td>
                         <td className="py-1 px-1.5 font-black text-blue-700 uppercase whitespace-nowrap">{r.vendedor||'—'}</td>
                         <td className="py-1 px-1.5 font-bold max-w-[90px] truncate" title={r.cliente}>{r.cliente}</td>
-                        <td className="py-1 px-1.5 font-black text-indigo-600 whitespace-nowrap">{r.codigo}</td>
-                        <td className="py-1 px-1.5 font-bold" style={{minWidth:110,maxWidth:170,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}</td>
+                        <td className="py-1 px-1.5 font-black text-indigo-600 whitespace-nowrap">{r.codigo}{r.productoHist&&r.codigoHist&&r.codigoHist!==r.codigo&&<div className="text-[8px] font-bold text-gray-400">{r.codigoHist}</div>}</td>
+                        <td className="py-1 px-1.5 font-bold" style={{minWidth:110,maxWidth:170,whiteSpace:'normal',wordBreak:'break-word'}}>{r.producto}{r.productoHist&&<div className="text-[8px] font-bold text-gray-400 normal-case">histórico: {r.productoHist}</div>}</td>
                         <td className="py-1 px-1.5 font-bold text-center">{formatNum(r.qty)}</td>
                         <td className="py-1 px-1.5 font-bold text-right whitespace-nowrap">{formatNum(r.precio)}</td>
                         <td className="py-1 px-1.5 font-black text-right whitespace-nowrap">{formatNum(r.total)}</td>
@@ -48968,7 +50279,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               detalle.push({vend, canal, fecha:ne.fecha, cliente:ne.clientName||'—', producto:ne.id, cant:1, precio:parseNum(ne.montoBase||0), monto:parseNum(ne.montoBase||0), comision:0, pctCom:0});
             } else {
               items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, canal, fecha:ne.fecha, cliente:ne.clientName||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
+                detalle.push({vend, canal, fecha:ne.fecha, cliente:ne.clientName||'—', producto:prodEqNombre(prodEqCtx,it,it.desc||'—'), cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
             }
           });
           factsDirect.forEach(inv => {
@@ -48979,7 +50290,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
               detalle.push({vend, canal, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:inv.productoMaquilado||'—', cant:1, precio:parseNum(inv.montoBase||inv.total||0), monto:parseNum(inv.montoBase||inv.total||0), comision:0, pctCom:0});
             } else {
               items.forEach(it=>{ const cant=parseNum(it.cantidad||1); const precio=parseNum(it.precioUnit||0);
-                detalle.push({vend, canal, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:it.desc||'—', cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
+                detalle.push({vend, canal, fecha:inv.fecha, cliente:inv.clientName||inv.client||'—', producto:prodEqNombre(prodEqCtx,it,it.desc||'—'), cant, precio, monto:precio*cant, comision:0, pctCom:0}); });
             }
           });
 
@@ -53974,7 +55285,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const comCfgDef={porcentaje:2,base:'montoBase',umbral:0,tipoCalculo:'porcentaje_ventas'};
           const comCfg=settings?.comisionesConfig||comCfgDef;
 
-          const allNEs=(notasEntrega||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>({
+          const allNEs=(notasEntregaRep||[]).filter(ne=>ne.status!=='ANULADA').map(ne=>({
             fecha:ne.fecha||'',cliente:ne.clientName||ne.clientNombre||'',
             rif:ne.clientRif||'',vendedor:ne.vendedor||'Directa',
             montoBase:parseNum(ne.montoBase||0),
@@ -69273,8 +70584,8 @@ ${resumen}
 
     // ── Top productos vendidos (filtrado por mes/período activo) ──
     const nesParaTop = kpiPeriod === 1
-      ? (notasEntrega||[]).filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(activeMonth))
-      : (notasEntrega||[]).filter(ne => ne.status!=='ANULADA');
+      ? (notasEntregaRep||[]).filter(ne => ne.status!=='ANULADA' && (ne.fecha||'').startsWith(activeMonth))
+      : (notasEntregaRep||[]).filter(ne => ne.status!=='ANULADA');
     const prodMap={};
     nesParaTop.filter(esProdPropia).forEach(ne=>{
       (ne.items||[]).filter(it=>/BOLSA|TERMOENCOGIBLE|TERMOENC|TERMO/i.test(it.desc||'')).forEach(it=>{
@@ -70468,18 +71779,43 @@ ${resumen}
       const u = treeCostos.reduce((s,n)=>s+n.u,0), b = treeCostos.reduce((s,n)=>s+n.b,0);
       treeCostos = [{ n:'COSTO DE VENTAS', c: treeCostos, u, b }];
     }
-    // Gastos: se ocultan por completo en Planta y en Venta (ambas son vistas de margen de
-    // contribución por línea de negocio) — solo se muestran en el Resultado General, sin
-    // ningún toggle activo, tal como ya funcionaba para Planta.
+    // Gastos operativos. En el Resultado General se muestran completos, como siempre. En Resultado Planta y
+    // Resultado Venta (vistas por línea de negocio) se muestran los gastos ABSORBIDOS por esa línea: los gastos del
+    // período repartidos según el % que cada línea tuvo en los ingresos del período (Venta = ingresos 4.1 que no son
+    // órdenes de producción; Planta = ingresos por órdenes de producción; el resto son otros ingresos y NO absorben gastos).
     const contVistaActiva = contERVistaPlanta || contERVistaVenta;
-    const cuentasGastos = contVistaActiva ? [] : cuentasAggUsar.filter(c=>!_esCuentaDeCosto(c) && (c.codigo.startsWith('5')||c.codigo.startsWith('6')));
-    const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const _esIngPlantaRep = c => String(c.codigo).startsWith('4') && /orden\s+de\s+producci[oó]n/i.test(c.cuenta||'');
+    const _esIngVentaRep = c => String(c.codigo).startsWith('4.1') && !/orden\s+de\s+producci[oó]n/i.test(c.cuenta||'');
+    const _netoIngRep = c => (c.haberUSD||0) - (c.debeUSD||0);
+    const repIngTotal = cuentasAgg.filter(c=>String(c.codigo).startsWith('4')).reduce((s,c)=>s+_netoIngRep(c),0);
+    const repIngPlanta = cuentasAgg.filter(_esIngPlantaRep).reduce((s,c)=>s+_netoIngRep(c),0);
+    const repIngVenta = cuentasAgg.filter(_esIngVentaRep).reduce((s,c)=>s+_netoIngRep(c),0);
+    const _fraccionRep = x => repIngTotal>0 ? Math.max(0, Math.min(1, x/repIngTotal)) : 0;
+    const repPctPlanta = _fraccionRep(repIngPlanta), repPctVenta = _fraccionRep(repIngVenta);
+    const repPctOtros = repIngTotal>0 ? Math.max(0, 1-repPctPlanta-repPctVenta) : 0;
+    const pctAbsorbe = contERVistaPlanta ? repPctPlanta : contERVistaVenta ? repPctVenta : 1;
+    const cuentasGastos = contVistaActiva
+      ? cuentasAgg.filter(c=>!_esCuentaDeCosto(c) && (c.codigo.startsWith('5')||c.codigo.startsWith('6')) && !(contERVistaPlanta ? _esCostoPlanta(c.codigo) : _esCostoVenta(c.codigo)))
+      : cuentasAggUsar.filter(c=>!_esCuentaDeCosto(c) && (c.codigo.startsWith('5')||c.codigo.startsWith('6')));
+    const treeGastosReal = ccBuildArbol(cuentasGastos, planDeCuentas, ['5','6'], contVistaActiva
+      ? c=>({usd:(c.debeUSD-c.haberUSD)*pctAbsorbe, bs:(c.debeBs-c.haberBs)*pctAbsorbe})
+      : c=>({usd:c.debeUSD-c.haberUSD, bs:c.debeBs-c.haberBs}));
+    const gastosAntesRepartoUSD = cuentasGastos.reduce((s,c)=>s+(c.debeUSD-c.haberUSD),0);
+    const _codigosGastoAbs = new Set(contVistaActiva ? cuentasGastos.map(c=>c.codigo) : []);
+    // Detalle de movimientos: en las vistas por línea, los de los gastos absorbidos se muestran × el % de absorción (así suman lo que muestra la cuenta).
+    const getDetalleER = (codigo) => {
+      const det = getDetalleCuenta(codigo);
+      if (!_codigosGastoAbs.has(codigo)) return det;
+      const pctTxt = (pctAbsorbe*100).toFixed(2);
+      return det.map(m=>({...m, concepto:`${m.concepto} (× ${pctTxt}%)`, debeBs:parseNum(m.debeBs||0)*pctAbsorbe, haberBs:parseNum(m.haberBs||0)*pctAbsorbe, debeUSD:parseNum(m.debeUSD||0)*pctAbsorbe, haberUSD:parseNum(m.haberUSD||0)*pctAbsorbe}));
+    };
+    const etiquetaResultado = contERVistaPlanta ? 'RESULTADO DE PLANTA' : contERVistaVenta ? 'RESULTADO DE VENTA' : 'RESULTADO DEL EJERCICIO';
     // Renombrar la raíz de cada árbol con la etiqueta exacta que ya se usaba (en vez de
     // envolverla en un nodo nuevo — eso duplicaba "Ingresos > Ingresos" en pantalla).
     if (treeIngresos[0] && contERVistaPlanta) treeIngresos[0].n = 'INGRESOS POR PRODUCCIÓN';
     if (treeIngresos[0] && contERVistaVenta) treeIngresos[0].n = 'INGRESOS POR VENTA';
     if (treeCostos[0] && !contVistaActiva) treeCostos[0].n = 'COSTO DE VENTAS';
-    if (treeGastosReal[0]) treeGastosReal[0].n = 'GASTOS OPERATIVOS';
+    if (treeGastosReal[0]) treeGastosReal[0].n = contVistaActiva ? `GASTOS OPERATIVOS ABSORBIDOS (${(pctAbsorbe*100).toFixed(2)}% DE LOS GASTOS)` : 'GASTOS OPERATIVOS';
 
 
     const sumTree = (t,k) => t.reduce((s,n)=>s+n[k],0);
@@ -70492,15 +71828,15 @@ ${resumen}
     const baseVentas = totalIngresosUSD||1;
 
     const exportarExcel = async () => {
-      const filaExtra = { label:'RESULTADO DEL EJERCICIO', usd: utilidadNetaUSD, bs: utilidadNetaBs };
+      const filaExtra = { label:etiquetaResultado, usd: utilidadNetaUSD, bs: utilidadNetaBs };
       try {
-        await ccExportXLSX('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, [...treeIngresos, ...treeCostos, ...treeGastosReal], contERCurrency, baseVentas, getDetalleCuenta, contERExpandAll, filaExtra, `EstadoResultados_${getTodayDate()}.xlsx`, `EstadoResultados_${(contFiltHasta||getTodayDate()).slice(0,7)}`);
+        await ccExportXLSX('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, [...treeIngresos, ...treeCostos, ...treeGastosReal], contERCurrency, baseVentas, getDetalleER, contERExpandAll, filaExtra, `EstadoResultados_${getTodayDate()}.xlsx`, `EstadoResultados_${(contFiltHasta||getTodayDate()).slice(0,7)}`);
       } catch(e) { alert('No se pudo generar el Excel: '+e.message); }
     };
     const exportarPDF = () => {
       const arbolCompleto = [...treeIngresos, ...treeCostos, ...treeGastosReal];
-      const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">RESULTADO DEL EJERCICIO</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaBs)}</td>`:''}</tr>`;
-      const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra, baseVentas, getDetalleCuenta, contERExpandAll);
+      const filaExtra = `<tr style="background:#111827;color:#fff;font-weight:bold"><td style="padding:8px">${etiquetaResultado}</td>${showUSD?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaUSD)}</td>`:''}${showBS?`<td style="padding:8px;text-align:right;font-family:monospace">${ccFmtR(utilidadNetaBs)}</td>`:''}</tr>`;
+      const html = ccExportPDFHTML('Estado de Resultados', `Período: ${contDd(contFiltDesde)||'inicio'} al ${contDd(contFiltHasta)||'hoy'}`, arbolCompleto, contERCurrency, filaExtra, baseVentas, getDetalleER, contERExpandAll);
       ccAbrirVentana(html);
     };
 
@@ -70757,6 +72093,14 @@ ${resumen}
                 <RefreshCw size={13}/> Vista con costo real simulado para {simCostosLista.length} producto(s) ({simCostosLista.map(x=>x.nombre).join(', ')}) — no afecta tus datos reales ni otros reportes.
               </div>
             )}
+            {contVistaActiva && (
+              <div data-testid="er-reparto-gastos" className="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-3 text-[10px] font-bold text-indigo-900 space-y-1">
+                <p data-testid="er-reparto-pcts">📊 Los gastos operativos del período se reparten según el % de ingresos de cada línea sobre el total: Venta {(repPctVenta*100).toFixed(2)}% · Planta {(repPctPlanta*100).toFixed(2)}% · Otros ingresos {(repPctOtros*100).toFixed(2)}% (no absorben gastos ni se miden aquí).</p>
+                <p data-testid="er-reparto-detalle">{repIngTotal>0
+                  ? `Esta vista (${contERVistaPlanta?'Planta':'Venta'}) absorbe el ${(pctAbsorbe*100).toFixed(2)}% de los gastos: ${ccFmtR(gastosAntesRepartoUSD)} × ${(pctAbsorbe*100).toFixed(2)}% = ${ccFmtR(totalGastosUSD)} USD. Resultado = ingresos − costos − gastos absorbidos.`
+                  : 'Sin ingresos en el período: no hay % para repartir los gastos.'}</p>
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-gray-900 text-[9px] uppercase font-black text-gray-300">
@@ -70776,9 +72120,9 @@ ${resumen}
                     {showBS  && <td className={`px-3 py-2 text-right font-mono font-black text-[11px] ${utilidadBrutaBs>=0?'text-emerald-700':'text-red-600'}`}>{ccFmtR(utilidadBrutaBs)}</td>}
                     <td/>
                   </tr>
-                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleCuenta} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
+                  {treeGastosReal.map((n,i)=><CCArbolRow key={'gas'+i} node={n} totalBase={baseVentas} currency={contERCurrency} getDetalle={getDetalleER} expandSignal={{abrir:contERExpandAll, key:contERExpandKey}} favoritas={cuentasFavoritas} onToggleFavorito={toggleCuentaFavorita}/>)}
                   <tr className={utilidadNetaUSD>=0?'bg-emerald-600':'bg-red-600'}>
-                    <td className="px-3 py-3 font-black text-white text-sm uppercase">{utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta'}</td>
+                    <td className="px-3 py-3 font-black text-white text-sm uppercase">{(utilidadNetaUSD>=0?'Utilidad Neta':'Pérdida Neta')+(contERVistaPlanta?' — Planta':contERVistaVenta?' — Venta':'')}</td>
                     {showUSD && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaUSD)}</td>}
                     {showBS  && <td className="px-3 py-3 text-right font-mono font-black text-white text-sm">{ccFmtR(utilidadNetaBs)}</td>}
                     <td/>
@@ -73435,6 +74779,8 @@ const RestaurarCobrosView = ({settings, appUser}) => {
             ))}
           </div>
         </div>
+
+        <PqProductosHistoricos notasEntrega={notasEntrega} invoices={invoices} inventory={inventory} equivalencias={prodEquiv} onGuardar={prodEqGuardar} usuario={appUser?.name||''}/>
 
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
            <h2 className="text-xl font-black uppercase text-black mb-6 flex items-center gap-3 border-b pb-4"><Settings2 className="text-gray-400"/> Configuración del Sistema</h2>
