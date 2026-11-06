@@ -16,6 +16,69 @@ import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDo
 
 import BancoApp from './BancoApp';
 
+// ═══════════ RENDIMIENTO DE CONTABILIDAD (a12) ═══════════
+// No cambia ninguna regla ni cifra: solo evita repetir trabajo (ver cada bloque).
+// (1) Formateadores de números compartidos: crear un Intl.NumberFormat en CADA llamada tarda ~25 µs (con miles de filas de detalle sumaba segundos); uno solo da exactamente el mismo texto.
+const _NF_2D = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
+const _NF_2_4D = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4, useGrouping: 'always' });
+// (2) «Corrida» del motor contable: mientras se arman todos los asientos las listas de entrada no cambian, así que los índices se construyen UNA vez por corrida
+//     (antes se rehacían por cada factura o movimiento: miles de veces la misma lista). Fuera de una corrida (p. ej. Comprobantes Contables) todo se calcula exactamente como antes.
+let _motorRun = null;
+const motorEnCorrida = (fn) => { const prev = _motorRun; _motorRun = {}; try { return fn(); } finally { _motorRun = prev; } };
+// Devuelve el índice de la lista (construido una vez por corrida), undefined fuera de una corrida, o null si no se pudo construir (entonces se usa la búsqueda de siempre).
+const motorIdx = (clave, arr, construir) => {
+  const r = _motorRun; if (!r) return undefined;
+  const e = r[clave];
+  if (e && e.arr === arr) return e.val;
+  let val; try { val = construir(arr); } catch (err) { val = null; }
+  r[clave] = { arr, val };
+  return val;
+};
+// Los índices guardan la PRIMERA coincidencia en el orden de la lista (igual que Array.find) y usan las mismas comparaciones estrictas (=== / SameValueZero), también con valores vacíos.
+const _normRifIdx = (s) => (s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const idxClientesPorRif = (arr) => { const m = new Map(); (arr||[]).forEach(c => { const k = _normRifIdx(c.rif); if (k && !m.has(k)) m.set(k, c); }); return m; };
+const idxInventario = (inv) => { const porId = {}, porCod = new Map(); (inv||[]).forEach(i => { porId[i.id] = i; if (!porCod.has(i.invCode)) porCod.set(i.invCode, i); if (!porCod.has(i.id)) porCod.set(i.id, i); }); return { porId, porCod }; };
+const idxNotasEntregaOp = (nes) => ({ porId: new Map((nes||[]).map(ne => [ne.id, !!(ne.opId||ne.opRelacionada)])), porDoc: new Map((nes||[]).map(ne => [ne.documento, !!(ne.opId||ne.opRelacionada)])) });
+const idxAsientosLigados = (arr) => {
+  const lista = arr || []; const porId = new Map(), porMB = new Map(), porMC = new Map();
+  lista.forEach((a, i) => { if (!porId.has(a.id)) porId.set(a.id, i); if (!porMB.has(a.movimientoBancoId)) porMB.set(a.movimientoBancoId, i); if (!porMC.has(a.movimientoCajaId)) porMC.set(a.movimientoCajaId, i); });
+  return (m) => {
+    let mejor;
+    [porId.get(m.asientoContableId), porMB.get(m.id), porMB.get(m._docId), porMC.get(m.id), porMC.get(m._docId)].forEach(c => { if (c !== undefined && (mejor === undefined || c < mejor)) mejor = c; });
+    return mejor === undefined ? undefined : lista[mejor];
+  };
+};
+const idxTerceros = (arr) => { const porId = new Map(), porNom = new Map(); (arr||[]).forEach(t => { if (!porId.has(t.id)) porId.set(t.id, t); const k = contNormNombre(t.razonSocial||t.nombre); if (k && !porNom.has(k)) porNom.set(k, t); }); return { porId, porNom }; };
+const idxFacturasRet = (arr) => {
+  const lista = arr || []; const porId = new Map(), porDoc = new Map();
+  lista.forEach((f, i) => { if (!porId.has(f.id)) porId.set(f.id, i); if (!porDoc.has(f.documento)) porDoc.set(f.documento, i); });
+  return (k) => { const a = porId.get(k), b = porDoc.get(k); const i = a === undefined ? b : (b === undefined ? a : Math.min(a, b)); return i === undefined ? undefined : lista[i]; };
+};
+// (3) Resultado del armado de asientos guardado: arma una sola vez y se reutiliza mientras NO cambie ninguno de los datos de los que depende (la lista la arma App y está revisada una por una) ni el día.
+//     Devuelve una copia de la lista (los asientos en sí no se modifican en ninguna pantalla: se verificó).
+const _MOTOR_CACHE = { deps: null, res: new Map(), ver: 0 };
+const _MOTOR_CACHE_MAX = 8; // variantes guardadas a la vez (la más antigua sin uso sale primero)
+const motorAsientosCacheado = (deps, sim, conAncla, sinCorte, calcular) => {
+  const c = _MOTOR_CACHE;
+  let igual = !!c.deps && c.deps.length === deps.length;
+  for (let i = 0; igual && i < deps.length; i++) if (!Object.is(c.deps[i], deps[i])) igual = false;
+  if (!igual) { c.deps = deps; c.res = new Map(); c.ver++; }
+  const kSim = sim ? 'S' + Object.keys(sim).sort().map(k => k + '=' + sim[k]).join('|') : 'N';
+  const clave = kSim + '/' + (conAncla ? 1 : 0) + '/' + (sinCorte ? 1 : 0);
+  let out = c.res.get(clave);
+  if (out) { c.res.delete(clave); c.res.set(clave, out); } // la usada más recientemente pasa al final
+  else { out = calcular(); c.res.set(clave, out); while (c.res.size > _MOTOR_CACHE_MAX) c.res.delete(c.res.keys().next().value); }
+  return out.slice();
+};
+// (4) Detalle de cada cuenta en UNA pasada: [asiento, línea] por código, en el mismo orden (asiento y línea) que el recorrido completo de antes.
+// Detalle de cuentas desplegadas: el navegador no calcula ni dibuja el detalle que está fuera de la pantalla (content-visibility:auto); al llegar a la vista se dibuja igual que antes («auto» recuerda su altura real una vez dibujado).
+const ccDetCV = (n) => ({ contentVisibility: 'auto', containIntrinsicSize: 'auto ' + Math.min(Math.max(n * 26 + 57, 80), 30000) + 'px' });
+const ccIndiceLineas = (asientos) => {
+  const m = new Map();
+  (asientos||[]).forEach(a => { (a.lineas||[]).forEach(l => { const k = l.codigo; const arr = m.get(k); if (arr) arr.push([a, l]); else m.set(k, [[a, l]]); }); });
+  return m;
+};
+
 // ══ MÓDULO IMPUESTOS — Tabla ISLR y utilidades ══
 // Tabla ISLR — Decreto 1.808 — UT 43 (G.O. 43.140 02/06/2025)
 // sustraendoBs = SUSTRAENDO REAL en Bs. (columna "Sustraendo en Bs." del PDF)
@@ -2240,7 +2303,7 @@ const rhCierreMontoBuscado = (texto) => {
   if (coma && punto) s = s.replace(/\./g, '').replace(',', '.'); else if (coma) s = s.replace(',', '.');
   return Number(s);
 };
-const rhCierreFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits:2, maximumFractionDigits:2, useGrouping:'always' }).format(Number(n) || 0);
+const rhCierreFmt = (n) => _NF_2D.format(Number(n) || 0);
 const rhCierreFechaTxt = (s) => { if (!s) return '—'; const p = String(s).split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(s); };
 const rhCierreEsc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 // Filtra los comprobantes por tema (id de RH_CIERRE_CATEGORIAS o 'TODAS') y por el buscador: si algo del comprobante o de sus líneas coincide (número, concepto, fecha, código, cuenta o monto), sale el comprobante completo
@@ -11566,7 +11629,7 @@ ${filasAlcaldiaVis.map(_filaXls).join('')}
 
 // ══ PROCURA MODULE (incrustado) ══
 // Utilidades Procura (scope de módulo)
-const pFmt=(n)=>new Intl.NumberFormat('es-VE',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:'always'}).format(Number(n)||0);
+const pFmt=(n)=>_NF_2D.format(Number(n)||0);
 const pNum=(v)=>parseFloat(String(v||0).replace(/[^0-9.-]/g,''))||0;
 // Quincena de una retención: la que se eligió a mano al registrarla (no necesariamente la
 // que marca la fecha) — a nivel de módulo para que Libro de Ventas y Determinación de IVA
@@ -11868,7 +11931,8 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const prRel = ctx.relPorMov ? (ctx.relPorMov.get(m._docId) || ctx.relPorMov.get(m.id) || null) : null;
   const relTercId = (prRel && prRel.terceroId) ? prRel.terceroId : ((m.tipoTercero==='Relacionado' && m.terceroId) ? m.terceroId : null);
   // 1) Si ya existe un asiento formal vinculado, se usan SUS líneas reales tal cual.
-  const asientoLigado = (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
+  const _ixAs = motorIdx('mb_asientos', asientos, idxAsientosLigados);
+  const asientoLigado = _ixAs ? _ixAs(m) : (asientos||[]).find(a=>a.id===m.asientoContableId||a.movimientoBancoId===m.id||a.movimientoBancoId===m._docId||a.movimientoCajaId===m.id||a.movimientoCajaId===m._docId);
   // Si el asiento guardado no coincide con el monto de ESTE movimiento (ej. varios movimientos comparten id/vinculo),
   // se ignora y se reconstruye desde el movimiento.
   const _totAsiento = asientoLigado ? Math.max((asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.debeUSD||0),0),(asientoLigado.lineas||[]).reduce((s,l)=>s+Number(l.haberUSD||0),0)) : 0;
@@ -11890,9 +11954,10 @@ const construirLineasMovimientoBancoCaja = (m, ctx) => {
   const nombreEnConcepto = nombreDirecto || partesGuion[1] || partesPunto[1] || '';
   const nombreNorm = contNormNombre(nombreEnConcepto);
   const esProveedorMov = m.tipoTercero==='Proveedor'||!!m.grupoPagoId||!!m.proveedor||!!m.provRif;
-  const tercero = (esProveedorMov ? (provs||[]).find(p=>p.id===m.terceroId) : (clientes||[]).find(c=>c.id===m.terceroId))
-    || (clientes||[]).find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm)
-    || (provs||[]).find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm);
+  const _ixProv = motorIdx('mb_provs', provs, idxTerceros), _ixCli = motorIdx('mb_clientes', clientes, idxTerceros);
+  const tercero = (esProveedorMov ? (_ixProv ? _ixProv.porId.get(m.terceroId) : (provs||[]).find(p=>p.id===m.terceroId)) : (_ixCli ? _ixCli.porId.get(m.terceroId) : (clientes||[]).find(c=>c.id===m.terceroId)))
+    || (_ixCli ? (nombreNorm ? _ixCli.porNom.get(nombreNorm) : undefined) : (clientes||[]).find(c => nombreNorm && contNormNombre(c.razonSocial||c.nombre)===nombreNorm))
+    || (_ixProv ? (nombreNorm ? _ixProv.porNom.get(nombreNorm) : undefined) : (provs||[]).find(p => nombreNorm && contNormNombre(p.razonSocial||p.nombre)===nombreNorm));
   const [codTercero,nomTercero] = tercero?.cuentaContableNombre ? tercero.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
   const cuentaGenerica=(patron)=>{const c2=(planCuentas||[]).find(p=>patron.test(p.nombre||''));return c2?{codigo:String(c2.codigo||c2.id||''),nombre:c2.nombre||''}:null;};
   let contra;
@@ -12167,12 +12232,14 @@ const CATEGORIA_A_BALDE_SHARED = {
 };
 const construirLineasCostoProduccionCompartido = (f, ctx) => {
   const {cfg, inventory, tasasManuales, settingsTasa, tabId, aplicarReclas, simulacionCostos, notasEntrega} = ctx;
-  const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
+  const _ixInv = motorIdx('cp_inv', inventory, idxInventario);
+  const itemPorId = _ixInv ? _ixInv.porId : (()=>{ const o = {}; (inventory||[]).forEach(it=>{ o[it.id]=it; }); return o; })();
   const partirCuenta = (n) => n ? n.split('—').map(s=>s.trim()) : ['','⚠️ Sin configurar'];
   // Mapa NE→tiene OP, para poder partir el costo por línea (una factura puede juntar varias NE,
   // unas con OP y otras sin OP — antes se clasificaba TODA la factura según un solo campo).
-  const _neTieneOp = new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
-  const _neTieneOpDoc = new Map((notasEntrega||[]).map(ne=>[ne.documento, !!(ne.opId||ne.opRelacionada)]));
+  const _ixNE = motorIdx('cp_ne', notasEntrega, idxNotasEntregaOp);
+  const _neTieneOp = _ixNE ? _ixNE.porId : new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
+  const _neTieneOpDoc = _ixNE ? _ixNE.porDoc : new Map((notasEntrega||[]).map(ne=>[ne.documento, !!(ne.opId||ne.opRelacionada)]));
   const hayInfoPorNE = notasEntrega && (f.neOrigen||(f.nesAdicionales||[]).length>0);
   // Factura IMPORTADA del histórico (origenImport): sus devoluciones traen precio y costo NEGATIVOS y deben RESTAR costo de venta.
   // En cualquier otra factura un costo ≤ 0 se sigue ignorando igual que siempre.
@@ -12182,7 +12249,7 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
   let totalMP=0, totalCons=0, totalTerm=0; // acumulado sin OP (o total, si no hay info por NE)
   let totalMPop=0, totalConsOp=0, totalTermOp=0; // acumulado con OP
   (f.itemsFacturados||[]).forEach(it=>{
-    const invItem = it.invCode ? (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode) : itemPorId[it.fgId];
+    const invItem = it.invCode ? (_ixInv ? _ixInv.porCod.get(it.invCode) : (inventory||[]).find(i=>i.invCode===it.invCode || i.id===it.invCode)) : itemPorId[it.fgId];
     // Simulación de costo real (solo vista de Estado de Resultados, opt-in por producto) — se
     // empareja por el NOMBRE del producto (guardado directo en cada línea de venta como it.desc),
     // no por el código de inventario: el inventario puede tener varios registros duplicados con
@@ -12252,7 +12319,8 @@ const construirLineasConsumoInternoCompartido = (m, ctx) => {
   if (!['AUTOCONSUMO','AVERIA','MUESTRA','PERDIDA'].includes(m.type)) return null;
   if (m.status==='ANULADO') return null;
   if (/^MOV-\d+-/.test(m.docRef||'')) return null; // generado por transformación/carga masiva, no es autoconsumo real
-  const itemPorId = {}; (inventory||[]).forEach(it=>{ itemPorId[it.id]=it; });
+  const _ixInvC = motorIdx('cp_inv', inventory, idxInventario);
+  const itemPorId = _ixInvC ? _ixInvC.porId : (()=>{ const o = {}; (inventory||[]).forEach(it=>{ o[it.id]=it; }); return o; })();
   const item = itemPorId[m.itemId];
   const balde = CATEGORIA_A_BALDE_SHARED[item?.category] || 'MATERIA_PRIMA';
   const claveInv = {'MATERIA_PRIMA':'invMateriaPrima','CONSUMIBLES':'invConsumibles','TERMINADOS':'invTerminados'}[balde];
@@ -12479,7 +12547,8 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
         : cuentaRetencionFallback(tipo));
   const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const esManual = (r.facturaId||'').startsWith('MANUAL-');
-  const facAsoc = esManual ? null : (facturasVenta||[]).find(f => f.id===r.facturaId || f.documento===r.facturaId);
+  const _ixFacRet = motorIdx('rt_facturas', facturasVenta, idxFacturasRet);
+  const facAsoc = esManual ? null : (_ixFacRet ? _ixFacRet(r.facturaId) : (facturasVenta||[]).find(f => f.id===r.facturaId || f.documento===r.facturaId));
   const nombreCliente = r._manualCliente || facAsoc?.clientName || r.clientName || '—';
   const nroFacturaBase = r._manualNroFiscal || facAsoc?.nroFiscal || facAsoc?.documento || '—';
   // Retención aplicada a una Nota de Débito/Crédito fiscal: el concepto del asiento dice de qué nota es (ej. «00000456 · ND 0001»)
@@ -12488,7 +12557,8 @@ const construirLineasRetencionClienteCompartida = (r, ctx) => {
   // central solo miraba r.clientRif y se quedaba sin cliente (y sin su cuenta CxC configurada) en
   // los registros donde ese campo no se llenó directamente.
   const rifRet = normRif(r.clientRif || facAsoc?.clientRif);
-  const cliente = (clientes||[]).find(c => rifRet && normRif(c.rif)===rifRet) || null;
+  const _ixCliRet = motorIdx('cli_rif', clientes, idxClientesPorRif);
+  const cliente = (_ixCliRet ? (rifRet ? _ixCliRet.get(rifRet) : undefined) : (clientes||[]).find(c => rifRet && normRif(c.rif)===rifRet)) || null;
   const [codCli, nomCli] = cliente?.cuentaContableNombre ? cliente.cuentaContableNombre.split('—').map(s=>s.trim()) : ['',''];
   const montoBs = Number(r.montoRetenido||0);
   const montoUSD = montoBs / Math.max(Number(r.tasa||1),1);
@@ -12727,14 +12797,16 @@ const generarAsientoVenta=(f,cuentasIngresoCfg,planDeCuentasArg,clientesArg,nota
   const lineas=[];
   const normRif=(s)=>(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const rifFactura=normRif(f.clientRif);
-  const cliente=(clientesArg||[]).find(c=>rifFactura&&normRif(c.rif)===rifFactura);
+  const _ixCliRif = motorIdx('cli_rif', clientesArg, idxClientesPorRif);
+  const cliente = _ixCliRif ? (rifFactura ? _ixCliRif.get(rifFactura) : undefined) : (clientesArg||[]).find(c=>rifFactura&&normRif(c.rif)===rifFactura);
   const ctaCliente=cliente?.cuentaContableNombre||'1.1.02.01.001 — Cuentas por Cobrar Clientes';
   const tieneOp=!!(f.opAsignada||(f.opsAsignadas&&f.opsAsignadas.length>0));
   const ingresoBs = f.baseGravableBs!=null ? pNum(f.baseGravableBs) : (tasa?montoBase*tasa:0);
   const ivaBs = f.ivaBs!=null ? pNum(f.ivaBs) : (tasa?iva*tasa:0);
   // Una factura puede juntar varias NE (neOrigen + nesAdicionales) — unas con OP, otras sin OP.
   // Si hay esa info por línea, se parte el ingreso proporcional en vez de meterlo todo en un lado.
-  const _neTieneOpV = new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
+  const _ixNEV = motorIdx('cp_ne', notasEntrega, idxNotasEntregaOp);
+  const _neTieneOpV = _ixNEV ? _ixNEV.porId : new Map((notasEntrega||[]).map(ne=>[ne.id, !!(ne.opId||ne.opRelacionada)]));
   let propOp = tieneOp?1:0; // fracción del monto que corresponde a líneas con OP
   // OP por artículo: si la factura trae la marca de cada artículo, el ingreso se reparte por artículo (aunque no llegue notasEntrega)
   const _fracOpLinea = opaFraccionOpFactura(f);
@@ -22946,7 +23018,7 @@ const getDeviceLabel = () => {
   return `${nav} en ${os}`;
 };
 
-const formatNum = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' }).format(num || 0);
+const formatNum = (num) => _NF_2D.format(num || 0);
 
 // ── Ajustes históricos «HIST-<MES>-2026» (enero a abril): las ventas y el costo de venta de esos meses ya salen de las FACTURAS, así que el ajuste debe quedar SOLO con los Gastos operativos ──
 const AJ_HIST_MES = {'HIST-ENERO-2026':'Enero','HIST-FEBRERO-2026':'Febrero','HIST-MARZO-2026':'Marzo','HIST-ABRIL-2026':'Abril'};
@@ -23032,7 +23104,7 @@ const agregarSoloGastosAlLote = (batch, a, nuevas, appUser) => {
   batch.update(getDocRef('comprobantes_ajustes', a.id), {lineas:nuevas, updatedAt:Date.now()});
 };
 // Tasa de cambio: hasta 4 decimales (mínimo 2)
-const formatTasa = (num) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 4, useGrouping: 'always' }).format(num || 0);
+const formatTasa = (num) => _NF_2_4D.format(num || 0);
 
 // Format finished goods label: PRODUCTO ANCHO×LARGO×MICMiC - CLIENTE
 // Video de login: se carga desde Firebase settings.loginVideo
@@ -23888,7 +23960,7 @@ const generateDefaultPermissions = () => {
 
 
 // ============================================================================
-const contFmt = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' }).format(Number(n) || 0);
+const contFmt = (n) => _NF_2D.format(Number(n) || 0);
 const sugerirTipoPartida = (codigo) => {
   const c = String(codigo||'');
   if (/^1\.1\.01/.test(c)) return 'MONETARIA';      // Efectivo, Bancos
@@ -23905,7 +23977,7 @@ const sugerirTipoPartida = (codigo) => {
 // superando el costo histórico de un activo viejo, o un tercero con posición acreedora) se
 // mostraba como si fuera positivo, sin signo ni ningún indicio visual. Visto en datos reales:
 // "Total Inmueble (Galpón)" mostrando Bs.3.738.003,64 cuando el neto real era -3.738.003,64.
-const ccFmtR = (n) => new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' }).format(Number(n) || 0);
+const ccFmtR = (n) => _NF_2D.format(Number(n) || 0);
 
 // ════════════════════════════════════════════════════════════════════════
 // ÁRBOL CONTABLE — Estado de Resultados / Balance General (Contabilidad)
@@ -23934,6 +24006,16 @@ const ccSortTreeNodes = (nodes) => {
 // módulo. gruposIncluir: ['1'] etc. calcularSaldo(entry)=>{usd,bs} define el signo según el
 // tipo de cuenta (distinto entre Activo, Pasivo, Ingresos, etc.) — lo decide quien llama.
 const ccNormCodigo = s => String(s||'').trim().replace(/\.+$/,'');
+// Plan de Cuentas por código normalizado: la PRIMERA cuenta del plan con ese código (igual que el .find de antes), sin recorrer todo el plan (y normalizar cada código) por cada cuenta.
+const _ccPlanIdx = new WeakMap();
+const ccPlanPorCodigo = (plan) => {
+  if (!plan || typeof plan !== 'object') return new Map();
+  const e = _ccPlanIdx.get(plan);
+  if (e && e.n === plan.length) return e.map;
+  const map = new Map(); plan.forEach(p => { const k = ccNormCodigo(p.codigo); if (!map.has(k)) map.set(k, p); });
+  _ccPlanIdx.set(plan, { n: plan.length, map });
+  return map;
+};
 const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcularSaldo) => {
   const root = [];
   const normKey = s => (s||'').trim().replace(/\s+/g,' ').toUpperCase();
@@ -23942,7 +24024,7 @@ const ccBuildArbol = (cuentasAgregadas, planDeCuentasArr, gruposIncluir, calcula
     const {usd,bs} = calcularSaldo(c);
     if (Math.abs(usd)<0.005 && Math.abs(bs)<0.005) return;
     const codC = ccNormCodigo(c.codigo);
-    const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
+    const pdc = ccPlanPorCodigo(planDeCuentasArr).get(codC);
     const grKey = gruposIncluir.find(g=>String(c.codigo).startsWith(g)) || String(c.codigo).charAt(0);
     let grNom = grupoMap[grKey] || pdc?.grupo || grKey;
     // Entre "COSTOS" y "GASTOS" el prefijo numérico por sí solo es ambiguo (ej. 5.2.xx cae en
@@ -23989,7 +24071,7 @@ const ccBuildArbolNav = (cuentasAgregadas, planDeCuentasArr, gruposIncluir) => {
   const grupoMap={'1':'ACTIVOS','2':'PASIVOS','3':'PATRIMONIO','4':'INGRESOS','5.1':'COSTOS','5':'GASTOS','6':'GASTOS'};
   (cuentasAgregadas||[]).filter(c=>gruposIncluir.some(g=>String(c.codigo).startsWith(g))).forEach(c=>{
     const codC = ccNormCodigo(c.codigo);
-    const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
+    const pdc = ccPlanPorCodigo(planDeCuentasArr).get(codC);
     const grKey = gruposIncluir.find(g=>String(c.codigo).startsWith(g)) || String(c.codigo).charAt(0);
     const grNom = grupoMap[grKey] || pdc?.grupo || grKey;
     const crudo = pdc
@@ -24084,6 +24166,7 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
               {!detalle || detalle.length===0 ? (
                 <p className="px-8 py-2 text-[10px] text-gray-400 italic">Sin movimientos en el período para esta cuenta.</p>
               ) : (
+                <div style={ccDetCV(detalle.length)}>
                 <table className="w-full text-[9px]">
                   <thead className="text-gray-400 uppercase font-black">
                     <tr><th className="px-2 py-1 text-left" style={{paddingLeft:level*16+34}}>Fecha</th><th className="px-2 py-1 text-left">Módulo</th><th className="px-2 py-1 text-left">Comprobante</th><th className="px-2 py-1 text-left">Concepto</th>{showUSD&&<th className="px-2 py-1 text-right">Debe USD</th>}{showUSD&&<th className="px-2 py-1 text-right">Haber USD</th>}{showBS&&<th className="px-2 py-1 text-right">Debe Bs.</th>}{showBS&&<th className="px-2 py-1 text-right">Haber Bs.</th>}</tr>
@@ -24132,6 +24215,7 @@ const CCArbolRow = ({ node, level=0, totalBase, currency='both', getDetalle, exp
                     </tr>
                   </tfoot>
                 </table>
+                </div>
               )}
             </td>
           </tr>
@@ -24172,7 +24256,7 @@ const ccBuildArbolBC = (cuentasAgregadas, planDeCuentasArr) => {
   (cuentasAgregadas||[]).forEach(c=>{
     if (Math.abs(c.dBs)<0.005 && Math.abs(c.hBs)<0.005 && Math.abs(c.dUSD)<0.005 && Math.abs(c.hUSD)<0.005) return;
     const codC = ccNormCodigo(c.codigo);
-    const pdc = (planDeCuentasArr||[]).find(p=>ccNormCodigo(p.codigo)===codC);
+    const pdc = ccPlanPorCodigo(planDeCuentasArr).get(codC);
     const grKey = String(c.codigo).startsWith('5.1') ? '5.1' : String(c.codigo).charAt(0);
     const grNom = pdc?.grupo || grupoMap[grKey] || grKey;
     const crudo = pdc ? [grNom, pdc.subGrupo, pdc.cuenta, pdc.subcuenta] : [grNom, 'SIN CLASIFICAR EN PLAN DE CUENTAS'];
@@ -24227,6 +24311,7 @@ const CCArbolRowBC = ({ node, level=0, currency='both', getDetalle, expandSignal
               {!detalle || detalle.length===0 ? (
                 <p className="px-8 py-2 text-[10px] text-gray-400 italic">Sin movimientos en el período para esta cuenta.</p>
               ) : (
+                <div style={ccDetCV(detalle.length)}>
                 <table className="w-full text-[9px]">
                   <thead className="text-gray-400 uppercase font-black">
                     <tr><th className="px-2 py-1 text-left" style={{paddingLeft:level*16+34}}>Fecha</th><th className="px-2 py-1 text-left">Módulo</th><th className="px-2 py-1 text-left">Comprobante</th><th className="px-2 py-1 text-left">Concepto</th>{showBS&&<th className="px-2 py-1 text-right">Debe Bs.</th>}{showBS&&<th className="px-2 py-1 text-right">Haber Bs.</th>}{showUSD&&<th className="px-2 py-1 text-right">Debe USD</th>}{showUSD&&<th className="px-2 py-1 text-right">Haber USD</th>}</tr>
@@ -24255,6 +24340,7 @@ const CCArbolRowBC = ({ node, level=0, currency='both', getDetalle, expandSignal
                     </tr>
                   </tfoot>
                 </table>
+                </div>
               )}
             </td>
           </tr>
@@ -37059,7 +37145,7 @@ function App() {
   // 3.er parámetro «sinCorte» (solo lo usa el Estado de Resultados): devuelve TODOS los movimientos sin aplicar «Inicio de Contabilidad Real» (settings.fechaInicioContabilidad). Esa fecha queda solo para el Balance General
   // (y para el Mayor Analítico, el Balance de Comprobación y el Ajuste por Inflación, que lo respaldan). Así el Estado de Resultados toma las facturas, pagos, nómina, etc. de todo el período que se elija.
   // En ese modo NO se cuentan los comprobantes «HIST-REAL-<mes>» (origen historico_real: ingreso y costo de facturas normales que solo se registraban porque la fecha de inicio las escondía): esas facturas ya entran solas.
-  const getAsientosReales = (simulacionCostos, conAncla, sinCorte) => {
+  const getAsientosRealesCalc = (simulacionCostos, conAncla, sinCorte) => {
     const out = [];
     // Aplica la reclasificación individual guardada por clic en la cuenta (comprobantes_reclasificaciones),
     // usando la misma clave tabId__compId__lineIdx que ya usa Comprobantes Contables — así los dos
@@ -37448,6 +37534,13 @@ function App() {
     // Excepciones: las facturas históricas importadas (venta y costo) no se descartan — son las que reemplazan al ajuste manual de ventas de los meses históricos — ni la depreciación de Activos Fijos (_exentoCorte).
     return out.filter(a => a.modulo==='Ajustes' || a._hist || a._exentoCorte || (a.fecha||'') >= fechaInicioCont);
   };
+  // Armar todos los asientos toma segundos con datos grandes y se pedía una y otra vez (cada clic, cada filtro, cada cambio de ventana, y varias veces en un mismo dibujo).
+  // Ahora se arma una sola vez y se reutiliza mientras NO cambie ninguno de los datos de los que depende el armado (esta lista es exactamente la que usa getAsientosRealesCalc, con todo lo que llama) ni el día.
+  // Si se agrega al armado un dato nuevo del sistema, hay que agregarlo también a esta lista.
+  const getAsientosReales = (simulacionCostos, conAncla, sinCorte) => motorAsientosCacheado(
+    [asientosApp, activoFijoCfgC, facturasCompraApp, proveedoresApp, serviciosApp, retencionesClientesApp, movBancoApp, reclasificacionesApp, movCajaApp, cuentasBancoApp, cuentasCajaApp, tercerosRelApp, pagosRelApp, ajustesApp, nominaApp, procuraPagosCxpApp, settings, aeCfgApp, ppCuentasCfgApp, anticipoIslrCfgApp, aeManualPorMesApp, ppDataPorMesApp, cobrosCxc, inventory, invMovements, clients, invoices, notasEntrega, notasVentaCD, planDeCuentas, cuentasIngresoCfg, cuentasProduccionCfg, cuentasAnticipoCfg, tasasManualesProdApp, cuentasRetProvCfg, cierresIvaApp, activosFijos, getTodayDate()],
+    simulacionCostos, conAncla, sinCorte,
+    () => motorEnCorrida(() => getAsientosRealesCalc(simulacionCostos, conAncla, sinCorte)));
   const [usersLoaded, setUsersLoaded] = useState(false); // true cuando Firebase entregó el primer snapshot de users
   const [systemUsers, setSystemUsers] = useState([]); 
   const [settings, setSettings] = useState({});
@@ -71675,11 +71768,13 @@ ${resumen}
       });
     });
     const cuentasAgg = Object.values(porCuenta);
-    const getDetalleCuenta = (codigo) => asientosPeriodo
-      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+    let _idxLin = null; // asientos del período indexados por cuenta (una sola pasada; antes cada cuenta desplegada recorría TODOS los asientos)
+    const getDetalleCuenta = (codigo) => {
+      if (!_idxLin) _idxLin = ccIndiceLineas(asientosPeriodo);
+      return (_idxLin.get(codigo)||[]).map(([a, linea]) => ({
         fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
-      })))
-      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      })).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    };
 
     const cuentasFiltradas = !contBuscar ? cuentasAgg : cuentasAgg.filter(c=>c.codigo.toUpperCase().includes(contBuscar.toUpperCase()) || c.cuenta.toUpperCase().includes(contBuscar.toUpperCase()));
     const treeBC = ccBuildArbolBC(cuentasFiltradas, planDeCuentas);
@@ -71787,11 +71882,13 @@ ${resumen}
     });
     const cuentasAgg = Object.values(porCuenta);
 
-    const getDetalleCuenta = (codigo) => asientosPeriodo
-      .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+    let _idxLin = null; // asientos del período indexados por cuenta (una sola pasada; antes cada cuenta desplegada recorría TODOS los asientos)
+    const getDetalleCuenta = (codigo) => {
+      if (!_idxLin) _idxLin = ccIndiceLineas(asientosPeriodo);
+      return (_idxLin.get(codigo)||[]).map(([a, linea]) => ({
         fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
-      })))
-      .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+      })).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    };
 
     // Resultado Planta / Resultado Venta: excepciones confirmadas por el usuario — aunque el
     // código empiece con 5.1 (que en general es "costo de producción"), estas dos cuentas son
@@ -71822,7 +71919,7 @@ ${resumen}
     // cuenta de depreciación cae en su Grupo/Sub-grupo/Cuenta/Subcuenta real, igual que
     // cualquier otra cuenta de Costos o Gastos.
     const _grupoPlanDeCuenta = (codigo) => {
-      const pdc = (planDeCuentas||[]).find(p=>ccNormCodigo(p.codigo)===ccNormCodigo(codigo));
+      const pdc = ccPlanPorCodigo(planDeCuentas).get(ccNormCodigo(codigo));
       if (!pdc?.grupo) return null;
       if (/costo/i.test(pdc.grupo)) return 'COSTOS';
       if (/gasto/i.test(pdc.grupo)) return 'GASTOS';
@@ -72316,12 +72413,12 @@ ${resumen}
     // El TOTAL de la cuenta en el árbol/balance en sí NO cambia — sigue siendo el acumulado
     // completo a la fecha de corte, correcto para un Balance General; esto solo reorganiza
     // cómo se ve el desglose al expandir.
+    let _idxLinBG = null; // asientos hasta el corte indexados por cuenta (una sola pasada)
     const getDetalleCuenta = (codigo) => {
-      const detalleCompleto = asientosHastaCorte
-        .flatMap(a => (a.lineas||[]).filter(l=>l.codigo===codigo).map(linea => ({
+      if (!_idxLinBG) _idxLinBG = ccIndiceLineas(asientosHastaCorte);
+      const detalleCompleto = (_idxLinBG.get(codigo)||[]).map(([a, linea]) => ({
           fecha:a.fecha, comprobante:a.comprobante, modulo:a.modulo, concepto:linea.detalle?`${a.concepto} — ${linea.detalle}`:a.concepto, proveedor:linea.proveedor||a.proveedor||'', debeBs:linea.debeBs||0, haberBs:linea.haberBs||0, debeUSD:linea.debeUSD||0, haberUSD:linea.haberUSD||0
-        })))
-        .sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+        })).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
       // La Utilidad del Ejercicio / Acumulada se inyecta como número puro en porCuenta (no como
       // asiento real, porque es un cálculo — Ingresos-Costos-Gastos — no una transacción), así
       // que nunca aparecía en este detalle: el saldo de la cuenta se veía "de la nada". Se agrega
