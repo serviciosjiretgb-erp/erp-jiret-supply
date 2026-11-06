@@ -21983,6 +21983,8 @@ const prodEqSinCodigo = (s) => prodEqTxt(s).replace(/^[A-Z][A-Z0-9.\/-]{1,30}\s+
 // Clave de un producto histórico: su descripción sin prefijo de código, en mayúsculas, sin tildes y con espacios simples
 const prodEqClave = (s) => prodEqSinTildes(prodEqSinCodigo(s)).toUpperCase().replace(/\s+/g, ' ').trim();
 const prodEqCodigoDe = (raw) => prodEqTxt(raw).split('___')[0].replace(/-RESTORE$/i, '').replace(/-BACKUP$/i, '').trim();
+// Kilos por unidad que trae el nombre de un producto (misma lectura de la Gráfica de Ventas: «4 Kg», «2,7 KG»); 0 si no trae el peso
+const prodEqKgUnidad = (d) => { const m = prodEqTxt(d).toUpperCase().match(/(\d+(?:[.,]\d+)?)\s*KG/); return m ? parseFloat(m[1].replace(',', '.')) : 0; };
 const prodEqFecha = (f) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(prodEqTxt(f)); return m ? m[3] + '/' + m[2] + '/' + m[1] : prodEqTxt(f); };
 
 // Mismo criterio que el buscador de artículos de la Nota de Entrega para «Productos Terminados»
@@ -22247,15 +22249,22 @@ function PqFila({ g, cat, ocupado, onUnificar, onQuitar }) {
   const [abierto, setAbierto] = useState(false);
   const [sel, setSel] = useState(null);
   const sug = useMemo(() => (pendiente ? prodEqSugerir(g.desc, cat.base, 3) : null), [pendiente, g.desc, cat]);
-  const res = useMemo(() => (abierto ? prodEqBuscar(cat, q, g.desc, 8) : []), [abierto, q, g.desc, cat]);
+  const res = useMemo(() => (abierto ? prodEqBuscar(cat, q, g.desc, 80) : []), [abierto, q, g.desc, cat]);
   const poco = useMemo(() => (sel ? prodEqPuntaje(prodEqPerfil(g.desc), sel.perfil || prodEqPerfil(sel.desc)) < 0.4 : false), [sel, g.desc]);
+  const kgInfo = useMemo(() => {
+    if (!sel || !/STRETCH|KRAFT/i.test(g.desc + ' ' + sel.desc)) return '';
+    const h = prodEqKgUnidad(g.desc), c = prodEqKgUnidad(sel.desc);
+    if (!(h > 0) && !(c > 0)) return '';
+    const f = (n) => String(n).replace('.', ',');
+    return 'Kilos en la Gráfica de Ventas: antes ' + (h > 0 ? f(h) + ' kg por unidad' : '0 kg (el nombre histórico no trae el peso)') + ' → ahora ' + (c > 0 ? f(c) + ' kg por unidad' : '0 kg (el nombre actual tampoco trae el peso)') + '.';
+  }, [sel, g.desc]);
   const enInv = g.unif ? cat.porCodigo.get(prodEqCodigoDe(g.unif.actual.invCode).toUpperCase()) : null;
   const actDesc = (enInv && enInv.desc) || (g.unif ? prodEqTxt(g.unif.actual.desc) : '');
   const actCod = enInv ? enInv.codigo : (g.unif ? prodEqTxt(g.unif.actual.invCode) : '');
   return (
     <div data-testid="pq-fila" data-clave={g.clave} className={'border rounded-2xl p-4 ' + (pendiente ? 'border-gray-200 bg-white' : 'border-green-200 bg-green-50')}>
       <div className="min-w-0">
-        <div className="text-[9px] font-black text-gray-400 uppercase">Producto histórico</div>
+        <div className="text-[9px] font-black text-gray-400 uppercase">Producto histórico (de la migración)</div>
         <div className="text-xs font-black text-gray-800 break-words">{g.desc}</div>
         {g.variantes.length > 1 && <div className="text-[9px] text-gray-400 font-bold mt-0.5 break-words">También escrito como: {g.variantes.filter((v) => v !== g.desc).slice(0, 3).join(' · ')}</div>}
         <div className="text-[9px] text-gray-500 font-bold mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
@@ -22273,23 +22282,25 @@ function PqFila({ g, cat, ocupado, onUnificar, onQuitar }) {
               <span className="font-black uppercase">Usar sugerido{sug.segura ? '' : ' (dudoso, revísalo)'}:</span> {sug.mejor.c.codigo} — {sug.mejor.c.desc}
             </button>
           )}
+          <div className="text-[9px] font-black text-gray-500 uppercase">Producto del sistema al que corresponde (tú eliges)</div>
           <div className="relative">
             <input data-testid="pq-buscar" value={q} onChange={(e) => { setQ(e.target.value); setAbierto(true); }} onFocus={() => setAbierto(true)} onBlur={() => setTimeout(() => setAbierto(false), 200)}
-              placeholder="Buscar el producto actual por código o nombre…" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
+              placeholder="Escribe, o desplázate por la lista, y elige el producto del sistema…" className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-orange-400"/>
             {abierto && res.length > 0 && (
-              <div className="absolute z-30 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-56 overflow-y-auto">
+              <div className="absolute z-30 w-full bg-white border-2 border-orange-300 rounded-xl mt-1 shadow-xl max-h-72 overflow-y-auto">
                 {res.map((c) => (
                   <button key={c.codigo} data-testid="pq-opcion" onMouseDown={() => { setSel(c); setQ(''); setAbierto(false); }} className="w-full text-left px-3 py-2 hover:bg-orange-50 text-[10px] border-b last:border-0">
                     <span className="font-black text-orange-600">{c.codigo}</span> <span className="font-bold text-gray-800">— {c.desc}</span>
                     <span className="text-gray-400 font-bold"> · {c.categoria || 'Sin categoría'}</span>
                   </button>
                 ))}
+                <div data-testid="pq-conteo" className="px-3 py-2 text-[9px] font-bold text-gray-400 text-center bg-gray-50 sticky bottom-0">{res.length} {res.length === 1 ? 'producto' : 'productos'} del sistema{res.length >= 80 ? ' · hay más: escribe para filtrar' : ''}</div>
               </div>
             )}
           </div>
           {sel && (
             <div data-testid="pq-sel" className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-              <div className="text-[10px] font-bold text-green-800 min-w-0 break-words">Se unificará con: <span className="font-black">{sel.codigo} — {sel.desc}</span>{poco && <div data-testid="pq-poco" className="text-amber-700 font-black mt-0.5">Ojo: el nombre y las medidas se parecen poco. Revisa que sea el mismo producto.</div>}</div>
+              <div className="text-[10px] font-bold text-green-800 min-w-0 break-words">Se unificará con: <span className="font-black">{sel.codigo} — {sel.desc}</span>{poco && <div data-testid="pq-poco" className="text-amber-700 font-black mt-0.5">Ojo: el nombre y las medidas se parecen poco. Revisa que sea el mismo producto.</div>}{kgInfo && <div data-testid="pq-kg" className="text-green-700 font-bold mt-0.5">{kgInfo}</div>}</div>
               <div className="flex gap-2">
                 <button data-testid="pq-unificar" disabled={ocupado} onClick={() => onUnificar(g, sel).then((ok) => { if (ok) setSel(null); })} className="bg-green-600 text-white px-4 py-1.5 rounded-lg text-[10px] font-black uppercase hover:bg-green-700 disabled:opacity-50">Unificar</button>
                 <button onClick={() => setSel(null)} className="px-3 py-1.5 rounded-lg border border-gray-300 text-[10px] font-black uppercase text-gray-600 hover:bg-white">Cancelar</button>
@@ -22342,8 +22353,9 @@ function PqProductosHistoricos({ notasEntrega, invoices, inventory, equivalencia
   return (
     <div data-testid="pq-seccion" className="bg-white p-8 rounded-3xl shadow-sm border border-gray-200">
       <h2 className="text-xl font-black uppercase text-black mb-2 flex items-center gap-3 border-b pb-4"><Layers className="text-indigo-500"/> Productos históricos → producto actual</h2>
-      <p className="text-xs font-bold text-gray-500 mb-1">Las cargas de periodos anteriores trajeron productos con otro código o nombre que en realidad son productos que hoy tienes en el inventario. Aquí eliges a cuál corresponde cada uno y los reportes de productos (Top 10 de la Gráfica de Ventas, Productos Vendidos, Reporte General de Ventas y Costos, Dashboards) los suman como un solo producto.</p>
-      <p className="text-[10px] font-black text-indigo-600 mb-4">Solo cambia cómo se agrupa el producto al mostrarlo: no se modifica ninguna nota de entrega, factura, costo, inventario ni contabilidad, y puedes quitar la unificación cuando quieras.</p>
+      <p className="text-xs font-bold text-gray-500 mb-1">Estos son los productos que vinieron de las cargas de periodos anteriores (migración histórica): traen otro código o nombre y NO están en tu inventario. Tú decides, uno por uno, a qué producto del sistema corresponde cada uno — nada se une solo. Los reportes de productos (Top 10 de la Gráfica de Ventas, Productos Vendidos, Reporte General de Ventas y Costos, Dashboards) pasan a contarlos como el producto que elijas.</p>
+      <p className="text-[10px] font-black text-indigo-600 mb-1">Solo cambia cómo se agrupa el producto al mostrarlo: no se modifica ninguna nota de entrega, factura, costo, inventario ni contabilidad, y puedes quitar la unificación cuando quieras.</p>
+      <p data-testid="pq-nota-kg" className="text-[10px] font-bold text-gray-500 mb-4">Sobre los kilos: la Gráfica de Ventas calcula los kilos con el peso que dice el nombre del producto (por ejemplo «4 Kg»). Muchos nombres históricos no traen el peso y esas ventas cuentan 0 kg; al unificar se usa el nombre del producto actual y, si ese nombre trae el peso, los kilos pasan a contarse. Por eso el total de kilos puede subir. Al elegir un producto aquí abajo verás cuánto cambia.</p>
       {cat.lista.length === 0 ? (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs font-bold text-amber-800">Todavía no hay productos en el inventario (o se están cargando). Cuando estén, aquí podrás unificar los productos históricos con ellos.</div>
       ) : (
@@ -38013,6 +38025,13 @@ function App() {
       : otraRetForm.nroComprobante;
     const montoRetenidoBs=otraRetForm.montoRetenidoBs;
     const esManualOtra=!facturaId; // sin factura seleccionada = modo manual
+    // Retención aplicada a una ND/NC fiscal (no aplica al IGTF ni al registro directo): queda con la factura de la nota, con la tasa de la nota y recuerda de cuál nota es. La de una NC va en NEGATIVO (revierte la retención recibida); la de una ND, positiva.
+    const _notaSelRet=(otraRetForm.notaId&&facturaId&&!esIGTF)?(notasVentaCD||[]).find(n=>n.id===otraRetForm.notaId&&n.facturaId===facturaId):null;
+    // La nota ya no se encuentra (borrada) pero la retención que se edita sigue siendo de una nota: el signo se mantiene con el tipo guardado
+    const _notaBorrada=!!(otraRetForm.notaId&&facturaId&&!esIGTF&&!_notaSelRet&&otraRetForm._editId&&otraRetForm.notaTipo);
+    const _esNotaRet=!!(_notaSelRet||_notaBorrada);
+    const _notaTipoRet=_notaSelRet?(_notaSelRet.tipo||''):(_notaBorrada?(otraRetForm.notaTipo||''):'');
+    const _signoRet=_esNotaRet&&_notaTipoRet==='NC'?-1:1;
     if(esManualOtra&&!otraRetForm.clientRif)
       return setDialog({title:'Datos incompletos',text:'Busca y selecciona un cliente registrado.',type:'alert'});
     if(esIGTF){
@@ -38029,11 +38048,12 @@ function App() {
       const tipo=TIPOS_RET_EXTRA.find(t=>t.id===tipoId)||TIPOS_RET_EXTRA[0];
       const tasa=esIGTF
         ? (parseNum(otraRetForm.tasa||0)||parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1)
-        : (parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1);
+        : ((_notaSelRet?parseNum(_notaSelRet.tasaFactura||0):(_notaBorrada?parseNum(otraRetForm.tasa||0):0))||parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1);
       // Para IGTF el usuario entra el monto en USD y el Bs. se deriva con la tasa DE LA FACTURA —
       // al revés que las demás retenciones, que se entran en Bs. y de ahí se calcula el USD.
-      const montoUSD=esIGTF?parseNum(otraRetForm.montoRetenidoUSD||0):(tasa>1?parseFloat((parseNum(montoRetenidoBs||0)/tasa).toFixed(4)):0);
-      const montoBs=esIGTF?parseFloat((montoUSD*tasa).toFixed(2)):parseNum(montoRetenidoBs||0);
+      const _bsForm=_esNotaRet?_signoRet*Math.abs(parseNum(montoRetenidoBs||0)):parseNum(montoRetenidoBs||0);
+      const montoUSD=esIGTF?parseNum(otraRetForm.montoRetenidoUSD||0):(tasa>1?parseFloat((_bsForm/tasa).toFixed(4)):0);
+      const montoBs=esIGTF?parseFloat((montoUSD*tasa).toFixed(2)):_bsForm;
       const facsSeleccionadas=esIGTF?((otraRetForm.facturaIds&&otraRetForm.facturaIds.length>0)?otraRetForm.facturaIds:[facturaId]).map(fid=>(invoices||[]).find(i=>i.id===fid)).filter(Boolean):[];
       const totalFacsSeleccionadas=facsSeleccionadas.reduce((s,f)=>s+parseNum(f.total||0),0)||1;
       const batch=writeBatch(db);
@@ -38100,6 +38120,7 @@ function App() {
         periodoLibroQ:esIGTF?(otraRetForm.periodoLibroQ||'1'):'',
         observaciones:otraRetForm.observaciones||'',
         ...(fechaRegistroFinal?{fechaRegistro:fechaRegistroFinal}:{}),
+        ...(_esNotaRet?{notaId:otraRetForm.notaId,notaTipo:_notaTipoRet,notaNro:_notaSelRet?(_notaSelRet.nroDocumento||''):(otraRetForm.notaNro||''),notaNroControl:_notaSelRet?(_notaSelRet.nroControl||''):(otraRetForm.notaNroControl||'')}:{}),
         timestamp:Date.now(),createdAt:getTodayDate(),user:appUser?.name||'Sistema'
       });
       }
@@ -38153,7 +38174,7 @@ function App() {
       await batch.commit();
       if(esIGTF&&!esEdicion) logAuditoriaSeguro(appUser,'Cuentas por Cobrar','CREACIÓN',()=>`IGTF percibido REGISTRADO (ingreso en Banco/Caja): $${formatNum(montoUSD)} (Bs.${formatNum(montoBs)}) · Fac.: ${facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', ')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'} · Cuenta: ${(cuentasBanco||[]).find(c=>c.id===otraRetForm.cuentaBancariaId)?.banco||otraRetForm.cuentaBancariaNombre||'—'} · Ref: ${otraRetForm.referencia||'—'}`);
       setShowOtraRetModal(false);setOtraRetForm({});setOtraRetBusqCli('');setOtraRetManual(false);setOtraRetBusqCuenta('');
-      if(!(esIGTF&&!esEdicion)) logAuditoriaSeguro(appUser,'Libro de Ventas',esEdicion?'EDICIÓN':'CREACIÓN',()=>`Retención ${tipo.label} ${esEdicion?'EDITADA':'REGISTRADA'}: Comprobante ${nroComprobante} · Bs.${formatNum(montoBs)} ($${formatNum(montoUSD)}) · Fac.: ${(facsSeleccionadas.length?facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', '):'')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'} · Fecha ${fechaComprobante}${fechaRegistroFinal?` · Registro ${fechaRegistroFinal}`:''}`);
+      if(!(esIGTF&&!esEdicion)) logAuditoriaSeguro(appUser,'Libro de Ventas',esEdicion?'EDICIÓN':'CREACIÓN',()=>`Retención ${tipo.label} ${esEdicion?'EDITADA':'REGISTRADA'}: Comprobante ${nroComprobante} · Bs.${formatNum(montoBs)} ($${formatNum(montoUSD)}) · Fac.: ${(facsSeleccionadas.length?facsSeleccionadas.map(f=>f.nroFiscal).filter(Boolean).join(', '):'')||inv?.nroFiscal||'—'} · Cliente: ${facsSeleccionadas[0]?.clientName||inv?.clientName||otraRetForm.clientName||'—'}${_esNotaRet?` · Sobre ${_notaTipoRet==='NC'?'nota de crédito':'nota de débito'} ${_notaSelRet?(_notaSelRet.nroDocumento||_notaSelRet.id):(otraRetForm.notaNro||'—')}`:''} · Fecha ${fechaComprobante}${fechaRegistroFinal?` · Registro ${fechaRegistroFinal}`:''}`);
       setDialog({title:esEdicion?'✅ Actualizada':'✅ Retención registrada',text:`${tipo.label}: Bs.${parseNum(montoBs).toFixed(2)} ≈ $${montoUSD.toFixed(2)}${esIGTF&&!esEdicion?' — movimiento creado en Banco/Caja':''}`,type:'alert'});
     }catch(e){setDialog({title:'Error',text:e.message,type:'alert'});}
   };
@@ -38324,6 +38345,8 @@ function App() {
   const prodEqCtx = useMemo(()=>prodEqContexto(prodEquiv, inventory, notasEntrega),[prodEquiv, inventory, notasEntrega]);
   const notasEntregaRep = useMemo(()=>prodEqAplicarNEs(notasEntrega, prodEqCtx),[notasEntrega, prodEqCtx]);
   const prodEqGuardar = (lista) => setDoc(getDocRef('settings','productosEquivalencias'),{equivalencias:lista, updatedAt:Date.now(), user:appUser?.name||''},{merge:true});
+  // Cuántos productos históricos siguen contando aparte (solo para el aviso de la Gráfica de Ventas; no cambia nada)
+  const prodEqPend = useMemo(()=>{ try{ const cat=prodEqCatalogo(inventory); if(!cat.lista.length) return 0; return prodEqListar(notasEntrega, invoices, cat, prodEquiv).filter(g=>!g.unif).length; }catch(e){ return 0; } },[notasEntrega, invoices, inventory, prodEquiv]);
   const [importandoHist, setImportandoHist] = useState(false);
   const [papeleraItems, setPapeleraItems] = useState([]);
   const [anulVerId, setAnulVerId] = useState(null);
@@ -55456,6 +55479,12 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   {fVF.tabActiva==='productos'&&(
                     <div>
                       <h3 className="font-black text-sm uppercase text-gray-700 border-l-4 border-blue-600 pl-3 mb-5">TOP 10 Productos</h3>
+                      {prodEqPend>0&&hasPerm('configuracion')&&(
+                        <div data-testid="pq-aviso-grafica" className="-mt-2 mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold text-amber-800">
+                          <span>Hay {prodEqPend} {prodEqPend===1?'producto histórico':'productos históricos'} sin unificar: se cuentan aparte de su producto actual. Tú eliges a cuál corresponde cada uno.</span>
+                          <button data-testid="pq-ir-config" onClick={()=>{clearAllReports();setActiveTab('configuracion');let n=0;const iv=setInterval(()=>{n++;const el=document.querySelector('[data-testid="pq-seccion"]');if(el){clearInterval(iv);el.style.scrollMarginTop='130px';if(el.scrollIntoView)el.scrollIntoView({behavior:'smooth',block:'start'});}else if(n>=25)clearInterval(iv);},200);}} className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase hover:bg-amber-600">Unificarlos en Configuración</button>
+                        </div>
+                      )}
                       {t10P.length===0?<p className="text-center text-gray-400 text-xs py-8 uppercase font-black">Sin datos</p>:(
                         <div className="space-y-3">
                           {t10P.map(([prod,val],i)=>(
@@ -59549,7 +59578,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                     )}
                   </div>
                   <div>
-                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">{otraRetManual?'Tasa Bs/$ (de esa fecha) *':'Factura / Invoice *'}</label>
+                    <label className="text-[9px] font-black text-slate-400 uppercase block mb-1">{otraRetManual?'Tasa Bs/$ (de esa fecha) *':'Factura / ND / NC *'}</label>
                     {otraRetManual?(
                       <input type="number" step="0.0001" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500"
                         placeholder={String(parseNum(settings?.tasaBCV||0))}
@@ -59576,24 +59605,50 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                         </label>
                       );})}
                     </div>
-                    ):(
-                    <select className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 disabled:bg-slate-50 disabled:text-slate-400"
+                    ):((()=>{
+                      // Facturas del cliente + sus Notas de Débito / Crédito FISCALES (cada una con su factura): la retención se puede aplicar a cualquiera de esos documentos.
+                      const _rifDocRet=otraRetForm.clientRif;
+                      const _notasCliRet=(notasVentaCD||[]).filter(n=>n&&n.naturaleza==='FISCAL'&&!n.esAnulacionFiscal&&n.facturaId&&(n.tipo==='ND'||n.tipo==='NC'))
+                        .map(n=>({n,inv:(invoices||[]).find(i=>i.id===n.facturaId)})).filter(x=>x.inv&&_rifDocRet&&x.inv.clientRif===_rifDocRet)
+                        .sort((a,b)=>String(b.n.fecha||'').localeCompare(String(a.n.fecha||'')));
+                      return (
+                    <select data-testid="otra-ret-documento" className="w-full border-2 border-slate-200 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:border-purple-500 disabled:bg-slate-50 disabled:text-slate-400"
                       disabled={!otraRetForm.clientRif}
-                      value={otraRetForm.facturaId||''}
+                      value={(otraRetForm.notaId&&otraRetForm.facturaId)?('NOTA::'+otraRetForm.notaId):(otraRetForm.facturaId||'')}
                       onChange={e=>{
-                        const inv=(invoices||[]).find(i=>i.id===e.target.value);
+                        const v=e.target.value;
+                        if(v.startsWith('NOTA::')){
+                          // Nota de Débito / Crédito fiscal: la retención queda con la factura de la nota, con la tasa de la nota y sobre la base imponible (en Bs.) de ESA nota
+                          const nt=(notasVentaCD||[]).find(n=>n.id===v.slice(6));
+                          if(!nt) return;
+                          const invN=(invoices||[]).find(i=>i.id===nt.facturaId);
+                          const tasaN=parseNum(nt.tasaFactura||0)||parseNum(invN?.tasa||invN?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
+                          const baseN=parseNum(nt.monto||0);
+                          const tipoN=TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||TIPOS_RET_EXTRA[0];
+                          const pctN=parseNum(otraRetForm.porcentaje||tipoN.porcentaje||0);
+                          const montoN=baseN>0?parseFloat((baseN*pctN/100).toFixed(2)):0;
+                          setOtraRetForm(f=>({...f,facturaId:nt.facturaId,notaId:nt.id,notaTipo:nt.tipo||'',notaNro:nt.nroDocumento||'',notaNroControl:nt.nroControl||'',tasa:tasaN,baseImponibleBs:baseN,montoRetenidoBs:montoN||f.montoRetenidoBs}));
+                          return;
+                        }
+                        const inv=(invoices||[]).find(i=>i.id===v);
                         const tasa=parseNum(inv?.tasa||inv?.tasaFactura||0)||parseNum(settings?.tasaBCV||0)||1;
                         const base=parseNum(inv?.baseImponible||inv?.montoBase||0)||parseNum(inv?.total||0)*(tasa>1?1:1);
                         const tipo=TIPOS_RET_EXTRA.find(t=>t.id===(otraRetForm.tipoId||'RESP_SOCIAL'))||TIPOS_RET_EXTRA[0];
                         const monto=base>0?parseFloat((base*tipo.porcentaje/100).toFixed(2)):0;
-                        setOtraRetForm(f=>({...f,facturaId:e.target.value,tasa,baseImponibleBs:base,montoRetenidoBs:monto||f.montoRetenidoBs}));
+                        setOtraRetForm(f=>({...f,facturaId:v,tasa,baseImponibleBs:base,montoRetenidoBs:monto||f.montoRetenidoBs,...(f.notaId?{notaId:'',notaTipo:'',notaNro:'',notaNroControl:''}:{})}));
                       }}>
                       <option value="">{otraRetForm.clientRif?'— Selecciona factura —':'Primero busca un cliente'}</option>
                       {(invoices||[]).filter(i=>i.clientRif===otraRetForm.clientRif).slice(0,80).map(i=>(
                         <option key={i.id} value={i.id}>{i.nroFiscal?'#'+i.nroFiscal+' · ':''}{i.fecha?'('+i.fecha+')':''} ${formatNum(parseNum(i.total||0))}</option>
                       ))}
+                      {_notasCliRet.length>0&&<optgroup label="Notas de débito / crédito fiscales">
+                        {_notasCliRet.slice(0,80).map(({n,inv})=>(
+                          <option key={'nota-'+n.id} value={'NOTA::'+n.id}>{n.tipo} {n.nroDocumento||'—'}{n.fecha?' · ('+n.fecha+')':''} · Fact. {inv.nroFiscal?'#'+inv.nroFiscal:(inv.documento||'—')} · Base Bs. {formatNum(parseNum(n.monto||0))}</option>
+                        ))}
+                      </optgroup>}
                     </select>
-                    )}
+                      );
+                    })())}
                   </div>
                 </div>
                 {otraRetForm.tipoId==='IGTF'?(<>
@@ -59711,12 +59766,27 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                       onChange={e=>setOtraRetForm(f=>({...f,montoRetenidoBs:e.target.value}))}/>
                   </div>
                 </div>
+                {otraRetForm.notaId&&otraRetForm.facturaId&&(()=>{
+                  const _ntAv=(notasVentaCD||[]).find(n=>n.id===otraRetForm.notaId);
+                  const _tipoAv=_ntAv?(_ntAv.tipo||''):(otraRetForm.notaTipo||'');
+                  const _invAv=(invoices||[]).find(i=>i.id===otraRetForm.facturaId);
+                  const _baseAv=_ntAv?parseNum(_ntAv.monto||0):parseNum(otraRetForm.baseImponibleBs||0);
+                  const _ivaAv=_ntAv?(parseNum(_ntAv.ivaBs||0)||parseFloat((_baseAv*0.16).toFixed(2))):0;
+                  return (
+                    <div data-testid="otra-ret-aviso-nota" className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-[10px] text-purple-800 space-y-0.5">
+                      <div><span className="font-black">{_tipoAv==='NC'?'Nota de Crédito':'Nota de Débito'}:</span> {otraRetForm.notaNro||'—'} · <span className="font-black">Factura afectada:</span> {_invAv?.nroFiscal||_invAv?.documento||'—'} · <span className="font-black">Base de la nota:</span> Bs. {formatNum(_baseAv)}{_ntAv?<> · <span className="font-black">IVA:</span> Bs. {formatNum(_ivaAv)}</>:null}</div>
+                      {_tipoAv==='NC'
+                        ?<div className="font-bold text-purple-600">La retención sobre una Nota de Crédito se registra en negativo: revierte (resta) la retención recibida.</div>
+                        :<div className="font-bold text-purple-600">La retención queda aplicada a esta nota de débito y se descuenta de lo que el cliente debe, igual que cualquier retención.</div>}
+                    </div>
+                  );
+                })()}
                 {otraRetForm.facturaId&&otraRetForm.montoRetenidoBs&&(
                   <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 text-[10px]">
                     <span className="text-purple-600 font-bold">Tasa: </span><span className="font-mono">{parseNum(otraRetForm.tasa||0).toFixed(4)} Bs/$</span>
                     <span className="mx-3 text-purple-400">|</span>
                     <span className="text-purple-600 font-bold">≈ USD: </span>
-                    <span className="font-mono font-black text-purple-800">${parseNum(otraRetForm.tasa||0)>1?(parseNum(otraRetForm.montoRetenidoBs||0)/parseNum(otraRetForm.tasa)).toFixed(2):'—'}</span>
+                    <span className="font-mono font-black text-purple-800">{(otraRetForm.notaId&&otraRetForm.notaTipo==='NC')?'-':''}${parseNum(otraRetForm.tasa||0)>1?((otraRetForm.notaId?Math.abs(parseNum(otraRetForm.montoRetenidoBs||0)):parseNum(otraRetForm.montoRetenidoBs||0))/parseNum(otraRetForm.tasa)).toFixed(2):'—'}</span>
                   </div>
                 )}
                 </>)}
@@ -59753,35 +59823,36 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                   );
                 })()}
                 {/* 🧾 Vista previa del asiento contable — mismo par D/H que verá Contabilidad → Retenciones a Clientes */}
-                {otraRetForm.tipoId!=='IGTF'&&parseNum(otraRetForm.montoRetenidoBs||0)>0&&(()=>{
+                {otraRetForm.tipoId!=='IGTF'&&(otraRetForm.notaId?Math.abs(parseNum(otraRetForm.montoRetenidoBs||0)):parseNum(otraRetForm.montoRetenidoBs||0))>0&&(()=>{
                   const partesCta=(str)=>{const p=(str||'').split('—');return {codigo:(p[0]||'').trim(),nombre:p.slice(1).join('—').trim()};};
                   const debito=partesCta(otraRetForm.cuentaContableNombre);
                   const clienteAst=(clients||[]).find(c=>(c.rif||'').toUpperCase()===(otraRetForm.clientRif||'').toUpperCase());
                   const credito=partesCta(clienteAst?.cuentaContableNombre);
                   const tasaAst=parseNum(otraRetForm.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
-                  const montoBsAst=parseNum(otraRetForm.montoRetenidoBs||0);
+                  const _revAst=!!otraRetForm.notaId&&otraRetForm.notaTipo==='NC';
+                  const montoBsAst=Math.abs(parseNum(otraRetForm.montoRetenidoBs||0));
                   const montoUsdAst=tasaAst>1?montoBsAst/tasaAst:0;
                   return (
                     <div className="bg-slate-900 rounded-xl p-3.5 space-y-2">
                       <p className="text-[9px] font-black text-purple-300 uppercase tracking-wider">🧾 Asiento contable — vista previa</p>
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-emerald-400 font-black text-[9px] shrink-0">D</span>
+                          <span className={(_revAst?'text-red-400':'text-emerald-400')+' font-black text-[9px] shrink-0'}>{_revAst?'H':'D'}</span>
                           <span className="font-mono text-[9px] text-purple-300 shrink-0">{debito.codigo||'—'}</span>
                           <span className="text-[10px] text-slate-200 truncate">{debito.nombre||'Sin cuenta configurada para este tipo'}</span>
                         </div>
-                        <span className="font-mono font-black text-[11px] text-emerald-400 shrink-0">Bs.{formatNum(montoBsAst)}</span>
+                        <span className={'font-mono font-black text-[11px] shrink-0 '+(_revAst?'text-red-400':'text-emerald-400')}>Bs.{formatNum(montoBsAst)}</span>
                       </div>
                       <div className="flex items-start justify-between gap-2 pl-4">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-red-400 font-black text-[9px] shrink-0">H</span>
+                          <span className={(_revAst?'text-emerald-400':'text-red-400')+' font-black text-[9px] shrink-0'}>{_revAst?'D':'H'}</span>
                           <span className="font-mono text-[9px] text-purple-300 shrink-0">{credito.codigo||'—'}</span>
                           <span className="text-[10px] text-slate-200 truncate">{credito.nombre||otraRetForm.clientName||'Cuentas por Cobrar Clientes'}</span>
                         </div>
-                        <span className="font-mono font-black text-[11px] text-red-400 shrink-0">Bs.{formatNum(montoBsAst)}</span>
+                        <span className={'font-mono font-black text-[11px] shrink-0 '+(_revAst?'text-emerald-400':'text-red-400')}>Bs.{formatNum(montoBsAst)}</span>
                       </div>
                       <div className="flex justify-between items-center text-[9px] text-slate-400 pt-1.5 border-t border-slate-700">
-                        <span>≈ ${formatNum(montoUsdAst)} USD · Tasa {formatNum(tasaAst)}</span>
+                        <span>≈ ${formatNum(montoUsdAst)} USD · Tasa {formatNum(tasaAst)}{_revAst?' · Retención de una Nota de Crédito: revierte la retención recibida (Debe y Haber invertidos)':''}</span>
                         {!otraRetForm.cuentaContableId&&<span className="text-amber-400 font-bold">⚠ Configura la cuenta arriba para que no quede pendiente</span>}
                       </div>
                     </div>
@@ -61452,7 +61523,7 @@ ${resumen}
                                   const idsPorFactura={}; siblings.forEach(s=>{if(s.facturaId) idsPorFactura[s.facturaId]=s.id;});
                                   setOtraRetForm({...ret,_editId:ret.id,
                                     montoRetenidoUSD:esGrupoIGTF?String(montoUSDGrupo):(ret.montoRetenidoUSD?String(ret.montoRetenidoUSD):''),
-                                    montoRetenidoBs:ret.montoRetenido?String(ret.montoRetenido):'',
+                                    montoRetenidoBs:ret.montoRetenido?String(ret.notaId?Math.abs(parseNum(ret.montoRetenido)):ret.montoRetenido):'',
                                     facturaIds:esGrupoIGTF?facturaIdsGrupo:(ret.facturaId?[ret.facturaId]:[]),
                                     baseImponibleUSD:esGrupoIGTF?baseUSDGrupo:(ret.baseImponibleUSD||0),
                                     _siblingIdsByFactura:esGrupoIGTF?idsPorFactura:null});
