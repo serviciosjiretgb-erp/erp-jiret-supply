@@ -44312,13 +44312,13 @@ tr.tot td{background:#f1f5f9;font-weight:900;font-size:8px;border-top:2px solid 
                       }).map(m => (
                         <tr key={m.id||m.timestamp} className={`hover:bg-gray-50 ${m.status==='ANULADO'?'opacity-40 bg-gray-50':''}`}>
                           <td className="py-2.5 px-3 border-r font-bold text-gray-600">{m.date}{m.status==='ANULADO'&&<span className="ml-1.5 px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 text-[8px] font-black uppercase">Anulado</span>}</td>
-                          <td className="py-2.5 px-3 border-r"><span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span><span className="text-[9px] text-gray-400">{m.itemDesc||''}</span></td>
+                          <td className="py-2.5 px-3 border-r"><span className="font-black text-orange-600 text-[10px] block">{m.itemId}</span><span className="text-[9px] text-gray-700">{m.itemDesc||''}</span></td>
                           <td className="py-2.5 px-3 border-r text-center"><span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${isEntradas?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{m.type?.replace(/_/g,' ')}</span></td>
                           <td className="py-2.5 px-3 border-r text-center font-black">{formatNum(m.qty)}</td>
                           <td className="py-2.5 px-3 border-r text-right font-bold">${formatNum(m.unitCost||0)}</td>
                           <td className="py-2.5 px-3 border-r text-right font-black">${formatNum(m.totalValue||0)}</td>
                           <td className="py-2.5 px-3 border-r text-center font-black text-blue-600">{formatNum(m.newStock)}</td>
-                          <td className="py-2.5 px-3 border-r text-[9px] text-gray-500">{m.docRef||'—'} {m.notes&&<span className="text-gray-300">| {m.notes}</span>}</td>
+                          <td className="py-2.5 px-3 border-r text-[9px] text-gray-900">{m.docRef||'—'} {m.notes&&<span className="text-gray-700">| {m.notes}</span>}</td>
                           <td className="py-2.5 px-3 text-center no-pdf">
                             <div className="flex gap-1 justify-center">
                               {m.status!=='ANULADO' && <button onClick={()=>setEditandoMov({...m})} className="p-1 bg-amber-50 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white" title="Editar detalle"><Edit size={11}/></button>}
