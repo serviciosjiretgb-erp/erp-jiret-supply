@@ -22683,6 +22683,7 @@ const AUD_MODULO_ALIAS = {
   'Contabilidad': ['Contabilidad', 'Comprobantes Contables'],
   'Comprobantes Contables': ['Contabilidad', 'Comprobantes Contables'],
   'Seguridad': ['Configuración', 'Dispositivos autorizados'],
+  'Usuarios del sistema': ['Configuración', 'Usuarios'],
   'Auditoría': ['Configuración', 'Auditoría de Sistema'],
   'Control Inventario': ['Inventario', 'Movimientos'],
   'Inventario Terminados': ['Inventario', 'Productos terminados'],
@@ -39484,6 +39485,34 @@ function App() {
     }
     if(changed) setDoc(getDocRef('settings','general'),{vendedoresInfo:upd},{merge:true});
   },[settings?.vendedoresInfo]);
+
+  // ── a18: bloquear / desbloquear el acceso de un usuario ──────────────────────────────────────────
+  // El bloqueo es solo una marca en el usuario (bloqueado: true): no se borra nada y se revierte con «Desbloquear».
+  // La cuenta principal «Administrador» nunca se bloquea: es la de emergencia (siempre tiene que poder entrar).
+  const _kUsr = (v) => String(v == null ? '' : v).trim().toLowerCase();
+  const regBloqueoUsuario = (uname) => {
+    const k = _kUsr(uname);
+    if (!k || k === 'administrador') return null;
+    return (systemUsers || []).find(x => _kUsr(x.username || x.id) === k && x.bloqueado === true) || null;
+  };
+  const esUsuarioBloqueado = (uname) => !!regBloqueoUsuario(uname);
+  // Si el administrador bloquea a alguien que ya está dentro, su sesión se cierra sola en cuanto llega el cambio
+  // (no se cierra la conexión con la base de datos: al desbloquearlo puede volver a entrar sin recargar la página).
+  useEffect(() => {
+    if (!appUser || appUser.bloqueado !== true) return;
+    if (_kUsr(appUser.username || appUser.id) === 'administrador') return;
+    const u = appUser;
+    setLoginError('Tu usuario fue bloqueado por el administrador. Comunícate con él para volver a entrar.');
+    setAppUser(null);
+    (async () => {
+      try { await audSalida(u, 'Sesión cerrada: el administrador bloqueó su usuario'); } catch (e) {}
+      if (u.role !== 'Master') {
+        try { await deleteDoc(getDocRef('activeSessions', u.username)); } catch (e) {}
+        try { await addDoc(getColRef('userActivity'), { username: u.username, name: u.name, action: 'LOGOUT', module: 'Sistema', details: 'Sesión cerrada: el administrador bloqueó su usuario', timestamp: Date.now(), createdAt: getTodayDate(), text: 'Cierre de sesión por bloqueo' }); } catch (e) {}
+      }
+    })();
+  }, [appUser?.bloqueado]);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     const user = loginData.username.toLowerCase().trim();
@@ -39495,6 +39524,11 @@ function App() {
     let foundUser = systemUsers.find(u =>
       (u.username||'').toLowerCase().trim() === user && u.password === pass
     );
+    // a18 — usuario bloqueado: no entra aunque la clave sea correcta (con clave equivocada sigue diciendo «Credenciales incorrectas», sin revelar nada)
+    if (foundUser && esUsuarioBloqueado(user)) {
+      try { logAuditoria(foundUser, 'Sistema', 'ALERTA', 'Intento de entrar con un usuario BLOQUEADO', { area: 'Sesión', origen: 'acceso' }); } catch (e) {}
+      return setLoginError('Tu usuario está bloqueado. Comunícate con el administrador.');
+    }
     if (!foundUser && user === MASTER_USER && pass === MASTER_PASS) {
       foundUser = {
         id: 'Administrador', username: 'Administrador', password: MASTER_PASS,
@@ -39986,6 +40020,16 @@ function App() {
       // Guardar documento con el ID correcto
       // IMPORTANTE: excluir el campo 'id' del objeto guardado para evitar conflictos
       const { id: _skipId, ...formToSave } = newUserForm;
+      // a18 — el bloqueo no se edita en este formulario: se conserva el estado ACTUAL del usuario
+      // (aunque el formulario se abrió antes de bloquearlo o desbloquearlo, o el usuario se renombre).
+      {
+        const _docsUsr = (systemUsers || []).filter(x => _kUsr(x.username || x.id) === _kUsr(newUserId) || (editingUserId && originalUsername && _kUsr(x.username || x.id) === _kUsr(originalUsername)));
+        const _vivo = _docsUsr.find(x => x.bloqueado === true) || _docsUsr[0] || null;
+        ['bloqueado', 'bloqueadoPor', 'bloqueadoFecha', 'bloqueadoTs', 'desbloqueadoPor', 'desbloqueadoFecha'].forEach(k => {
+          delete formToSave[k];
+          if (_vivo && _vivo[k] !== undefined) formToSave[k] = _vivo[k];
+        });
+      }
       batch.set(getDocRef('users', newUserId), { ...formToSave, username: newUserId });
       await batch.commit();
       setNewUserForm(initialUserForm);
@@ -40036,6 +40080,59 @@ function App() {
         }
       }
     });
+  };
+
+  // a18 — Bloquear / Desbloquear el acceso de un usuario (reversible; no borra nada)
+  const handleToggleBloqueoUser = (u) => {
+    const uname = String((u && (u.username || u.id)) || '').trim();
+    const k = _kUsr(uname);
+    if (!k) return;
+    const registros = (systemUsers || []).filter(x => _kUsr(x.username || x.id) === k);
+    if (!registros.length) return setDialog({ title: 'Error', text: `Usuario "${uname}" no encontrado.`, type: 'alert' });
+    const nombre = (u && u.name) || registros[0].name || uname;
+    const yaBloqueado = registros.some(x => x.bloqueado === true);
+    if (k === _kUsr(appUser && (appUser.username || appUser.id))) {
+      return setDialog({ title: 'Acción Denegada', text: 'No puedes bloquear tu propio usuario.', type: 'alert' });
+    }
+    if (k === 'administrador') {
+      return setDialog({ title: 'Acción Denegada', text: 'La cuenta principal «Administrador» no se puede bloquear: es la cuenta de emergencia del sistema.', type: 'alert' });
+    }
+    if (registros.some(x => x.role === 'Master') && appUser?.role !== 'Master') {
+      return setDialog({ title: 'Acción Denegada', text: 'Solo un usuario Master puede bloquear o desbloquear a otro Master.', type: 'alert' });
+    }
+    const quien = (appUser && (appUser.name || appUser.username)) || 'Administrador';
+    const aplicar = async (bloquear) => {
+      const batch = writeBatch(db);
+      registros.forEach(x => {
+        batch.update(getDocRef('users', x.id || x.username), bloquear
+          ? { bloqueado: true, bloqueadoPor: quien, bloqueadoFecha: getTodayDate(), bloqueadoTs: Date.now() }
+          : { bloqueado: false, desbloqueadoPor: quien, desbloqueadoFecha: getTodayDate() });
+      });
+      await batch.commit();
+      try { logAuditoria(appUser, 'Usuarios del sistema', 'EDICIÓN', bloquear ? `Bloqueó el acceso del usuario «${nombre}» (usuario: ${uname}): ya no puede entrar al sistema` : `Desbloqueó el acceso del usuario «${nombre}» (usuario: ${uname}): puede volver a entrar al sistema`); } catch (e) {}
+      setDialog({
+        title: bloquear ? '🔒 Usuario bloqueado' : '✅ Usuario desbloqueado',
+        text: bloquear
+          ? `"${nombre}" ya no puede entrar al sistema. Si estaba conectado, su sesión se cierra en unos segundos. Para devolverle el acceso usa «Desbloquear».`
+          : `"${nombre}" ya puede volver a entrar al sistema.`,
+        type: 'alert'
+      });
+    };
+    if (!yaBloqueado) {
+      setDialog({
+        title: 'Bloquear usuario',
+        text: `¿Bloquear el acceso de "${nombre}" (usuario: ${uname})? No podrá entrar al sistema y, si está conectado, su sesión se cerrará en unos segundos. No se borra nada: puedes desbloquearlo cuando quieras.`,
+        type: 'confirm',
+        onConfirm: () => aplicar(true)
+      });
+    } else {
+      setDialog({
+        title: 'Desbloquear usuario',
+        text: `¿Permitir de nuevo que "${nombre}" (usuario: ${uname}) entre al sistema?`,
+        type: 'confirm',
+        onConfirm: () => aplicar(false)
+      });
+    }
   };
 
   // ============================================================================
@@ -75441,8 +75538,8 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {[...new Map((systemUsers||[]).map(u=>[u.username,u])).values()].map(u => (
-                    <tr key={u.id} className="hover:bg-gray-50">
-                      <td className="py-3 px-4 font-black">{u.username}<br/><span className="text-[10px] text-gray-500 font-bold">{u.name}</span></td>
+                    <tr key={u.id} className={"hover:bg-gray-50" + (esUsuarioBloqueado(u.username || u.id) ? " bg-red-50/60" : "")}>
+                      <td className="py-3 px-4 font-black">{u.username}{esUsuarioBloqueado(u.username || u.id) && (()=>{ const r = regBloqueoUsuario(u.username || u.id) || {}; return <span title={'Bloqueado' + (r.bloqueadoPor ? ' por ' + r.bloqueadoPor : '') + (r.bloqueadoFecha ? ' el ' + String(r.bloqueadoFecha).substring(0,10).split('-').reverse().join('/') : '')} className="ml-2 bg-red-600 text-white px-2 py-0.5 rounded text-[8px] font-black uppercase align-middle">🔒 Bloqueado</span>; })()}<br/><span className="text-[10px] text-gray-500 font-bold">{u.name}</span></td>
                       <td className="py-3 px-4 font-bold text-xs uppercase">{u.role}</td>
                       <td className="py-3 px-4">
                         <div className="flex gap-1 flex-wrap max-w-[280px]">
@@ -75479,6 +75576,7 @@ const RestaurarCobrosView = ({settings, appUser}) => {
                       <td className="py-3 px-4 text-center">
                         <div className="flex justify-center gap-2">
                           <button onClick={()=>startEditUser(u)} className="p-2 bg-blue-50 text-blue-500 rounded-lg hover:bg-blue-100"><Edit size={14}/></button>
+                          <button onClick={()=>handleToggleBloqueoUser(u)} title={esUsuarioBloqueado(u.username || u.id) ? 'Desbloquear: vuelve a poder entrar al sistema' : 'Bloquear: no podrá entrar al sistema'} className={"px-2.5 py-2 rounded-lg flex items-center gap-1 text-[9px] font-black uppercase leading-none " + (esUsuarioBloqueado(u.username || u.id) ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-amber-50 text-amber-700 hover:bg-amber-100")}>{esUsuarioBloqueado(u.username || u.id) ? <><CheckCircle2 size={14}/> Desbloquear</> : <><Ban size={14}/> Bloquear</>}</button>
                           <button onClick={()=>handleDeleteUser(u.username || u.id)} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100"><Trash2 size={14}/></button>
                         </div>
                       </td>
