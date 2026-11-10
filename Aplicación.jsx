@@ -12608,6 +12608,9 @@ const _cuentaRelVigente = (cod, nom, planCuentas) => {
 const _esAnclaSaldos = (a) => String(a?.nroComprobante||'').trim().toUpperCase()==='SALDOS AGOSTO-2026';
 // Facturas históricas importadas (Ventas → NE → «Facturas históricas»): su asiento de venta y el de costo cuentan aunque estén antes de «Inicio de Contabilidad Real» (reemplazan al ajuste manual de ventas de los meses históricos).
 const _esFacturaHistImport = (f) => String(f?.origenImport||'').startsWith('HIST_');
+// a20 — «Factura fiscal»: la que ya tiene Nro. Fiscal o Nro. de Control (la misma regla del Libro de Ventas y de la declaración de IVA).
+// Sin ninguno de los dos todavía no es un documento fiscal: no entra al Estado de Resultados ni a los comprobantes contables (ni su venta ni su costo). Cuando se le escribe el Nro. Fiscal, entra sola.
+const _esFacturaFiscal = (f) => !!f && !!(f.nroFiscal || f.nroControl);
 const _resolverMovRelacionada = (p, ctx) => {
   const {movBanco, movCaja, cuentasBanco, cuentasCaja} = ctx;
   const idEq = (m) => !!p.movimientoId && (m.id===p.movimientoId || m._docId===p.movimientoId) && (!(Math.abs(Number(p.monto||0))>0) || Math.abs(Math.abs(Number(m.montoUSD||0))-Math.abs(Number(p.monto||0)))<0.01);
@@ -30943,7 +30946,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
     const _nroFiscalVistoCC = new Map();
     facturasVentaC.forEach(f=>{
       const nf = f.nroFiscal || f.documento || '';
-      if (!nf || f.esAnulacionFiscal) return;
+      if (!nf || f.esAnulacionFiscal || !_esFacturaFiscal(f)) return;
       const previo = _nroFiscalVistoCC.get(nf);
       if (!previo || (f.timestamp||0) >= (previo.timestamp||0)) _nroFiscalVistoCC.set(nf, f);
     });
@@ -30952,6 +30955,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
       // Ventas legal (reemplaza un número fiscal dañado/anulado). No es una venta
       // real, así que no debe generar asiento contable.
       if (f.esAnulacionFiscal) return false;
+      if (!_esFacturaFiscal(f)) return false; // a20: sin Nro. Fiscal (ni de Control) todavía no es una venta contable — igual que el motor y el Libro de Ventas
       const nf = f.nroFiscal || f.documento || '';
       if (nf && _nroFiscalVistoCC.get(nf)?.id !== f.id) return false; // duplicado, se omite
       if (filtDesde && f.fecha < filtDesde) return false;
@@ -31317,9 +31321,10 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
   // categoría de inventario involucrada (Materia Prima/Consumibles/Terminados).
   const construirLineasCostosProduccion = () => {
     const cfg = cuentasProduccionCfgC;
-    const _nfVistoCP=new Map(); (facturasVentaC||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal) return; const p=_nfVistoCP.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoCP.set(nf,f);});
+    const _nfVistoCP=new Map(); (facturasVentaC||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal||!_esFacturaFiscal(f)) return; const p=_nfVistoCP.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoCP.set(nf,f);});
     return (facturasVentaC||[]).filter(f=>{
       if (f.esAnulacionFiscal) return false;
+      if (!_esFacturaFiscal(f)) return false; // a20: el costo de una factura sin Nro. Fiscal tampoco entra (igual que su venta)
       { const nf=f.nroFiscal||f.documento||''; if(nf && _nfVistoCP.get(nf)?.id!==f.id) return false; }
       if (reclasificacionesC[`EXCL__costos_produccion__${f.id}`]) return false;
       const items = f.itemsFacturados||[];
@@ -35154,6 +35159,16 @@ ${valoresHtml}
           {!cuentasIngresoCfgC.conOpNombre&&!cuentasIngresoCfgC.sinOpNombre&&(
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-700 font-bold">⚠ Las cuentas de ingresos (con/sin OP) todavía no están configuradas — ve a Facturación de Venta → "Cuentas de Ingresos" para configurarlas. Mientras tanto se usan cuentas genéricas de referencia.</div>
           )}
+          {(() => {
+            // a20 — facturas sin Nro. Fiscal (ni Nro. de Control): no se contabilizan, por eso no salen en esta lista
+            const _sfCC = (facturasVentaC||[]).filter(f => f && !f.esAnulacionFiscal && !_esFacturaFiscal(f) && (!filtDesde || (f.fecha||'') >= filtDesde) && (!filtHasta || (f.fecha||'') <= filtHasta));
+            if (_sfCC.length===0) return null;
+            return (
+              <div data-testid="cc-ventas-sin-fiscal" className="bg-slate-50 border border-slate-300 rounded-xl p-3 text-[10px] text-slate-700 font-bold">
+                ℹ️ {_sfCC.length} factura(s) sin Nro. Fiscal no aparecen aquí ni en el Estado de Resultados: {_sfCC.slice(0,8).map(f=>f.documento||f.id).join(', ')}{_sfCC.length>8?'…':''}. Se contabilizan cuando tengan Nro. Fiscal.
+              </div>
+            );
+          })()}
           {lineasVta.length===0?(
             <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
               <FileText size={36} className="mx-auto mb-2 opacity-40"/>
@@ -37195,8 +37210,9 @@ function App() {
     // ambas activas, duplicando el monto en Mayor Analítico). Se avisa por consola y se cuenta
     // solo la más reciente (mayor timestamp) — la otra sigue existiendo como documento y debe
     // revisarse/eliminarse manualmente en Ventas → Facturas, esto solo evita que se sume dos veces.
+    // a20 — SOLO facturas fiscales (con Nro. Fiscal o Nro. de Control): igual que el Libro de Ventas y el «Rpt. Ventas». Las que no lo tienen no generan asiento de venta ni de costo.
     const _nroFiscalVistoApp = new Map();
-    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal && _esFacturaFiscal(f)).forEach(f=>{
       const nf = f.nroFiscal || f.documento || '';
       if (nf) {
         const previo = _nroFiscalVistoApp.get(nf);
@@ -37209,7 +37225,7 @@ function App() {
         _nroFiscalVistoApp.set(nf, f);
       }
     });
-    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal && _esFacturaFiscal(f)).forEach(f=>{
       const nf = f.nroFiscal || f.documento || '';
       if (nf && _nroFiscalVistoApp.get(nf)?.id !== f.id) return; // duplicado — ya se avisó arriba, se omite
       try{
@@ -37412,8 +37428,8 @@ function App() {
     // 9a) Costo de Producción/Venta — MISMA función compartida que usa Comprobantes Contables
     // (antes esta sección omitía en silencio la factura si faltaba una cuenta configurada,
     // mientras que Comprobantes Contables la mostraba con un aviso — ahora se comportan igual).
-    const _nfVistoEng=new Map(); (invoices||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal) return; const p=_nfVistoEng.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoEng.set(nf,f);});
-    (invoices||[]).filter(f=>!f.esAnulacionFiscal).forEach(f=>{
+    const _nfVistoEng=new Map(); (invoices||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal||!_esFacturaFiscal(f)) return; const p=_nfVistoEng.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoEng.set(nf,f);});
+    (invoices||[]).filter(f=>!f.esAnulacionFiscal && _esFacturaFiscal(f)).forEach(f=>{   // a20: el costo de una factura sin Nro. Fiscal tampoco entra (igual que su venta)
       { const nf=f.nroFiscal||f.documento||''; if(nf && _nfVistoEng.get(nf)?.id!==f.id) return; }
       if (reclasificacionesApp[`EXCL__costos_produccion__${f.id}`]) return;
       const r = construirLineasCostoProduccionCompartido(f, {cfg:cuentasProduccionCfg, inventory, tasasManuales:tasasManualesProdApp, settingsTasa:settings?.tasaBCV, tabId:'costos_produccion', aplicarReclas:aplicarReclasLinea, simulacionCostos, notasEntrega});
@@ -50312,8 +50328,13 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const allRows=[...rowsFiscal,...ncndRows].sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
 
           const totalVentas=allRows.reduce((s,r)=>s+r.total,0);
+          // a19 — «Total Ventas Bs.» y el IVA cuentan SOLO las facturas con Nro. Fiscal, igual que las filas y el «Total Ventas» en USD.
+          // Antes también sumaban las facturas sin Nro. Fiscal (que este reporte no lista): sin tasa, su monto en USD entraba como si fueran bolívares.
+          const _esFiscalRep = (inv) => !!(inv.nroFiscal && inv.nroFiscal !== '—');
+          const _invFiscalesRep = filtInvs.filter(_esFiscalRep);
+          const _invSinFiscalRep = filtInvs.filter(inv => !_esFacturaFiscal(inv));   // a20: sin Nro. Fiscal ni Nro. de Control — las que tampoco están en el Libro de Ventas ni en el Estado de Resultados
           let _baseBsFacturas=0;
-          filtInvs.forEach(inv=>{
+          _invFiscalesRep.forEach(inv=>{
             const _tasaInv=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const _baseInv=parseNum(inv.montoBase||0);
             _baseBsFacturas+=(parseNum(inv.baseGravableBs||0)>0?parseNum(inv.baseGravableBs):_baseInv*_tasaInv)*_fracFiltOp(inv);
@@ -50321,7 +50342,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
           const _baseBsNCND=ncndRows.reduce((s,r)=>s+r.total*(parseNum(r.tasa||0)||0),0);
           const totalVentasBs=_baseBsFacturas+_baseBsNCND;
           let _ivaTotalBsRep=0;
-          filtInvs.forEach(inv=>{
+          _invFiscalesRep.forEach(inv=>{
             if(inv.aplicaIva!=='SI') return;
             const _tasaInv=parseNum(inv.tasa||0)||parseNum(settings?.tasaBCV||0)||1;
             const _baseInv=parseNum(inv.montoBase||0);
@@ -50419,6 +50440,44 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           <td className="py-1.5 pr-3 text-right font-mono">${formatNum(_totUSD)}</td>
                           <td className="py-1.5 pr-3 text-right font-mono">Bs.{formatNum(_totBs)}</td>
                         </tr></tfoot>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+              {(()=>{
+                // a19/a20 — facturas sin Nro. Fiscal: este reporte no las lista (solo muestra facturas con Nro. Fiscal) y tampoco entran al Libro de Ventas ni al Estado de Resultados
+                if(_invSinFiscalRep.length===0) return null;
+                const _neSF=(inv)=>{
+                  if(inv.neOrigen){const _n=(notasEntrega||[]).find(n=>n.id===inv.neOrigen||n.documento===inv.neOrigen);if(_n)return _n.documento||_n.id;}
+                  const _c=(notasEntrega||[]).filter(n=>n.facturaId===inv.id||n.facturaId===inv.documento).sort((a,b)=>(a.id||'').localeCompare(b.id||''));
+                  return _c[0]?.documento||_c[0]?.id||inv.neOrigen||'—';
+                };
+                const _totSF=_invSinFiscalRep.reduce((s,i)=>s+parseNum(i.montoBase||0)*_fracFiltOp(i),0);
+                return (
+                  <div data-testid="rv-sin-fiscal" className="mb-5 bg-slate-50 border-2 border-slate-300 rounded-xl p-4">
+                    <p data-testid="rv-sin-fiscal-titulo" className="text-[10px] font-black text-slate-700 uppercase mb-1">ℹ️ {_invSinFiscalRep.length} factura(s) sin Nro. Fiscal — no están en este reporte (${formatNum(_totSF)})</p>
+                    <p data-testid="rv-sin-fiscal-texto" className="text-[9px] text-slate-600 mb-3">Este reporte solo muestra facturas que ya tienen Nro. Fiscal. Tampoco entran al Libro de Ventas ni al Estado de Resultados hasta que lo tengan (el Estado de Resultados solo cuenta lo facturado). Para que salgan: en Ventas › Factura abre cada una con el lápiz y escribe su Nro. Fiscal y la tasa. Si no es una venta real, se elimina desde ese mismo listado.</p>
+                    <div className="overflow-x-auto max-h-56 overflow-y-auto">
+                      <table className="w-full text-[9px]">
+                        <thead><tr className="text-slate-600 uppercase font-black text-left">
+                          <th className="py-1 pr-3">Documento</th><th className="py-1 pr-3">NE</th><th className="py-1 pr-3">Fecha</th><th className="py-1 pr-3">Cliente</th><th className="py-1 pr-3 text-right">Monto USD</th><th className="py-1 pr-3 text-right">Tasa</th>
+                        </tr></thead>
+                        <tbody>
+                          {_invSinFiscalRep.map((inv,i)=>{
+                            const _ts=parseNum(inv.tasa||inv.tasaBCV||0);
+                            return (
+                              <tr key={i} data-testid="rv-sin-fiscal-fila" className="border-t border-slate-200">
+                                <td className="py-1 pr-3 font-black text-orange-700">{inv.documento||inv.id}</td>
+                                <td className="py-1 pr-3 font-bold text-purple-600">{_neSF(inv)}</td>
+                                <td className="py-1 pr-3">{inv.fechaFactura||inv.fecha||'—'}</td>
+                                <td className="py-1 pr-3 max-w-[200px] truncate">{inv.clientName||inv.client||'—'}</td>
+                                <td className="py-1 pr-3 text-right font-mono">${formatNum(parseNum(inv.montoBase||0)*_fracFiltOp(inv))}</td>
+                                <td className="py-1 pr-3 text-right font-mono">{_ts>0?formatTasa(_ts):'sin tasa'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
                       </table>
                     </div>
                   </div>
@@ -53796,7 +53855,7 @@ Esto eliminará ${toDelete.length} registros de inventario general y ${toDeleteF
                           )}
                           {s.sinFiscal.length>0 && (
                             <div data-testid={'real-mes-sinfiscal-'+m.ym} className="pl-3 border-l-4 border-slate-300 text-[10px] font-semibold text-slate-600">
-                              ℹ️ {s.sinFiscal.length} factura(s) de {m.corto} sin Nro. Fiscal (${formatNum(s.sinFiscal.reduce((sm,f)=>sm+parseNum(f.montoBase||0),0))}) no están en tu Reporte de ventas, pero sí entran al Estado de Resultados (toma todas las facturas): {s.sinFiscal.slice(0,8).map(f=>f.documento||f.id).join(', ')}{s.sinFiscal.length>8?'…':''}.
+                              ℹ️ {s.sinFiscal.length} factura(s) de {m.corto} sin Nro. Fiscal (${formatNum(s.sinFiscal.reduce((sm,f)=>sm+parseNum(f.montoBase||0),0))}) no están en tu Reporte de ventas ni entran al Estado de Resultados (solo cuenta lo facturado, con Nro. Fiscal): {s.sinFiscal.slice(0,8).map(f=>f.documento||f.id).join(', ')}{s.sinFiscal.length>8?'…':''}.
                             </div>
                           )}
                           {s.divergentes.length>0 && (
@@ -72386,6 +72445,31 @@ ${resumen}
     const utilidadNetaUSD=utilidadBrutaUSD-totalGastosUSD, utilidadNetaBs=utilidadBrutaBs-totalGastosBs;
     const showUSD = contERCurrency!=='bs'; const showBS = contERCurrency!=='usd';
     const baseVentas = totalIngresosUSD||1;
+    // a20 — facturas SIN Nro. Fiscal (ni Nro. de Control) del período: el Estado de Resultados solo cuenta lo facturado (las mismas facturas del Libro de Ventas y del «Rpt. Ventas»), así que NO entran. Solo informa: no cambia ningún monto.
+    const _sinFiscalER = (() => {
+      const docs = []; let usd = 0;
+      (invoices||[]).forEach(f => {
+        if (!f || f.esAnulacionFiscal || _esFacturaFiscal(f)) return;
+        const fNum = _fNum(f.fechaFactura||f.fecha||'');
+        if (fNum!==null && ((_desdeNum && fNum<_desdeNum) || (_hastaNum && fNum>_hastaNum))) return;
+        let ing = 0;
+        try {
+          const as = generarAsientoVenta(f, cuentasIngresoCfg, planDeCuentas, clients, notasEntrega);
+          (as.lineas||[]).forEach(l => {
+            const partes = String(l.cuenta||'').split('—');
+            const cod = (partes[0]||'').trim();
+            if (!cod.startsWith('4')) return;
+            const esOP = /orden\s+de\s+producci[oó]n/i.test(partes.slice(1).join('—'));
+            if (contERVistaPlanta && !esOP) return;
+            if (contERVistaVenta && !(cod.startsWith('4.1') && !esOP)) return;
+            ing += (l.tipo==='CREDITO' ? 1 : -1) * parseNum(l.montoUSD||0);
+          });
+        } catch(e) {}
+        if (Math.abs(ing) < 0.005) return;
+        docs.push(f.documento || f.nroFiscal || f.id); usd += ing;
+      });
+      return { n: docs.length, usd, docs };
+    })();
 
     const exportarExcel = async () => {
       const filaExtra = { label:etiquetaResultado, usd: utilidadNetaUSD, bs: utilidadNetaBs };
@@ -72449,6 +72533,7 @@ ${resumen}
               {showDiagOpReventa && (()=>{
                 const hallazgos = [];
                 (invoices||[]).forEach(f=>{
+                  if (!_esFacturaFiscal(f)) return;   // a20: el Estado de Resultados solo cuenta facturas fiscales
                   const tieneOp = !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
                   if (!tieneOp) return;
                   if (contFiltDesde && (f.fecha||'')<contFiltDesde) return;
@@ -72541,9 +72626,9 @@ ${resumen}
                       const impactoPorProducto = simCostosLista.map(x=>{
                         let cantTotal=0, costoTotalOriginal=0;
                         const facturasDetalle = [];
-                        const _nfVistoSim=new Map(); (invoices||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal) return; const p=_nfVistoSim.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoSim.set(nf,f);});
+                        const _nfVistoSim=new Map(); (invoices||[]).forEach(f=>{const nf=f.nroFiscal||f.documento||''; if(!nf||f.esAnulacionFiscal||!_esFacturaFiscal(f)) return; const p=_nfVistoSim.get(nf); if(!p||(f.timestamp||0)>=(p.timestamp||0)) _nfVistoSim.set(nf,f);});
                         [...(invoices||[])].forEach(f=>{
-                          if (f.esAnulacionFiscal) return;
+                          if (f.esAnulacionFiscal || !_esFacturaFiscal(f)) return;   // a20: solo facturas fiscales, como el motor del Estado de Resultados
                           { const nf=f.nroFiscal||f.documento||''; if(nf && _nfVistoSim.get(nf)?.id!==f.id) return; }
                           const _fSim=(f.fechaFactura||f.fecha||'');
                           if (contFiltDesde && _fSim<contFiltDesde) return;
@@ -72651,6 +72736,12 @@ ${resumen}
             {simCostosActiva && simCostosLista.length>0 && (
               <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-3 text-[10px] font-bold text-purple-800 flex items-center gap-2">
                 <RefreshCw size={13}/> Vista con costo real simulado para {simCostosLista.length} producto(s) ({simCostosLista.map(x=>x.nombre).join(', ')}) — no afecta tus datos reales ni otros reportes.
+              </div>
+            )}
+            {_sinFiscalER.n>0 && (
+              <div data-testid="er-sin-fiscal" className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 text-[10px] font-bold text-amber-900 space-y-1">
+                <p data-testid="er-sin-fiscal-txt">ℹ️ {_sinFiscalER.n} factura(s) sin Nro. Fiscal NO entran en este Estado de Resultados (${ccFmtR(_sinFiscalER.usd)} de ventas): {_sinFiscalER.docs.slice(0,8).join(', ')}{_sinFiscalER.docs.length>8?'…':''}. Aquí solo cuenta lo facturado — las mismas facturas del Libro de Ventas y de «Rpt. Ventas»; su venta y su costo quedan fuera hasta que tengan Nro. Fiscal.</p>
+                <p className="font-semibold text-amber-800">Para que entren: Ventas › Factura › lápiz de cada una → Nro. Fiscal y tasa. Si no es una venta real, se elimina desde ese mismo listado.</p>
               </div>
             )}
             {contVistaActiva && (
