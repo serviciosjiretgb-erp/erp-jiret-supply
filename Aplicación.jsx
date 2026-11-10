@@ -12276,8 +12276,16 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
   });
   if (Math.abs(totalMP)<=0.005 && Math.abs(totalCons)<=0.005 && Math.abs(totalTerm)<=0.005 && Math.abs(totalMPop)<=0.005 && Math.abs(totalConsOp)<=0.005 && Math.abs(totalTermOp)<=0.005) return null;
   const tieneOp = _costoPorLinea ? Math.abs(totalMPop+totalConsOp+totalTermOp)>0.005 : !!(f.opAsignada || (f.opsAsignadas&&f.opsAsignadas.length>0));
-  // Factura histórica: su costo en Bs. usa la tasa de ESA factura (igual que su ingreso), no la BCV de hoy. Una tasa manual guardada sigue mandando.
-  const tasa = (tasasManuales||{})[f.id] || (esHist ? Number(f.tasa||0) : 0) || Number(settingsTasa||0) || 1;
+  // a21 — El costo de venta en Bs. usa la tasa de la FACTURA: la misma con la que se calcula su ingreso en Bs. (antes solo lo hacían las facturas históricas importadas;
+  // las demás convertían TODO su costo con la tasa BCV de Configuración y, si ahí no había tasa, el Bs. quedaba IGUAL al $: factor 1).
+  // Orden: 1) tasa escrita a mano para ese comprobante (Comprobantes Contables › Costos OP — sigue mandando) · 2) tasa de la factura · 3) tasa BCV de Configuración (solo si la factura no trae tasa) · 4) 1 (último recurso: el Estado de Resultados lo avisa).
+  // Una tasa manual de EXACTAMENTE 1 no cuenta: es lo que se guardaba sola (entrar y salir del cuadro de la fila sin escribir nada) cuando no había ninguna tasa y el cuadro mostraba «1»; dejarla mandando repite el $ como Bs. (factor 1).
+  const _tasaManualF = parseNum((tasasManuales||{})[f.id]||0);
+  const _manualValidaF = _tasaManualF>0 && _tasaManualF!==1;
+  const _tasaFacturaF = parseNum(f.tasa||f.tasaBCV||0);
+  const _tasaConfigF = parseNum(settingsTasa||0);
+  const tasa = (_manualValidaF ? _tasaManualF : 0) || (_tasaFacturaF>0 ? _tasaFacturaF : 0) || (_tasaConfigF>0 ? _tasaConfigF : 0) || 1;
+  const tasaOrigen = _manualValidaF ? 'manual' : _tasaFacturaF>0 ? 'factura' : _tasaConfigF>0 ? 'config' : 'sin';
   const [codDebOp,nomDebOp] = partirCuenta(cfg.costoVentaProduccionNombre);
   const [codDebSin,nomDebSin] = partirCuenta(cfg.costoVentaMercanciaNombre);
   const [codInvMP,nomInvMP] = partirCuenta(cfg.invMateriaPrimaNombre);
@@ -12310,7 +12318,7 @@ const construirLineasCostoProduccionCompartido = (f, ctx) => {
     if (Math.abs(totalCons)>0.005){ const l2=reclas(lineas.length,codInvCons,nomInvCons); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalCons)*tasa, haberBs:_pos(totalCons)*tasa, debeUSD:_neg(totalCons), haberUSD:_pos(totalCons), detalle:'Consumibles'+_dev(totalCons)}); }
     if (Math.abs(totalTerm)>0.005){ const l2=reclas(lineas.length,codInvTerm,nomInvTerm); lineas.push({codigo:l2.codigo, cuenta:l2.cuenta, debeBs:_neg(totalTerm)*tasa, haberBs:_pos(totalTerm)*tasa, debeUSD:_neg(totalTerm), haberUSD:_pos(totalTerm), detalle:'Productos Terminados'+_dev(totalTerm)}); }
   }
-  return {tasa, tieneOp, lineas};
+  return {tasa, tasaOrigen, tasaFactura:(_tasaFacturaF>0?_tasaFacturaF:0), tieneOp, lineas};
 };
 
 // Determina las líneas contables de UN movimiento de Consumo Interno (autoconsumo, avería,
@@ -31338,7 +31346,7 @@ function ComprobantesContablesApp({ onBack, initialSub, getAsientosRealesFn, app
       if(!r) return null;
       return {
         id: f.id, comprobante: f.nroFiscal||f.documento||f.id, fecha: f.fecha||'', doc: f.nroFiscal||f.documento||'—',
-        tasa: r.tasa, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?' · OP:'+((f.itemsFacturados||[]).some(opaTraeTipo)?opaTextoFactura(f):(f.opAsignada||f.opsAsignadas[0])):' · Sin OP'}`, _raw:f,
+        tasa: r.tasa, tasaOrigen: r.tasaOrigen, tasaFactura: r.tasaFactura, conc: `Factura ${f.nroFiscal||f.documento||''} — ${f.clientName||'—'}${r.tieneOp?' · OP:'+((f.itemsFacturados||[]).some(opaTraeTipo)?opaTextoFactura(f):(f.opAsignada||f.opsAsignadas[0])):' · Sin OP'}`, _raw:f,
         lineas: r.lineas.map(l=>({codigo:l.codigo, cuenta:l.cuenta, tipo:l.debeBs>0?'D':'H', dBs:l.debeBs, hBs:l.haberBs, dUSD:l.debeUSD, hUSD:l.haberUSD, detalle:l.detalle})),
       };
     }).filter(Boolean);
@@ -36005,7 +36013,13 @@ ${valoresHtml}
                       <CeldaCuentaCC tabId={tabIdActual} compId={r.id} li={li} l={l} r={r}/>
                       <CeldaTipoCC tabId={tabIdActual} compId={r.id} li={li} l={l}/>
                       <td className="px-3 py-2 text-gray-500">{l.detalle||''}</td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}</td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-400">{li===0?contFmt(r.tasa):''}{li===0 && r.tasaOrigen && r.tasaOrigen!=='factura' && (
+                        <span data-testid="tasa-origen" className={`ml-1 text-[8px] font-black uppercase whitespace-nowrap ${r.tasaOrigen==='sin'?'text-red-600':r.tasaOrigen==='config'?'text-amber-600':'text-gray-500'}`}
+                          title={r.tasaOrigen==='sin' ? 'La factura no tiene tasa y en Configuración no hay tasa BCV: el Bs. quedó igual al $ (factor 1). Ponle la tasa a la factura (Ventas › Factura › lápiz → Tasa).'
+                            : r.tasaOrigen==='config' ? 'La factura no tiene tasa: se usó la tasa BCV de Configuración. Ponle la tasa a la factura (Ventas › Factura › lápiz → Tasa).'
+                            : 'Tasa escrita a mano para este comprobante'+(r.tasaFactura>0?' (la de la factura es '+contFmt(r.tasaFactura)+')':'')+'. Para usar la de la factura, escríbela en el cuadro de la derecha.'}>
+                          {r.tasaOrigen==='sin'?'sin tasa':r.tasaOrigen==='config'?'BCV':'manual'}</span>
+                      )}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dBs>0?'Bs.'+contFmt(l.dBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-red-500">{l.hBs>0?'Bs.'+contFmt(l.hBs):''}</td>
                       <td className="px-3 py-2 text-right font-mono font-black text-emerald-600">{l.dUSD>0?'$'+contFmt(l.dUSD):''}</td>
@@ -36016,7 +36030,7 @@ ${valoresHtml}
                             if(!window.confirm('\u00bfEliminar el asiento de la factura '+r.comprobante+'? Deja de aparecer en Comprobantes, Mayor y Estados (la factura de venta no se toca). Se puede restaurar desde la pesta\u00f1a Reclasificaciones.')) return;
                             try{ await setDoc(getDocRef('comprobantes_reclasificaciones', `EXCL__costos_produccion__${r.id}`), {tabId:'excl', compId:r.id, excluido:true, conceptoComprobante:'ASIENTO ELIMINADO \u2014 '+r.comprobante, fechaComprobante:r.fecha||'', timestamp:Date.now()}); }catch(e){ alert('Error: '+e.message); }
                           }} className="px-1.5 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-500 hover:text-white">Eliminar</button>}
-                          <input key={r.tasa} type="number" step="0.0001" defaultValue={r.tasa} onBlur={e=>{const v=parseFloat(e.target.value); if(v>0) guardarTasaManualProd(r.id, v);}}
+                          <input key={r.tasa} type="number" step="0.0001" defaultValue={r.tasa} onBlur={e=>{const v=parseFloat(e.target.value); if(v>0 && v!==Number(r.tasa)) guardarTasaManualProd(r.id, v);}}
                             className="w-16 border border-gray-200 rounded px-1 py-1 text-[10px] font-bold text-center outline-none focus:border-orange-400" title="Tasa manual para este comprobante"/>
                           <button disabled={fetchingBCV} title="Aplicar tasa BCV del día" onClick={async()=>{const t=await fetchTasaBCV(r.fecha); if(t) guardarTasaManualProd(r.id, t);}}
                             className="px-1.5 py-1 bg-orange-50 text-orange-600 border border-orange-200 rounded hover:bg-orange-500 hover:text-white disabled:opacity-50">{fetchingBCV?'⏳':'🔄'}</button>
@@ -37424,7 +37438,7 @@ function App() {
     });
     // 9a) Costo de Producción/Venta — el mismo costo que ya se captura en cada factura
     // (costoUnit × cantidad por ítem, congelado al facturar), igual que el Reporte General de
-    // Ventas y Costos. Usa tasa manual guardada por comprobante si existe, si no la BCV actual.
+    // Ventas y Costos. a21: el Bs. usa la tasa de la FACTURA (igual que su ingreso); una tasa manual guardada por comprobante sigue mandando, y la BCV de Configuración solo si la factura no trae tasa.
     // 9a) Costo de Producción/Venta — MISMA función compartida que usa Comprobantes Contables
     // (antes esta sección omitía en silencio la factura si faltaba una cuenta configurada,
     // mientras que Comprobantes Contables la mostraba con un aviso — ahora se comportan igual).
@@ -72470,6 +72484,27 @@ ${resumen}
       });
       return { n: docs.length, usd, docs };
     })();
+    // a21 — movimientos de Ingresos/Costos/Gastos del período cuyos Bs. NO están convertidos: en cero teniendo $ (falta la tasa) o IGUALES al $ (factor 1: se tomó la tasa como 1).
+    // Lo escrito a mano (Ajustes) no cuenta. Solo informa: no cambia ningún monto.
+    const _bsSinConvertirER = (() => {
+      const porMod = new Map();
+      asientosPeriodo.forEach(a => {
+        if (a.modulo==='Ajustes') return;
+        (a.lineas||[]).forEach(l => {
+          if (!/^[456]/.test(String(l.codigo||''))) return;
+          const u = parseNum(l.debeUSD||0) - parseNum(l.haberUSD||0);
+          const b = parseNum(l.debeBs||0) - parseNum(l.haberBs||0);
+          if (Math.abs(u) < 0.01) return;
+          if (!(Math.abs(b) < 0.005 || Math.abs(b-u) < 0.005)) return;
+          const mod = (a.modulo==='Producción' && !/^Factura /.test(String(a.concepto||''))) ? 'Consumos internos' : (a.modulo || '—');
+          if (!porMod.has(mod)) porMod.set(mod, { modulo:mod, usd:0, docs:new Set() });
+          const m = porMod.get(mod); m.usd += Math.abs(u); m.docs.add(String(a.comprobante||a.concepto||'—'));
+        });
+      });
+      const mods = [...porMod.values()].map(m => ({ modulo:m.modulo, usd:m.usd, docs:[...m.docs] })).sort((x,y) => y.usd - x.usd);
+      return { n: mods.reduce((s,m)=>s+m.docs.length,0), mods };
+    })();
+    const _remedioBsER = { 'Producción':'Costo de venta: ponle la tasa a cada factura (Ventas › Factura › lápiz → Tasa; el costo la toma solo) o escríbela en Comprobantes Contables › Costos OP.', 'Ventas':'Ventas: ponle la tasa a cada factura (Ventas › Factura › lápiz → Tasa).', 'Depreciación':'Depreciación: escribe la tasa en Comprobantes Contables › Depreciaciones.', 'Procura':'Procura: ponle la tasa a la factura de compra.', 'Consumos internos':'Consumos internos: escribe la tasa de cada salida en Comprobantes Contables › Consumos Internos.' };
 
     const exportarExcel = async () => {
       const filaExtra = { label:etiquetaResultado, usd: utilidadNetaUSD, bs: utilidadNetaBs };
@@ -72742,6 +72777,12 @@ ${resumen}
               <div data-testid="er-sin-fiscal" className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3 text-[10px] font-bold text-amber-900 space-y-1">
                 <p data-testid="er-sin-fiscal-txt">ℹ️ {_sinFiscalER.n} factura(s) sin Nro. Fiscal NO entran en este Estado de Resultados (${ccFmtR(_sinFiscalER.usd)} de ventas): {_sinFiscalER.docs.slice(0,8).join(', ')}{_sinFiscalER.docs.length>8?'…':''}. Aquí solo cuenta lo facturado — las mismas facturas del Libro de Ventas y de «Rpt. Ventas»; su venta y su costo quedan fuera hasta que tengan Nro. Fiscal.</p>
                 <p className="font-semibold text-amber-800">Para que entren: Ventas › Factura › lápiz de cada una → Nro. Fiscal y tasa. Si no es una venta real, se elimina desde ese mismo listado.</p>
+              </div>
+            )}
+            {_bsSinConvertirER.n>0 && (
+              <div data-testid="er-bs-sin-convertir" className="bg-red-50 border-2 border-red-300 rounded-xl p-3 text-[10px] font-bold text-red-800 space-y-1">
+                <p data-testid="er-bs-sin-convertir-txt">⚠️ Hay montos en $ de Ingresos/Costos/Gastos de este período cuyos Bs. no están convertidos (salen en cero o iguales al $, factor 1) y distorsionan las cifras en bolívares: {_bsSinConvertirER.mods.map(m=>`${m.modulo} — ${m.docs.length} comprobante(s), $${ccFmtR(m.usd)} (${m.docs.slice(0,4).join(', ')}${m.docs.length>4?'…':''})`).join(' · ')}.</p>
+                <p data-testid="er-bs-sin-convertir-como" className="font-semibold text-red-700">{_bsSinConvertirER.mods.map(m=>_remedioBsER[m.modulo]||`${m.modulo}: revisa la tasa del documento de origen.`).join(' ')}</p>
               </div>
             )}
             {contVistaActiva && (
